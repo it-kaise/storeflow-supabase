@@ -220,35 +220,6 @@ function reqFromDb(db) {
     };
 }
 
-// 1. ดึงข้อมูล Material ทั้งหมดจาก DB
-async function loadMaterials() {
-    const { data, error } = await sb.from('sf_materials').select('*').order('material_name');
-    if (error) {
-        console.error('Error loading materials:', error);
-        return [];
-    }
-    return data.map(matFromDb); // แปลงจากชื่อ column ใน DB เป็นชื่อที่ App ใช้
-}
-
-// 2. ลบ Material ออกจาก DB
-const handleDeleteMaterial = async (m) => {
-    // 1. ถามเพื่อความแน่ใจก่อนลบ
-    if (!window.confirm(`ยืนยันการลบวัตถุดิบ: ${m.name} (${m.size}) ?`)) return;
-
-    // 2. เรียกใช้ฟังก์ชัน deleteMaterial ที่คุณเขียนไว้ (ส่ง id ไปลบใน Supabase)
-    const success = await deleteMaterial(m.id);
-
-    if (success) {
-        // 3. ถ้าใน DB ลบผ่านแล้ว ให้ลบออกจากหน้าจอ (State) ทันที
-        setMaterials(ms => ms.filter(x => x.id !== m.id));
-        
-        // 4. แจ้งเตือน (ถ้ามีระบบ toast)
-        if (typeof toast === 'function') {
-            toast(`🗑️ ลบ "${m.name}" เรียบร้อยแล้ว`, "ok");
-        }
-    }
-    // ถ้าไม่ success ตัวฟังก์ชัน deleteMaterial จะ alert error ให้เองอยู่แล้วครับ
-};
 
 // ════════════════════════════════════════════════════════════
 // MASTER DATA — ทุกอย่างขยายได้จากในระบบ
