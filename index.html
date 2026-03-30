@@ -1,13 +1,13 @@
 <!DOCTYPE html><html lang="th"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>StoreFlow v44 - Cloud Edition</title>
+<title>StoreFlow v43 - Supabase Edition</title>
 <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#0d1117;color:#e6edf3;font-family:system-ui,sans-serif;}::-webkit-scrollbar{width:6px;height:6px;}::-webkit-scrollbar-track{background:#161b22;}::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px;}select option{background:#1c2333;color:#e6edf3;}#loading{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:14px;color:#8b949e;}.spin{width:34px;height:34px;border:3px solid #30363d;border-top-color:#f0883e;border-radius:50%;animation:sp .8s linear infinite;}@keyframes sp{to{transform:rotate(360deg)}}</style>
 </head><body>
-<div id="loading"><div class="spin"></div><div style="font-size:14px;font-weight:700">⚙️ StoreFlow v44</div><div style="font-size:11px">กำลังเชื่อมต่อ Supabase...</div></div>
+<div id="loading"><div class="spin"></div><div style="font-size:14px;font-weight:700">⚙️ StoreFlow</div><div style="font-size:11px">กำลังเชื่อมต่อ Supabase...</div></div>
 <div id="root" style="display:none"></div>
 <script>
 const { useState } = React;
@@ -508,7 +508,16 @@ function exportXLSX(sheets, filename) {
         alert("Export ไม่สำเร็จ: " + e.message);
     }
 }
-// ── localStorage removed - ใช้ Supabase เท่านั้น ──
+// ── localStorage helpers (เก็บ session เท่านั้น) ──
+function lsGet(key, def) { try {
+    const v = localStorage.getItem("sf_" + key);
+    return v ? JSON.parse(v) : def;
+} catch {
+    return def;
+} }
+function lsSet(key, val) { try {
+    localStorage.setItem("sf_" + key, JSON.stringify(val));
+} catch { } }
 function StoreFlow() {
     var _a, _b;
     const [page, setPage] = useState("dashboard");
@@ -738,85 +747,92 @@ function StoreFlow() {
         setModal(null);
     }
     async function issueReq(id) {
-        const rChk = requests.find(x => x.id === id);
-        if (!rChk)
-            return;
-        const noStk = rChk.items.filter(it => { const ml = lots[it.matId] || []; const tot = ml.reduce((s, l) => s + (l.rem_pcs || 0) + (l.rem_kgs || 0) + (l.rem_coil || 0), 0); return tot <= 0; });
-        if (noStk.length > 0) {
-            setNoStkItems(noStk);
-            setModal("nostock");
-            return;
-        }
-        const r = requests.find(x => x.id === id);
-        if (!r)
-            return;
-        const today = new Date().toISOString().split("T")[0];
-        setRequests(rs => rs.map(x => x.id === id ? { ...x, status: "issued", issuedBy: (currentUser === null || currentUser === void 0 ? void 0 : currentUser.name) || "พนักงานสโตร์", issuedDate: today } : x));
-        r.items.forEach(item => {
-            setLots(ls => {
-                const ml = [...(ls[item.matId] || [])];
-                const matInfo = materials.find(x => x.id === item.matId);
-                const unit = item.unit || (matInfo === null || matInfo === void 0 ? void 0 : matInfo.unit) || "PCS";
-                let rem = parseFloat(item.qty) || 0;
-                // ดู Lot ที่พนักงานเลือก (ถ้ามี) → ตัดจาก Lot นั้นก่อน
-                const selKey = `${r.items.indexOf(item)}_${item.matId}`;
-                const chosenLots = (selectedLots && selectedLots[selKey]) || []; // [{lotNo, qty}]
-                // ถ้าเลือก Lot ไว้ → ตัดตามที่เลือก, ถ้าไม่ได้เลือก → FIFO by date อัตโนมัติ
-                const sortedByDate = [...ml].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
-                const processOrder = chosenLots.length > 0
-                    ? chosenLots.map(cl => ({ lotIdx: ml.findIndex(l => l.lotNo === cl.lotNo), fixedQty: cl.qty })).filter(x => x.lotIdx >= 0)
-                    : sortedByDate.map(l => ({ lotIdx: ml.findIndex(x => x.lotNo === l.lotNo), fixedQty: null })).filter(x => x.lotIdx >= 0);
-                for (const { lotIdx: i, fixedQty } of processOrder) {
-                    if (rem <= 0)
-                        break;
-                    const takeAmt = fixedQty != null ? Math.min(fixedQty, rem) : rem;
-                    if (unit === "COIL" || (ml[i].rem_coil != null && ml[i].rem_pcs == null && ml[i].rem_kgs == null)) {
-                        const take = Math.min(takeAmt, ml[i].rem_coil || 0);
-                        const kgsPerCoil = (ml[i].coil && ml[i].kgs) ? (ml[i].kgs / ml[i].coil) : 0;
-                        ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (take * kgsPerCoil)) : ml[i].rem_kgs };
-                        rem -= take;
-                    }
-                    else if (unit === "KGS" && ml[i].rem_kgs != null && ml[i].rem_pcs == null) {
-                        const take = Math.min(takeAmt, ml[i].rem_kgs || 0);
-                        ml[i] = { ...ml[i], rem_kgs: Math.max(0, (ml[i].rem_kgs || 0) - take) };
-                        rem -= take;
-                    }
-                    else {
-                        const take = Math.min(takeAmt, ml[i].rem_pcs || 0);
-                        ml[i] = { ...ml[i], rem_pcs: Math.max(0, (ml[i].rem_pcs || 0) - take) };
-                        if (ml[i].rem_kgs != null && (matInfo === null || matInfo === void 0 ? void 0 : matInfo.kpp))
-                            ml[i] = { ...ml[i], rem_kgs: Math.max(0, ml[i].rem_kgs - (take * matInfo.kpp)) };
-                        rem -= take;
-                    }
+    const rChk = requests.find(x => x.id === id);
+    if (!rChk) return;
+
+    // 1. เช็กสต็อกคงเหลือ
+    const noStk = rChk.items.filter(it => {
+        const ml = lots[it.matId] || [];
+        const tot = ml.reduce((s, l) => s + (l.rem_pcs || 0) + (l.rem_kgs || 0) + (l.rem_coil || 0), 0);
+        return tot <= 0;
+    });
+
+    if (noStk.length > 0) {
+        setNoStkItems(noStk);
+        setModal("nostock");
+        return;
+    }
+
+    const r = requests.find(x => x.id === id);
+    if (!r) return;
+
+    const today = new Date().toISOString().split("T")[0];
+
+    // 2. อัปเดตสถานะ Request
+    setRequests(rs => rs.map(x => x.id === id ? {
+        ...x,
+        status: "issued",
+        issuedBy: currentUser?.name || "พนักงานสโตร์",
+        issuedDate: today
+    } : x));
+
+    // 3. วนลูปจัดการตัดสต็อกทีละรายการ (เปลี่ยนจาก .forEach เป็น for...of เพื่อให้ใช้ await ได้)
+    for (const item of r.items) {
+        
+        // --- ส่วนที่ 1: ตัดสต็อกใน State (Local) ---
+        setLots(ls => {
+            const ml = [...(ls[item.matId] || [])];
+            const matInfo = materials.find(x => x.id === item.matId);
+            const unit = item.unit || matInfo?.unit || "PCS";
+            let rem = parseFloat(item.qty) || 0;
+
+            const selKey = `${r.items.indexOf(item)}_${item.matId}`;
+            const chosenLots = (selectedLots && selectedLots[selKey]) || [];
+            const sortedByDate = [...ml].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+
+            const processOrder = chosenLots.length > 0
+                ? chosenLots.map(cl => ({ lotIdx: ml.findIndex(l => l.lotNo === cl.lotNo), fixedQty: cl.qty })).filter(x => x.lotIdx >= 0)
+                : sortedByDate.map(l => ({ lotIdx: ml.findIndex(x => x.lotNo === l.lotNo), fixedQty: null })).filter(x => x.lotIdx >= 0);
+
+            for (const { lotIdx: i, fixedQty } of processOrder) {
+                if (rem <= 0) break;
+                const takeAmt = fixedQty != null ? Math.min(fixedQty, rem) : rem;
+
+                if (unit === "COIL" || (ml[i].rem_coil != null && ml[i].rem_pcs == null && ml[i].rem_kgs == null)) {
+                    const take = Math.min(takeAmt, ml[i].rem_coil || 0);
+                    const kgsPerCoil = (ml[i].coil && ml[i].kgs) ? (ml[i].kgs / ml[i].coil) : 0;
+                    ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (take * kgsPerCoil)) : ml[i].rem_kgs };
+                    rem -= take;
+                } else if (unit === "KGS" && ml[i].rem_kgs != null && ml[i].rem_pcs == null) {
+                    const take = Math.min(takeAmt, ml[i].rem_kgs || 0);
+                    ml[i] = { ...ml[i], rem_kgs: Math.max(0, (ml[i].rem_kgs || 0) - take) };
+                    rem -= take;
+                } else {
+                    const take = Math.min(takeAmt, ml[i].rem_pcs || 0);
+                    ml[i] = { ...ml[i], rem_pcs: Math.max(0, (ml[i].rem_pcs || 0) - take) };
+                    if (ml[i].rem_kgs != null && matInfo?.kpp)
+                        ml[i] = { ...ml[i], rem_kgs: Math.max(0, ml[i].rem_kgs - (take * matInfo.kpp)) };
+                    rem -= take;
                 }
-                return { ...ls, [item.matId]: ml };
-            });
-            // บันทึกแต่ละ lot ที่จ่ายจริง
-            const chosenLotsHist = (selectedLots && selectedLots[`${r.items.indexOf(item)}_${item.matId}`]) || [];
-            if (chosenLotsHist.length > 0) {
-                chosenLotsHist.forEach(cl => {
-                    const histRecord = { date: today, reqId: r.id, name: item.name, maker: item.maker, lotNo: cl.lotNo, pcs: item.unit === "PCS" ? cl.qty : null, kgs: item.unit === "KGS" ? cl.qty : item.kgs, coil: item.unit === "COIL" ? cl.qty : null, unit: item.unit, forecast: r.forecast, dept: r.dept, requester: r.requester, approver: r.approvedBy, issuedBy: (currentUser === null || currentUser === void 0 ? void 0 : currentUser.name) || "พนักงานสโตร์" };
-                    await sb.from('sf_issuehist').insert({
-                        issue_date: histRecord.date,
-                        req_id: histRecord.reqId,
-                        material_name: histRecord.name,
-                        maker: histRecord.maker,
-                        lot_no: histRecord.lotNo,
-                        pcs: histRecord.pcs,
-                        kgs: histRecord.kgs,
-                        coil: histRecord.coil,
-                        unit: histRecord.unit,
-                        forecast: histRecord.forecast,
-                        dept: histRecord.dept,
-                        requester: histRecord.requester,
-                        approver: histRecord.approver,
-                        issued_by: histRecord.issuedBy
-                    });
-                    setIssueHist(h => [histRecord, ...h]);
-                });
             }
-            else {
-                const histRecord = { date: today, reqId: r.id, name: item.name, maker: item.maker, lotNo: item.lotNo, pcs: item.qty, kgs: item.kgs, coil: item.coil, unit: item.unit, forecast: r.forecast, dept: r.dept, requester: r.requester, approver: r.approvedBy, issuedBy: (currentUser === null || currentUser === void 0 ? void 0 : currentUser.name) || "พนักงานสโตร์" };
+            return { ...ls, [item.matId]: ml };
+        });
+
+        // --- ส่วนที่ 2: บันทึกข้อมูลลง Supabase (History) ---
+        const chosenLotsHist = (selectedLots && selectedLots[`${r.items.indexOf(item)}_${item.matId}`]) || [];
+        
+        if (chosenLotsHist.length > 0) {
+            // ใช้ for...of เพื่อให้ await ทำงานถูกต้อง
+            for (const cl of chosenLotsHist) {
+                const histRecord = { 
+                    date: today, reqId: r.id, name: item.name, maker: item.maker, lotNo: cl.lotNo, 
+                    pcs: item.unit === "PCS" ? cl.qty : null, 
+                    kgs: item.unit === "KGS" ? cl.qty : item.kgs, 
+                    coil: item.unit === "COIL" ? cl.qty : null, 
+                    unit: item.unit, forecast: r.forecast, dept: r.dept, requester: r.requester, 
+                    approver: r.approvedBy, issuedBy: currentUser?.name || "พนักงานสโตร์" 
+                };
+
                 await sb.from('sf_issuehist').insert({
                     issue_date: histRecord.date,
                     req_id: histRecord.reqId,
@@ -835,12 +851,40 @@ function StoreFlow() {
                 });
                 setIssueHist(h => [histRecord, ...h]);
             }
-        });
-        toast("📤 จ่ายวัตถุดิบสำเร็จ! ตัดยอด FIFO แล้ว");
-        setModal(null);
-        setSelectedLots({});
-        setTimeout(() => toast("📧 ส่ง Email แจ้งฝ่ายผลิตแล้ว", "info"), 600);
-    }
+        } else {
+            const histRecord = { 
+                date: today, reqId: r.id, name: item.name, maker: item.maker, lotNo: item.lotNo, 
+                pcs: item.qty, kgs: item.kgs, coil: item.coil, unit: item.unit, 
+                forecast: r.forecast, dept: r.dept, requester: r.requester, 
+                approver: r.approvedBy, issuedBy: currentUser?.name || "พนักงานสโตร์" 
+            };
+
+            await sb.from('sf_issuehist').insert({
+                issue_date: histRecord.date,
+                req_id: histRecord.reqId,
+                material_name: histRecord.name,
+                maker: histRecord.maker,
+                lot_no: histRecord.lotNo,
+                pcs: histRecord.pcs,
+                kgs: histRecord.kgs,
+                coil: histRecord.coil,
+                unit: histRecord.unit,
+                forecast: histRecord.forecast,
+                dept: histRecord.dept,
+                requester: histRecord.requester,
+                approver: histRecord.approver,
+                issued_by: histRecord.issuedBy
+            });
+            setIssueHist(h => [histRecord, ...h]);
+        }
+    } // จบ Loop r.items
+
+    // 4. สรุปผลและปิดหน้าต่าง
+    toast("📤 จ่ายวัตถุดิบสำเร็จ! ตัดยอด FIFO แล้ว");
+    setModal(null);
+    setSelectedLots({});
+    setTimeout(() => toast("📧 ส่ง Email แจ้งฝ่ายผลิตแล้ว", "info"), 600);
+}
     // ── RECEIVE ──
     async function submitRecv() {
         const { date, po, inv, type, matId, maker, rohs, lots: rvLots } = rvForm;
