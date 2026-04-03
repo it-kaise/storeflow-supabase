@@ -277,8 +277,38 @@ const INIT_MASTER = {
         "QC", "ซ่อมบำรุง", "New Project",
     ],
     // หน่วย
-    units: ["KGS", "PCS", "COIL", "BOTH"],
+    units: ["KGS", "PCS", "COIL", "BOTH_KG_COIL", "BOTH_KG_PCS"],
 };
+
+// ══════════════════════════════════════════════════════════
+// SORT FUNCTION - เรียง Size จากเล็กไปใหญ่
+// ══════════════════════════════════════════════════════════
+function sortBySize(materials) {
+    return [...materials].sort((a, b) => {
+        // แยก size ออกเป็นตัวเลข
+        const parseSize = (sizeStr) => {
+            if (!sizeStr) return [0, 0, 0];
+            // ลบข้อความที่ไม่ใช่ตัวเลข เช่น LWC, mm
+            const cleaned = sizeStr.toUpperCase().replace(/[^0-9.×xX]/g, ' ');
+            const nums = cleaned.split(/[×xX\s]+/).map(n => parseFloat(n) || 0);
+            return [nums[0] || 0, nums[1] || 0, nums[2] || 0]; // [OD, THK, LENGTH]
+        };
+        
+        const sizeA = parseSize(a.size);
+        const sizeB = parseSize(b.size);
+        
+        // เปรียบเทียบ OD, THK, LENGTH ตามลำดับ
+        for (let i = 0; i < 3; i++) {
+            if (sizeA[i] !== sizeB[i]) {
+                return sizeA[i] - sizeB[i];
+            }
+        }
+        
+        // ถ้าเท่ากันหมด ให้เรียงตามชื่อ
+        return (a.size || '').localeCompare(b.size || '');
+    });
+}
+
 const INIT_MATERIALS = [];
 const INIT_LOTS = {};
 const INIT_REQUESTS = [];
@@ -757,110 +787,133 @@ function StoreFlow() {
         setModal(null);
     }
     async function issueReq(id) {
-    const r = requests.find(x => x.id === id);
-    if (!r) return;
+        const rChk = requests.find(x => x.id === id);
+        if (!rChk)
+            return;
+        const noStk = rChk.items.filter(it => { const ml = lots[it.matId] || []; const tot = ml.reduce((s, l) => s + (l.rem_pcs || 0) + (l.rem_kgs || 0) + (l.rem_coil || 0), 0); return tot <= 0; });
+        if (noStk.length > 0) {
+            setNoStkItems(noStk);
+            setModal("nostock");
+            return;
+        }
+        const r = requests.find(x => x.id === id);
+        if (!r)
+            return;
+        const today = new Date().toISOString().split("T")[0];
+        setRequests(rs => rs.map(x => x.id === id ? { ...x, status: "issued", issuedBy: (currentUser === null || currentUser === void 0 ? void 0 : currentUser.name) || "พนักงานสโตร์", issuedDate: today } : x));
+        r.items.forEach(item => {
+            setLots(ls => {
+                const ml = [...(ls[item.matId] || [])];
+                const matInfo = materials.find(x => x.id === item.matId);
+                const unit = item.unit || (matInfo === null || matInfo === void 0 ? void 0 : matInfo.unit) || "PCS";
+                let rem = parseFloat(item.qty) || 0;
+                // ดู Lot ที่พนักงานเลือก (ถ้ามี) → ตัดจาก Lot นั้นก่อน
+                const selKey = `${r.items.indexOf(item)}_${item.matId}`;
+                const chosenLots = (selectedLots && selectedLots[selKey]) || []; // [{lotNo, qty}]
+                // ถ้าเลือก Lot ไว้ → ตัดตามที่เลือก, ถ้าไม่ได้เลือก → FIFO by date อัตโนมัติ
+                const sortedByDate = [...ml].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+                const processOrder = chosenLots.length > 0
+                    ? chosenLots.map(cl => ({ lotIdx: ml.findIndex(l => l.lotNo === cl.lotNo), fixedQty: cl.qty })).filter(x => x.lotIdx >= 0)
+                    : sortedByDate.map(l => ({ lotIdx: ml.findIndex(x => x.lotNo === l.lotNo), fixedQty: null })).filter(x => x.lotIdx >= 0);
+                for (const { lotIdx: i, fixedQty } of processOrder) {
+                    if (rem <= 0)
+                        break;
+                    const takeAmt = fixedQty != null ? Math.min(fixedQty, rem) : rem;
+                    if (unit === "COIL" || (ml[i].rem_coil != null && ml[i].rem_pcs == null && ml[i].rem_kgs == null)) {
+                        const take = Math.min(takeAmt, ml[i].rem_coil || 0);
+                        const kgsPerCoil = (ml[i].coil && ml[i].kgs) ? (ml[i].kgs / ml[i].coil) : 0;
+                        ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (take * kgsPerCoil)) : ml[i].rem_kgs };
+                        rem -= take;
+                    }
+                    else if (unit === "KGS" && ml[i].rem_kgs != null && ml[i].rem_pcs == null) {
+                        const take = Math.min(takeAmt, ml[i].rem_kgs || 0);
+                        ml[i] = { ...ml[i], rem_kgs: Math.max(0, (ml[i].rem_kgs || 0) - take) };
+                        rem -= take;
+                    }
+                    else {
+                        const take = Math.min(takeAmt, ml[i].rem_pcs || 0);
+                        ml[i] = { ...ml[i], rem_pcs: Math.max(0, (ml[i].rem_pcs || 0) - take) };
+                        if (ml[i].rem_kgs != null && (matInfo === null || matInfo === void 0 ? void 0 : matInfo.kpp))
+                            ml[i] = { ...ml[i], rem_kgs: Math.max(0, ml[i].rem_kgs - (take * matInfo.kpp)) };
+                        rem -= take;
+                    }
+                }
+                return { ...ls, [item.matId]: ml };
+            });
+            // บันทึกแต่ละ lot ที่จ่ายจริง
+            const processIssue = async () => {
+    try {
+        const recordsToInsert = [];
+        const uiRecords = [];
 
-    // 1. ตรวจสอบสต็อกเบื้องต้น
-    const noStk = r.items.filter(it => {
-        const ml = lots[it.matId] || [];
-        const tot = ml.reduce((s, l) => s + (l.rem_pcs || 0) + (l.rem_kgs || 0) + (l.rem_coil || 0), 0);
-        return tot <= 0;
-    });
+        for (const item of r.items) {
+            const key = `${r.items.indexOf(item)}_${item.matId}`;
+            const chosenLotsHist = (selectedLots && selectedLots[key]) || [];
 
-    if (noStk.length > 0) {
-        setNoStkItems(noStk);
-        setModal("nostock");
-        return;
-    }
-
-    const today = new Date().toISOString().split("T")[0];
-    const currentUserName = currentUser?.name || "พนักงานสโตร์";
-
-    // ใช้ local variables เพื่อรวบรวมข้อมูลก่อนอัปเดต state ทีเดียว
-    let updatedLots = { ...lots };
-    let newHistoryEntries = [];
-
-    // 2. ใช้ for...of แทน forEach เพื่อให้ await ทำงานได้ถูกต้อง
-    for (const item of r.items) {
-        const ml = [...(updatedLots[item.matId] || [])];
-        const matInfo = materials.find(x => x.id === item.matId);
-        const unit = item.unit || matInfo?.unit || "PCS";
-        let rem = parseFloat(item.qty) || 0;
-
-        const selKey = `${r.items.indexOf(item)}_${item.matId}`;
-        const chosenLots = selectedLots?.[selKey] || [];
-
-        // ลำดับการตัดสต็อก
-        const sortedByDate = [...ml].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
-        const processOrder = chosenLots.length > 0
-            ? chosenLots.map(cl => ({ lotIdx: ml.findIndex(l => l.lotNo === cl.lotNo), fixedQty: cl.qty })).filter(x => x.lotIdx >= 0)
-            : sortedByDate.map(l => ({ lotIdx: ml.findIndex(x => x.lotNo === l.lotNo), fixedQty: null })).filter(x => x.lotIdx >= 0);
-
-        for (const { lotIdx: i, fixedQty } of processOrder) {
-            if (rem <= 0) break;
-            const takeAmt = fixedQty != null ? Math.min(fixedQty, rem) : rem;
-            
-            // Logic การตัดยอดตาม Unit
-            if (unit === "COIL" || (ml[i].rem_coil != null && ml[i].rem_pcs == null && ml[i].rem_kgs == null)) {
-                const take = Math.min(takeAmt, ml[i].rem_coil || 0);
-                const kgsPerCoil = (ml[i].coil && ml[i].kgs) ? (ml[i].kgs / ml[i].coil) : 0;
-                ml[i] = { 
-                    ...ml[i], 
-                    rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), 
-                    rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (take * kgsPerCoil)) : ml[i].rem_kgs 
-                };
-                rem -= take;
-            } else if (unit === "KGS" && ml[i].rem_kgs != null && ml[i].rem_pcs == null) {
-                const take = Math.min(takeAmt, ml[i].rem_kgs || 0);
-                ml[i] = { ...ml[i], rem_kgs: Math.max(0, (ml[i].rem_kgs || 0) - take) };
-                rem -= take;
+            if (chosenLotsHist.length > 0) {
+                chosenLotsHist.forEach(cl => {
+                    const histRecord = {
+                        issue_date: today,
+                        req_id: r.id,
+                        material_name: item.name,
+                        maker: item.maker,
+                        lot_no: cl.lotNo,
+                        pcs: (item.unit === "PCS" || item.unit === "BOTH_KG_PCS") ? cl.qty : null,
+                        kgs: (item.unit === "KGS" || item.unit === "BOTH_KG_COIL" || item.unit === "BOTH_KG_PCS") ? (cl.qty || item.kgs) : item.kgs,
+                        coil: (item.unit === "COIL" || item.unit === "BOTH_KG_COIL") ? cl.coil : null,
+                        unit: item.unit,
+                        forecast: r.forecast,
+                        dept: r.dept,
+                        requester: r.requester,
+                        approver: r.approvedBy,
+                        issued_by: currentUser?.name || "พนักงานสโตร์"
+                    };
+                    recordsToInsert.push(histRecord);
+                    uiRecords.push(histRecord);
+                });
             } else {
-                const take = Math.min(takeAmt, ml[i].rem_pcs || 0);
-                ml[i] = { ...ml[i], rem_pcs: Math.max(0, (ml[i].rem_pcs || 0) - take) };
-                if (ml[i].rem_kgs != null && matInfo?.kpp)
-                    ml[i] = { ...ml[i], rem_kgs: Math.max(0, ml[i].rem_kgs - (take * matInfo.kpp)) };
-                rem -= take;
+                const histRecord = {
+                    issue_date: today,
+                    req_id: r.id,
+                    material_name: item.name,
+                    maker: item.maker,
+                    lot_no: item.lotNo,
+                    pcs: item.qty,
+                    kgs: item.kgs,
+                    coil: item.coil,
+                    unit: item.unit,
+                    forecast: r.forecast,
+                    dept: r.dept,
+                    requester: r.requester,
+                    approver: r.approvedBy,
+                    issued_by: currentUser?.name || "พนักงานสโตร์"
+                };
+                recordsToInsert.push(histRecord);
+                uiRecords.push(histRecord);
             }
         }
-        updatedLots[item.matId] = ml;
 
-        // 3. จัดการประวัติการจ่าย (History)
-        const historyData = chosenLots.length > 0 ? chosenLots : [{ lotNo: item.lotNo, qty: item.qty }];
-        
-        for (const entry of historyData) {
-            const histRecord = {
-                issue_date: today,
-                req_id: r.id,
-                material_name: item.name,
-                maker: item.maker,
-                lot_no: entry.lotNo || item.lotNo,
-                pcs: unit === "PCS" ? entry.qty : null,
-                kgs: unit === "KGS" ? entry.qty : item.kgs,
-                coil: unit === "COIL" ? entry.qty : null,
-                unit: unit,
-                forecast: r.forecast,
-                dept: r.dept,
-                requester: r.requester,
-                approver: r.approvedBy,
-                issued_by: currentUserName
-            };
-
-            // ยิงขึ้น Database
-            await sb.from('sf_issuehist').insert(histRecord);
-            newHistoryEntries.push(histRecord);
+        // 1. ส่งข้อมูลเข้า Supabase ทีเดียว (Bulk Insert) เพื่อประหยัด Network Request
+        if (recordsToInsert.length > 0) {
+            const { error } = await sb.from('sf_issuehist').insert(recordsToInsert);
+            if (error) throw error;
         }
-    }
 
-    // 4. อัปเดต State ครั้งเดียวหลังจากคำนวณครบทุก Item แล้ว
-    setLots(updatedLots);
-    setIssueHist(h => [...newHistoryEntries, ...h]);
-    setRequests(rs => rs.map(x => x.id === id ? { ...x, status: "issued", issuedBy: currentUserName, issuedDate: today } : x));
-    
-    toast("📤 จ่ายวัตถุดิบสำเร็จ! ตัดยอด FIFO แล้ว");
-    setModal(null);
-    setSelectedLots({});
-    setTimeout(() => toast("📧 ส่ง Email แจ้งฝ่ายผลิตแล้ว", "info"), 600);
-}
+        // 2. อัปเดต UI State ครั้งเดียว
+        setIssueHist(h => [...uiRecords, ...h]);
+
+        // 3. ปิด Modal และเคลียร์ค่า
+        toast("📤 จ่ายวัตถุดิบสำเร็จ! ตัดยอด FIFO แล้ว");
+        setModal(null);
+        setSelectedLots({});
+        
+        setTimeout(() => toast("📧 ส่ง Email แจ้งฝ่ายผลิตแล้ว", "info"), 600);
+
+    } catch (err) {
+        console.error("Error issuing materials:", err);
+        toast("❌ เกิดข้อผิดพลาดในการบันทึกข้อมูล", "error");
+    }
+};
     // ── RECEIVE ──
     async function submitRecv() {
         const { date, po, inv, type, matId, maker, rohs, lots: rvLots } = rvForm;
@@ -1388,7 +1441,7 @@ function DashPage({ requests, materials, lots, role, master, onAp, onIs, goto, i
                 React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12 } },
                     React.createElement("thead", null,
                         React.createElement("tr", { style: { background: C.sur2 } }, ["วัตถุดิบ", "Maker", "Size", "คงเหลือ", "Min", "สถานะ"].map(h => React.createElement("th", { key: h, style: { padding: "7px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}` } }, h)))),
-                    React.createElement("tbody", null, materials.filter(m => {
+                    React.createElement("tbody", null, sortBySize(materials).filter(m => {
                         const st = { kgs: (lots[m.id] || []).reduce((a, x) => a + (x.rem_kgs || 0), 0), pcs: (lots[m.id] || []).reduce((a, x) => a + (x.rem_pcs || 0), 0), coil: (lots[m.id] || []).reduce((a, x) => a + (x.rem_coil || 0), 0) };
                         const tot = st.kgs + st.pcs + st.coil;
                         // หมด หรือ ต่ำกว่า min
@@ -1915,7 +1968,7 @@ function IsBody({ req, lots, selectedLots, setSelectedLots }) {
 // ════════════════════════════════════════════════════════════
 function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail }) {
     const [search, setSearch] = useState("");
-    const baseList = filter === "all" ? materials : materials.filter(m => m.type === filter);
+    const baseList = sortBySize(filter === "all" ? materials : materials.filter(m => m.type === filter));
     const filtered = baseList
         .filter(m => !search || m.size.toLowerCase().includes(search.toLowerCase()) || m.name.toLowerCase().includes(search.toLowerCase()) || m.partNo.toLowerCase().includes(search.toLowerCase()) || m.maker.toLowerCase().includes(search.toLowerCase()))
         .sort((a, b) => {
@@ -2003,7 +2056,7 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
 // LOT / FIFO PAGE
 // ════════════════════════════════════════════════════════════
 function LotPage({ materials, lots, master, onLotDetail }) {
-    const mats = materials.filter(m => lots[m.id] && lots[m.id].length > 0);
+    const mats = sortBySize(materials.filter(m => lots[m.id] && lots[m.id].length > 0));
     return React.createElement("div", null,
         React.createElement("div", { style: { background: "rgba(88,166,255,.07)", border: "1px solid rgba(88,166,255,.2)", borderRadius: 8, padding: "9px 12px", fontSize: 11, color: C.acc2, marginBottom: 14, lineHeight: 1.7 } },
             React.createElement("strong", null, "\u2139\uFE0F FIFO"),
@@ -2407,7 +2460,8 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials }
 // MATERIAL MASTER PAGE
 // ════════════════════════════════════════════════════════════
 function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, onEdit, onAddSize, onToggle, onDelete }) {
-    const filtered = (filter === "all" ? materials : materials.filter(m => m.type === filter)).slice().sort((a, b) => {
+    const filtered = sortBySize(filter === "all" ? materials : materials.filter(m => m.type === filter));
+    const sortedFiltered = filtered.slice().sort((a, b) => {
         if (a.type !== b.type)
             return a.type.localeCompare(b.type);
         if (a.name !== b.name)
@@ -2485,7 +2539,13 @@ function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, error
         React.createElement(SecTitle, null, "\uD83C\uDFF7\uFE0F \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2B\u0E25\u0E31\u0E01"),
         React.createElement(FGrid, { cols: 3 },
             React.createElement(FG, { label: "\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A *", note: "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E14\u0E49\u0E17\u0E35\u0E48 Master Data" },
-                React.createElement(Sel, { value: form.type, onChange: v => { setForm(f => ({ ...f, type: v, maker: "", makerNew: "" })); clearErr && clearErr("type"); }, style: eb("type"), options: [{ v: "", l: "-- เลือกประเภท --" }, ...master.matTypes.map(t => ({ v: t.code, l: `${t.code} — ${t.label}` }))], placeholder: "-- \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17 --" }),
+                React.createElement(Sel, { value: form.type, onChange: v => { 
+                    let newUnit = "KGS";
+                    if (v === "CU") newUnit = "BOTH_KG_COIL";
+                    else if (v === "SUS") newUnit = "BOTH_KG_PCS";
+                    setForm(f => ({ ...f, type: v, maker: "", makerNew: "", unit: newUnit })); 
+                    clearErr && clearErr("type"); 
+                }, style: eb("type"), options: [{ v: "", l: "-- เลือกประเภท --" }, ...master.matTypes.map(t => ({ v: t.code, l: `${t.code} — ${t.label}` }))], placeholder: "-- \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17 --" }),
                 ef("type")),
             React.createElement(FG, { label: "Type Material *", note: "\u0E23\u0E2B\u0E31\u0E2A\u0E0A\u0E19\u0E34\u0E14 material \u0E40\u0E0A\u0E48\u0E19 A3003, A6063, SUS304, NAS254N, C1220T" },
                 React.createElement("div", { style: eb("name") },
