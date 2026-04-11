@@ -225,6 +225,97 @@ function reqFromDb(db) {
 // MASTER DATA — ทุกอย่างขยายได้จากในระบบ
 // ════════════════════════════════════════════════════════════
 // ── ผู้ใช้งานระบบ (PIN-based auth) ──
+
+// ══════════════════════════════════════════════════════════
+// COLOR SYSTEM - แยกสีตาม Size, Maker, Temper
+// ══════════════════════════════════════════════════════════
+
+// สีสำหรับ Maker (สีพื้นฐาน - อ่อนๆ)
+const MAKER_COLORS = [
+    { bg: 'rgba(255, 255, 255, 0)', border: '#e1e4e8' }, // Default - ไม่มีสี
+    { bg: 'rgba(88, 166, 255, 0.08)', border: '#58a6ff' }, // น้ำเงิน
+    { bg: 'rgba(63, 185, 80, 0.08)', border: '#3fb950' }, // เขียว
+    { bg: 'rgba(210, 153, 34, 0.08)', border: '#d29922' }, // เหลือง
+    { bg: 'rgba(188, 140, 255, 0.08)', border: '#bc8cff' }, // ม่วง
+    { bg: 'rgba(248, 81, 73, 0.08)', border: '#f85149' }, // แดง
+    { bg: 'rgba(255, 136, 62, 0.08)', border: '#ff883e' }, // ส้ม
+    { bg: 'rgba(255, 192, 203, 0.08)', border: '#ffc0cb' }, // ชมพู
+];
+
+// สีสำหรับ Temper (เข้มกว่า Maker)
+const TEMPER_COLORS = [
+    { bg: 'rgba(255, 255, 255, 0)', border: '#e1e4e8', accent: 'transparent' }, // Default
+    { bg: 'rgba(139, 92, 246, 0.12)', border: '#8b5cf6', accent: '#8b5cf6' }, // ม่วงเข้ม
+    { bg: 'rgba(236, 72, 153, 0.12)', border: '#ec4899', accent: '#ec4899' }, // ชมพูเข้ม
+    { bg: 'rgba(34, 197, 94, 0.12)', border: '#22c55e', accent: '#22c55e' }, // เขียวเข้ม
+    { bg: 'rgba(251, 146, 60, 0.12)', border: '#fb923c', accent: '#fb923c' }, // ส้มเข้ม
+    { bg: 'rgba(59, 130, 246, 0.12)', border: '#3b82f6', accent: '#3b82f6' }, // น้ำเงินเข้ม
+    { bg: 'rgba(239, 68, 68, 0.12)', border: '#ef4444', accent: '#ef4444' }, // แดงเข้ม
+];
+
+// ฟังก์ชันหา Material ที่มี Size เดียวกัน
+function getMaterialsWithSameSize(materials, material) {
+    if (!material || !material.size || !material.type) return [];
+    return materials.filter(m => 
+        m.id !== material.id &&
+        m.type === material.type && 
+        m.size.toLowerCase() === material.size.toLowerCase() &&
+        m.active !== false
+    );
+}
+
+// ฟังก์ชันกำหนดสีตาม Maker
+function getMakerColor(materials, material) {
+    const sameSizeMats = getMaterialsWithSameSize(materials, material);
+    if (sameSizeMats.length === 0) return MAKER_COLORS[0]; // ไม่มี duplicate = ไม่ต้องสี
+    
+    // เรียงตาม Maker name
+    const allMakers = [material, ...sameSizeMats].map(m => m.maker).sort();
+    const uniqueMakers = [...new Set(allMakers)];
+    
+    if (uniqueMakers.length === 1) return MAKER_COLORS[0]; // Maker เดียวกันหมด = ไม่ต้องสี
+    
+    const makerIndex = uniqueMakers.indexOf(material.maker);
+    return MAKER_COLORS[makerIndex % MAKER_COLORS.length];
+}
+
+// ฟังก์ชันกำหนดสีตาม Temper
+function getTemperColor(materials, material) {
+    const sameSizeSameMaker = materials.filter(m =>
+        m.id !== material.id &&
+        m.type === material.type &&
+        m.size.toLowerCase() === material.size.toLowerCase() &&
+        m.maker === material.maker &&
+        m.active !== false
+    );
+    
+    if (sameSizeSameMaker.length === 0) return TEMPER_COLORS[0]; // ไม่มี duplicate = ไม่ต้องสี
+    
+    // เรียงตาม Temper
+    const allTempers = [material, ...sameSizeSameMaker].map(m => m.temper || '-').sort();
+    const uniqueTempers = [...new Set(allTempers)];
+    
+    if (uniqueTempers.length === 1) return TEMPER_COLORS[0]; // Temper เดียวกันหมด = ไม่ต้องสี
+    
+    const temperIndex = uniqueTempers.indexOf(material.temper || '-');
+    return TEMPER_COLORS[temperIndex % TEMPER_COLORS.length];
+}
+
+// ฟังก์ชันรวมสี (Maker + Temper)
+function getMaterialColor(materials, material) {
+    const makerColor = getMakerColor(materials, material);
+    const temperColor = getTemperColor(materials, material);
+    
+    // ถ้ามีทั้ง Maker และ Temper แตกต่าง = ใช้ Temper (เข้มกว่า)
+    if (temperColor !== TEMPER_COLORS[0]) {
+        return temperColor;
+    }
+    
+    // ถ้ามีแค่ Maker แตกต่าง = ใช้ Maker
+    return makerColor;
+}
+
+
 const INIT_USERS = [
     { id: "u1", name: "Admin", pin: "0000", role: "admin", active: true },
     { id: "u2", name: "หัวหน้า A", pin: "1111", role: "supervisor", active: true },
@@ -750,7 +841,7 @@ function StoreFlow() {
     const r = requests.find(x => x.id === id);
     if (!r) return;
 
-    // 1. Stock Check
+    // 1. Check Stock First
     const noStk = r.items.filter(it => {
         const ml = lots[it.matId] || [];
         const tot = ml.reduce((s, l) => s + (l.rem_pcs || 0) + (l.rem_kgs || 0) + (l.rem_coil || 0), 0);
@@ -764,90 +855,86 @@ function StoreFlow() {
     }
 
     const today = new Date().toISOString().split("T")[0];
-    const newIssueRecords = [];
-    
-    // We create a local copy of lots to manipulate before saving to state
-    let updatedLots = { ...lots };
+    const issuedByName = currentUser?.name || "พนักงานสโตร์";
 
-    // 2. Process Items (using for...of for async compatibility)
+    // 2. Update Request Status
+    setRequests(rs => rs.map(x => x.id === id ? { 
+        ...x, status: "issued", issuedBy: issuedByName, issuedDate: today 
+    } : x));
+
+    // Prepare arrays to hold data for batch updates
+    let newHistoryRecords = [];
+
+    // 3. Process Items using for...of (to allow await)
     for (const item of r.items) {
-        const ml = [...(updatedLots[item.matId] || [])];
-        const matInfo = materials.find(x => x.id === item.matId);
-        const unit = item.unit || matInfo?.unit || "PCS";
-        let rem = parseFloat(item.qty) || 0;
-
         const selKey = `${r.items.indexOf(item)}_${item.matId}`;
         const chosenLots = (selectedLots && selectedLots[selKey]) || [];
 
-        // Determine priority: Manual selection vs FIFO
-        const sortedByDate = [...ml].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
-        const processOrder = chosenLots.length > 0
-            ? chosenLots.map(cl => ({ lotIdx: ml.findIndex(l => l.lotNo === cl.lotNo), fixedQty: cl.qty })).filter(x => x.lotIdx >= 0)
-            : sortedByDate.map(l => ({ lotIdx: ml.findIndex(x => x.lotNo === l.lotNo), fixedQty: null })).filter(x => x.lotIdx >= 0);
+        // Logic for updating Lots state
+        setLots(ls => {
+            const ml = [...(ls[item.matId] || [])];
+            const matInfo = materials.find(x => x.id === item.matId);
+            const unit = item.unit || matInfo?.unit || "PCS";
+            let rem = parseFloat(item.qty) || 0;
 
-        for (const { lotIdx: i, fixedQty } of processOrder) {
-            if (rem <= 0) break;
-            const takeAmt = fixedQty != null ? Math.min(fixedQty, rem) : rem;
+            const sortedByDate = [...ml].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+            const processOrder = chosenLots.length > 0
+                ? chosenLots.map(cl => ({ lotIdx: ml.findIndex(l => l.lotNo === cl.lotNo), fixedQty: cl.qty })).filter(x => x.lotIdx >= 0)
+                : sortedByDate.map(l => ({ lotIdx: ml.findIndex(x => x.lotNo === l.lotNo), fixedQty: null })).filter(x => x.lotIdx >= 0);
 
-            // Logic for COIL / KGS / PCS reduction...
-            if (unit === "COIL" || (ml[i].rem_coil != null && ml[i].rem_pcs == null && ml[i].rem_kgs == null)) {
-                const take = Math.min(takeAmt, ml[i].rem_coil || 0);
-                const kgsPerCoil = (ml[i].coil && ml[i].kgs) ? (ml[i].kgs / ml[i].coil) : 0;
-                ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (take * kgsPerCoil)) : ml[i].rem_kgs };
-                rem -= take;
-            } else if (unit === "KGS" && ml[i].rem_kgs != null && ml[i].rem_pcs == null) {
-                const take = Math.min(takeAmt, ml[i].rem_kgs || 0);
-                ml[i] = { ...ml[i], rem_kgs: Math.max(0, (ml[i].rem_kgs || 0) - take) };
-                rem -= take;
-            } else {
-                const take = Math.min(takeAmt, ml[i].rem_pcs || 0);
-                ml[i] = { ...ml[i], rem_pcs: Math.max(0, (ml[i].rem_pcs || 0) - take) };
-                if (ml[i].rem_kgs != null && matInfo?.kpp) ml[i] = { ...ml[i], rem_kgs: Math.max(0, ml[i].rem_kgs - (take * matInfo.kpp)) };
-                rem -= take;
+            for (const { lotIdx: i, fixedQty } of processOrder) {
+                if (rem <= 0) break;
+                const takeAmt = fixedQty != null ? Math.min(fixedQty, rem) : rem;
+
+                if (unit === "COIL" || (ml[i].rem_coil != null && ml[i].rem_pcs == null && ml[i].rem_kgs == null)) {
+                    const take = Math.min(takeAmt, ml[i].rem_coil || 0);
+                    const kgsPerCoil = (ml[i].coil && ml[i].kgs) ? (ml[i].kgs / ml[i].coil) : 0;
+                    ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (take * kgsPerCoil)) : ml[i].rem_kgs };
+                    rem -= take;
+                } else if (unit === "KGS" && ml[i].rem_kgs != null && ml[i].rem_pcs == null) {
+                    const take = Math.min(takeAmt, ml[i].rem_kgs || 0);
+                    ml[i] = { ...ml[i], rem_kgs: Math.max(0, (ml[i].rem_kgs || 0) - take) };
+                    rem -= take;
+                } else {
+                    const take = Math.min(takeAmt, ml[i].rem_pcs || 0);
+                    ml[i] = { ...ml[i], rem_pcs: Math.max(0, (ml[i].rem_pcs || 0) - take) };
+                    if (ml[i].rem_kgs != null && matInfo?.kpp)
+                        ml[i] = { ...ml[i], rem_kgs: Math.max(0, ml[i].rem_kgs - (take * matInfo.kpp)) };
+                    rem -= take;
+                }
             }
-        }
-        updatedLots[item.matId] = ml;
+            return { ...ls, [item.matId]: ml };
+        });
 
-        // 3. Prepare Database Records
-        const currentIssuedBy = currentUser?.name || "พนักงานสโตร์";
-        if (chosenLots.length > 0) {
-            chosenLots.forEach(cl => {
-                newIssueRecords.push({
-                    issue_date: today, req_id: r.id, material_name: item.name, maker: item.maker, 
-                    lot_no: cl.lotNo, pcs: item.unit === "PCS" ? cl.qty : null, 
-                    kgs: item.unit === "KGS" ? cl.qty : item.kgs, coil: item.unit === "COIL" ? cl.qty : null,
-                    unit: item.unit, forecast: r.forecast, dept: r.dept, requester: r.requester, 
-                    approver: r.approvedBy, issued_by: currentIssuedBy
-                });
-            });
-        } else {
-            newIssueRecords.push({
-                issue_date: today, req_id: r.id, material_name: item.name, maker: item.maker, 
-                lot_no: item.lotNo, pcs: item.qty, kgs: item.kgs, coil: item.coil, 
-                unit: item.unit, forecast: r.forecast, dept: r.dept, requester: r.requester, 
-                approver: r.approvedBy, issued_by: currentIssuedBy
-            });
-        }
+        // 4. Database Insertion Logic
+        const recordsToInsert = chosenLots.length > 0 
+            ? chosenLots.map(cl => ({
+                issue_date: today, req_id: r.id, material_name: item.name, maker: item.maker,
+                lot_no: cl.lotNo, pcs: item.unit === "PCS" ? cl.qty : null,
+                kgs: item.unit === "KGS" ? cl.qty : item.kgs, coil: item.unit === "COIL" ? cl.qty : null,
+                unit: item.unit, forecast: r.forecast, dept: r.dept, requester: r.requester,
+                approver: r.approvedBy, issued_by: issuedByName
+            }))
+            : [{
+                issue_date: today, req_id: r.id, material_name: item.name, maker: item.maker,
+                lot_no: item.lotNo, pcs: item.qty, kgs: item.kgs, coil: item.coil,
+                unit: item.unit, forecast: r.forecast, dept: r.dept, requester: r.requester,
+                approver: r.approvedBy, issued_by: issuedByName
+            }];
+
+        // Insert to Supabase
+        const { error } = await sb.from('sf_issuehist').insert(recordsToInsert);
+        if (error) console.error("DB Error:", error);
+        
+        newHistoryRecords.push(...recordsToInsert);
     }
 
-    try {
-        // 4. Batch Database Update
-        const { error } = await sb.from('sf_issuehist').insert(newIssueRecords);
-        if (error) throw error;
-
-        // 5. Update State all at once
-        setRequests(rs => rs.map(x => x.id === id ? { ...x, status: "issued", issuedBy: currentUser?.name || "พนักงานสโตร์", issuedDate: today } : x));
-        setLots(updatedLots);
-        setIssueHist(h => [...newIssueRecords, ...h]);
-
-        toast("📤 จ่ายวัตถุดิบสำเร็จ! ตัดยอด FIFO แล้ว");
-        setModal(null);
-        setSelectedLots({});
-        setTimeout(() => toast("📧 ส่ง Email แจ้งฝ่ายผลิตแล้ว", "info"), 600);
-    } catch (err) {
-        console.error("Issue Error:", err);
-        toast("❌ เกิดข้อผิดพลาดในการบันทึกข้อมูล", "error");
-    }
+    // 5. Finalize UI
+    setIssueHist(h => [...newHistoryRecords, ...h]);
+    toast("📤 จ่ายวัตถุดิบสำเร็จ! ตัดยอด FIFO แล้ว");
+    setModal(null);
+    setSelectedLots({});
+    setTimeout(() => toast("📧 ส่ง Email แจ้งฝ่ายผลิตแล้ว", "info"), 600);
 }
     // ── RECEIVE ──
     async function submitRecv() {
@@ -1212,6 +1299,7 @@ function UsersPage({ users, setUsers, currentUser, toast }) {
         return React.createElement(Card, null,
             React.createElement("div", { style: { padding: 40, textAlign: "center", color: C.tx2 } }, "\uD83D\uDD12 \u0E40\u0E09\u0E1E\u0E32\u0E30 Admin \u0E40\u0E17\u0E48\u0E32\u0E19\u0E31\u0E49\u0E19"));
     return React.createElement("div", null,
+        React.createElement(ColorLegend, { materials: materials }),
         React.createElement(Card, null,
             React.createElement(CHd, { title: "\uD83D\uDC65 \u0E08\u0E31\u0E14\u0E01\u0E32\u0E23\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E41\u0E25\u0E30 PIN" }),
             React.createElement("div", { style: { padding: 14 } },
@@ -1873,7 +1961,17 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                         const low = ok && ((s.kgs > 0 && s.kgs < m.minStock) || (s.pcs > 0 && s.pcs < m.minStock));
                         const mc = master.matTypes.find(t => t.code === m.type) || {};
                         // ตรวจว่า row ก่อนหน้ามี size+name เดียวกัน → group แสดงสีต่าง
-                        return React.createElement("tr", { key: m.id, style: { opacity: m.active === false ? .4 : 1 } },
+                        return React.createElement("tr", { key: m.id, style: { 
+                    opacity: m.active === false ? .4 : 1,
+                    background: (() => {
+                        const color = getMaterialColor(materials, m);
+                        return color.bg;
+                    })(),
+                    borderLeft: (() => {
+                        const color = getMaterialColor(materials, m);
+                        return color.border && color.border !== '#e1e4e8' ? `3px solid ${color.border}` : 'none';
+                    })()
+                } },
                             React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2 } },
                                 React.createElement(Tag, { color: mc.color || C.tx2, bg: mc.bg || "rgba(255,255,255,.06)", brd: `${mc.color || C.brd}44` }, m.type)),
                             React.createElement("td", { style: { padding: "9px 12px", fontWeight: 700, borderBottom: C.brd2, whiteSpace: "nowrap", fontSize: 13 } }, m.name),
@@ -2310,6 +2408,72 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials }
 // ════════════════════════════════════════════════════════════
 // MATERIAL MASTER PAGE
 // ════════════════════════════════════════════════════════════
+
+// Color Legend Component - อธิบายสี
+function ColorLegend({ materials }) {
+    // หา materials ที่มี duplicate size
+    const duplicates = [];
+    const seen = new Set();
+    
+    materials.forEach(m => {
+        if (!m.active) return;
+        const key = `${m.type}_${m.size.toLowerCase()}`;
+        if (seen.has(key)) {
+            const existing = duplicates.find(d => d.key === key);
+            if (existing) {
+                existing.items.push(m);
+            } else {
+                const all = materials.filter(x => 
+                    x.active && x.type === m.type && 
+                    x.size.toLowerCase() === m.size.toLowerCase()
+                );
+                if (all.length > 1) {
+                    duplicates.push({ key, size: m.size, type: m.type, items: all });
+                }
+            }
+        }
+        seen.add(key);
+    });
+    
+    if (duplicates.length === 0) return null;
+    
+    return React.createElement("div", { style: { 
+        background: "rgba(88,166,255,.05)", 
+        border: "1px solid rgba(88,166,255,.2)", 
+        borderRadius: 8, 
+        padding: "12px 16px", 
+        marginBottom: 16,
+        fontSize: 11
+    }},
+        React.createElement("div", { style: { fontWeight: 700, color: C.tx, marginBottom: 8 } }, 
+            "🎨 สีแยกความแตกต่าง"
+        ),
+        React.createElement("div", { style: { color: C.tx2, marginBottom: 8 } },
+            "Size เดียวกันแต่ต่าง Maker หรือ Temper จะแสดงสีต่างกันเพื่อแยกให้ชัดเจน"
+        ),
+        duplicates.slice(0, 3).map((dup, i) => 
+            React.createElement("div", { key: i, style: { marginTop: 6, fontSize: 10 } },
+                React.createElement("strong", { style: { color: C.acc } }, `${dup.size}: `),
+                dup.items.map((item, j) => {
+                    const color = getMaterialColor(materials, item);
+                    return React.createElement("span", { 
+                        key: j,
+                        style: { 
+                            display: "inline-block",
+                            background: color.bg,
+                            border: `1px solid ${color.border}`,
+                            borderRadius: 4,
+                            padding: "2px 6px",
+                            marginRight: 4,
+                            color: C.tx
+                        }
+                    }, `${item.maker}${item.temper !== '-' ? ` (${item.temper})` : ''}`);
+                })
+            )
+        )
+    );
+}
+
 function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, onEdit, onAddSize, onToggle, onDelete }) {
     const filtered = (filter === "all" ? materials : materials.filter(m => m.type === filter)).slice().sort((a, b) => {
         if (a.type !== b.type)
@@ -2348,7 +2512,17 @@ function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, on
                         React.createElement("tr", { style: { background: C.sur2 } }, ["ประเภท", "ชื่อ Material", "Maker", "Size", "Temper", "KG/PCS", "Unit", "Min Stock", "สถานะ", "Action"].map(h => React.createElement("th", { key: h, style: { padding: "8px 11px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, h)))),
                     React.createElement("tbody", null, filtered.map(m => {
                         const mc = master.matTypes.find(t => t.code === m.type) || {};
-                        return React.createElement("tr", { key: m.id, style: { opacity: m.active === false ? .4 : 1 } },
+                        return React.createElement("tr", { key: m.id, style: { 
+                    opacity: m.active === false ? .4 : 1,
+                    background: (() => {
+                        const color = getMaterialColor(materials, m);
+                        return color.bg;
+                    })(),
+                    borderLeft: (() => {
+                        const color = getMaterialColor(materials, m);
+                        return color.border && color.border !== '#e1e4e8' ? `3px solid ${color.border}` : 'none';
+                    })()
+                } },
                             React.createElement("td", { style: { padding: "8px 11px", borderBottom: C.brd2 } },
                                 React.createElement(Tag, { color: mc.color || C.tx2, bg: mc.bg || "rgba(255,255,255,.06)", brd: `${mc.color || C.brd}44` }, m.type)),
                             React.createElement("td", { style: { padding: "8px 11px", fontWeight: 700, borderBottom: C.brd2, fontSize: 13 } }, m.name),
