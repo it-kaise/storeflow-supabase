@@ -1,13 +1,13 @@
 <!DOCTYPE html><html lang="th"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>StoreFlow v44 - Cloud Edition</title>
+<title>StoreFlow v44 - Real-time Edition</title>
 <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#0d1117;color:#e6edf3;font-family:system-ui,sans-serif;}::-webkit-scrollbar{width:6px;height:6px;}::-webkit-scrollbar-track{background:#161b22;}::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px;}select option{background:#1c2333;color:#e6edf3;}#loading{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:14px;color:#8b949e;}.spin{width:34px;height:34px;border:3px solid #30363d;border-top-color:#f0883e;border-radius:50%;animation:sp .8s linear infinite;}@keyframes sp{to{transform:rotate(360deg)}}</style>
 </head><body>
-<div id="loading"><div class="spin"></div><div style="font-size:14px;font-weight:700">⚙️ StoreFlow v44</div><div style="font-size:11px">กำลังเชื่อมต่อ Supabase...</div></div>
+<div id="loading"><div class="spin"></div><div style="font-size:14px;font-weight:700">⚙️ StoreFlow</div><div style="font-size:11px">กำลังเชื่อมต่อ Supabase...</div></div>
 <div id="root" style="display:none"></div>
 <script>
 const { useState } = React;
@@ -277,38 +277,8 @@ const INIT_MASTER = {
         "QC", "ซ่อมบำรุง", "New Project",
     ],
     // หน่วย
-    units: ["KGS", "PCS", "COIL", "BOTH_KG_COIL", "BOTH_KG_PCS"],
+    units: ["KGS", "PCS", "COIL", "BOTH"],
 };
-
-// ══════════════════════════════════════════════════════════
-// SORT FUNCTION - เรียง Size จากเล็กไปใหญ่
-// ══════════════════════════════════════════════════════════
-function sortBySize(materials) {
-    return [...materials].sort((a, b) => {
-        // แยก size ออกเป็นตัวเลข
-        const parseSize = (sizeStr) => {
-            if (!sizeStr) return [0, 0, 0];
-            // ลบข้อความที่ไม่ใช่ตัวเลข เช่น LWC, mm
-            const cleaned = sizeStr.toUpperCase().replace(/[^0-9.×xX]/g, ' ');
-            const nums = cleaned.split(/[×xX\s]+/).map(n => parseFloat(n) || 0);
-            return [nums[0] || 0, nums[1] || 0, nums[2] || 0]; // [OD, THK, LENGTH]
-        };
-        
-        const sizeA = parseSize(a.size);
-        const sizeB = parseSize(b.size);
-        
-        // เปรียบเทียบ OD, THK, LENGTH ตามลำดับ
-        for (let i = 0; i < 3; i++) {
-            if (sizeA[i] !== sizeB[i]) {
-                return sizeA[i] - sizeB[i];
-            }
-        }
-        
-        // ถ้าเท่ากันหมด ให้เรียงตามชื่อ
-        return (a.size || '').localeCompare(b.size || '');
-    });
-}
-
 const INIT_MATERIALS = [];
 const INIT_LOTS = {};
 const INIT_REQUESTS = [];
@@ -538,7 +508,16 @@ function exportXLSX(sheets, filename) {
         alert("Export ไม่สำเร็จ: " + e.message);
     }
 }
-// ── localStorage removed - ใช้ Supabase เท่านั้น ──
+// ── localStorage helpers (เก็บ session เท่านั้น) ──
+function lsGet(key, def) { try {
+    const v = localStorage.getItem("sf_" + key);
+    return v ? JSON.parse(v) : def;
+} catch {
+    return def;
+} }
+function lsSet(key, val) { try {
+    localStorage.setItem("sf_" + key, JSON.stringify(val));
+} catch { } }
 function StoreFlow() {
     var _a, _b;
     const [page, setPage] = useState("dashboard");
@@ -686,31 +665,12 @@ function StoreFlow() {
         setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4000);
     }
     // ── helpers ──
-    async function addToMaster(key, val) { 
-        const newMaster = { ...master, [key]: [...master[key], val] };
-        setMaster(newMaster);
-        await saveMasterData(newMaster);
-    }
-    async function addCustomer(c) { 
-        if (!master.customers.includes(c)) {
-            setMaster(m => ({ ...m, customers: [...m.customers, c] }));
-            const newMaster = { ...master, customers: [...master.customers, c] };
-            await saveMasterData(newMaster);
-        }
-    }
-    async function addDept(d) { 
-        if (!master.departments.includes(d)) {
-            setMaster(m => ({ ...m, departments: [...m.departments, d] }));
-            const newMaster = { ...master, departments: [...master.departments, d] };
-            await saveMasterData(newMaster);
-        }
-    }
-    async function addMaker(name, types) { 
-        setMaster(m => ({ ...m, makers: [...m.makers, { name, types }] })); 
-        // บันทึกลง Supabase
-        const newMaster = { ...master, makers: [...master.makers, { name, types }] };
-        await saveMasterData(newMaster);
-    }
+    function addToMaster(key, val) { setMaster(m => ({ ...m, [key]: [...m[key], val] })); }
+    function addCustomer(c) { if (!master.customers.includes(c))
+        setMaster(m => ({ ...m, customers: [...m.customers, c] })); }
+    function addDept(d) { if (!master.departments.includes(d))
+        setMaster(m => ({ ...m, departments: [...m.departments, d] })); }
+    function addMaker(name, types) { setMaster(m => ({ ...m, makers: [...m.makers, { name, types }] })); }
     function makersByType(type) { return master.makers.filter(mk => !type || mk.types.includes(type)).map(mk => mk.name); }
     function getStock(id) {
         const l = lots[id] || [];
@@ -790,7 +750,7 @@ function StoreFlow() {
     const r = requests.find(x => x.id === id);
     if (!r) return;
 
-    // 1. ตรวจสอบสต็อกเบื้องต้น
+    // 1. Stock Check
     const noStk = r.items.filter(it => {
         const ml = lots[it.matId] || [];
         const tot = ml.reduce((s, l) => s + (l.rem_pcs || 0) + (l.rem_kgs || 0) + (l.rem_coil || 0), 0);
@@ -804,13 +764,12 @@ function StoreFlow() {
     }
 
     const today = new Date().toISOString().split("T")[0];
-    const currentUserName = currentUser?.name || "พนักงานสโตร์";
-
-    // ใช้ local variables เพื่อรวบรวมข้อมูลก่อนอัปเดต state ทีเดียว
+    const newIssueRecords = [];
+    
+    // We create a local copy of lots to manipulate before saving to state
     let updatedLots = { ...lots };
-    let newHistoryEntries = [];
 
-    // 2. ใช้ for...of แทน forEach เพื่อให้ await ทำงานได้ถูกต้อง
+    // 2. Process Items (using for...of for async compatibility)
     for (const item of r.items) {
         const ml = [...(updatedLots[item.matId] || [])];
         const matInfo = materials.find(x => x.id === item.matId);
@@ -818,9 +777,9 @@ function StoreFlow() {
         let rem = parseFloat(item.qty) || 0;
 
         const selKey = `${r.items.indexOf(item)}_${item.matId}`;
-        const chosenLots = selectedLots?.[selKey] || [];
+        const chosenLots = (selectedLots && selectedLots[selKey]) || [];
 
-        // ลำดับการตัดสต็อก
+        // Determine priority: Manual selection vs FIFO
         const sortedByDate = [...ml].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
         const processOrder = chosenLots.length > 0
             ? chosenLots.map(cl => ({ lotIdx: ml.findIndex(l => l.lotNo === cl.lotNo), fixedQty: cl.qty })).filter(x => x.lotIdx >= 0)
@@ -829,16 +788,12 @@ function StoreFlow() {
         for (const { lotIdx: i, fixedQty } of processOrder) {
             if (rem <= 0) break;
             const takeAmt = fixedQty != null ? Math.min(fixedQty, rem) : rem;
-            
-            // Logic การตัดยอดตาม Unit
+
+            // Logic for COIL / KGS / PCS reduction...
             if (unit === "COIL" || (ml[i].rem_coil != null && ml[i].rem_pcs == null && ml[i].rem_kgs == null)) {
                 const take = Math.min(takeAmt, ml[i].rem_coil || 0);
                 const kgsPerCoil = (ml[i].coil && ml[i].kgs) ? (ml[i].kgs / ml[i].coil) : 0;
-                ml[i] = { 
-                    ...ml[i], 
-                    rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), 
-                    rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (take * kgsPerCoil)) : ml[i].rem_kgs 
-                };
+                ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (take * kgsPerCoil)) : ml[i].rem_kgs };
                 rem -= take;
             } else if (unit === "KGS" && ml[i].rem_kgs != null && ml[i].rem_pcs == null) {
                 const take = Math.min(takeAmt, ml[i].rem_kgs || 0);
@@ -847,50 +802,53 @@ function StoreFlow() {
             } else {
                 const take = Math.min(takeAmt, ml[i].rem_pcs || 0);
                 ml[i] = { ...ml[i], rem_pcs: Math.max(0, (ml[i].rem_pcs || 0) - take) };
-                if (ml[i].rem_kgs != null && matInfo?.kpp)
-                    ml[i] = { ...ml[i], rem_kgs: Math.max(0, ml[i].rem_kgs - (take * matInfo.kpp)) };
+                if (ml[i].rem_kgs != null && matInfo?.kpp) ml[i] = { ...ml[i], rem_kgs: Math.max(0, ml[i].rem_kgs - (take * matInfo.kpp)) };
                 rem -= take;
             }
         }
         updatedLots[item.matId] = ml;
 
-        // 3. จัดการประวัติการจ่าย (History)
-        const historyData = chosenLots.length > 0 ? chosenLots : [{ lotNo: item.lotNo, qty: item.qty }];
-        
-        for (const entry of historyData) {
-            const histRecord = {
-                issue_date: today,
-                req_id: r.id,
-                material_name: item.name,
-                maker: item.maker,
-                lot_no: entry.lotNo || item.lotNo,
-                pcs: unit === "PCS" ? entry.qty : null,
-                kgs: unit === "KGS" ? entry.qty : item.kgs,
-                coil: unit === "COIL" ? entry.qty : null,
-                unit: unit,
-                forecast: r.forecast,
-                dept: r.dept,
-                requester: r.requester,
-                approver: r.approvedBy,
-                issued_by: currentUserName
-            };
-
-            // ยิงขึ้น Database
-            await sb.from('sf_issuehist').insert(histRecord);
-            newHistoryEntries.push(histRecord);
+        // 3. Prepare Database Records
+        const currentIssuedBy = currentUser?.name || "พนักงานสโตร์";
+        if (chosenLots.length > 0) {
+            chosenLots.forEach(cl => {
+                newIssueRecords.push({
+                    issue_date: today, req_id: r.id, material_name: item.name, maker: item.maker, 
+                    lot_no: cl.lotNo, pcs: item.unit === "PCS" ? cl.qty : null, 
+                    kgs: item.unit === "KGS" ? cl.qty : item.kgs, coil: item.unit === "COIL" ? cl.qty : null,
+                    unit: item.unit, forecast: r.forecast, dept: r.dept, requester: r.requester, 
+                    approver: r.approvedBy, issued_by: currentIssuedBy
+                });
+            });
+        } else {
+            newIssueRecords.push({
+                issue_date: today, req_id: r.id, material_name: item.name, maker: item.maker, 
+                lot_no: item.lotNo, pcs: item.qty, kgs: item.kgs, coil: item.coil, 
+                unit: item.unit, forecast: r.forecast, dept: r.dept, requester: r.requester, 
+                approver: r.approvedBy, issued_by: currentIssuedBy
+            });
         }
     }
 
-    // 4. อัปเดต State ครั้งเดียวหลังจากคำนวณครบทุก Item แล้ว
-    setLots(updatedLots);
-    setIssueHist(h => [...newHistoryEntries, ...h]);
-    setRequests(rs => rs.map(x => x.id === id ? { ...x, status: "issued", issuedBy: currentUserName, issuedDate: today } : x));
-    
-    toast("📤 จ่ายวัตถุดิบสำเร็จ! ตัดยอด FIFO แล้ว");
-    setModal(null);
-    setSelectedLots({});
-    setTimeout(() => toast("📧 ส่ง Email แจ้งฝ่ายผลิตแล้ว", "info"), 600);
- }
+    try {
+        // 4. Batch Database Update
+        const { error } = await sb.from('sf_issuehist').insert(newIssueRecords);
+        if (error) throw error;
+
+        // 5. Update State all at once
+        setRequests(rs => rs.map(x => x.id === id ? { ...x, status: "issued", issuedBy: currentUser?.name || "พนักงานสโตร์", issuedDate: today } : x));
+        setLots(updatedLots);
+        setIssueHist(h => [...newIssueRecords, ...h]);
+
+        toast("📤 จ่ายวัตถุดิบสำเร็จ! ตัดยอด FIFO แล้ว");
+        setModal(null);
+        setSelectedLots({});
+        setTimeout(() => toast("📧 ส่ง Email แจ้งฝ่ายผลิตแล้ว", "info"), 600);
+    } catch (err) {
+        console.error("Issue Error:", err);
+        toast("❌ เกิดข้อผิดพลาดในการบันทึกข้อมูล", "error");
+    }
+}
     // ── RECEIVE ──
     async function submitRecv() {
         const { date, po, inv, type, matId, maker, rohs, lots: rvLots } = rvForm;
@@ -1086,67 +1044,21 @@ function StoreFlow() {
                                     if (!window.confirm(`นำเข้าข้อมูลจาก ${d.exportedAt || "ไม่ทราบวันที่"}?
 ⚠️ ข้อมูลปัจจุบันใน browser นี้จะถูกแทนที่ทั้งหมด`))
                                         return;
-                                    // Import และบันทึกลง Supabase
-                                    (async () => {
-                                        try {
-                                            // Import Master
-                                            if (d.master) {
-                                                setMaster(d.master);
-                                                await saveMasterData(d.master);
-                                            }
-                                            
-                                            // Import Materials
-                                            if (d.materials && Array.isArray(d.materials)) {
-                                                for (const mat of d.materials) {
-                                                    await sb.from('sf_materials').upsert(matToDb(mat), { onConflict: 'id' });
-                                                }
-                                                setMaterials(d.materials);
-                                            }
-                                            
-                                            // Import Requests
-                                            if (d.requests && Array.isArray(d.requests)) {
-                                                for (const req of d.requests) {
-                                                    await sb.from('sf_requests').upsert(reqToDb(req), { onConflict: 'id' });
-                                                }
-                                                setRequests(d.requests);
-                                            }
-                                            
-                                            // Import Lots (ซับซ้อนกว่า เพราะต้องมี material_id)
-                                            if (d.lots) {
-                                                for (const [matId, lotList] of Object.entries(d.lots)) {
-                                                    for (const lot of lotList) {
-                                                        if (lot._dbId) continue; // ข้าม lot ที่มี dbId แล้ว
-                                                        await saveLot(matId, lot);
-                                                    }
-                                                }
-                                                setLots(d.lots);
-                                            }
-                                            
-                                            // Import Users
-                                            if (d.users && Array.isArray(d.users)) {
-                                                for (const user of d.users) {
-                                                    await sb.from('sf_users').upsert({
-                                                        id: user.id,
-                                                        user_name: user.name,
-                                                        pin: user.pin,
-                                                        role: user.role,
-                                                        active: user.active !== false
-                                                    }, { onConflict: 'id' });
-                                                }
-                                                setUsers(d.users);
-                                            }
-                                            
-                                            // Import History (ถ้ามี)
-                                            if (d.issueHist) setIssueHist(d.issueHist);
-                                            if (d.recvHist) setRecvHist(d.recvHist);
-                                            
-                                            toast("✅ Import สำเร็จและบันทึกลง Supabase แล้ว!", "ok");
-                                            setTimeout(() => window.location.reload(), 1500);
-                                        } catch (err) {
-                                            console.error('Import error:', err);
-                                            toast("❌ Import ไม่สำเร็จ: " + err.message, "err");
-                                        }
-                                    })();
+                                    if (d.master)
+                                        setMaster(d.master);
+                                    if (d.materials)
+                                        setMaterials(d.materials);
+                                    if (d.lots)
+                                        setLots(d.lots);
+                                    if (d.requests)
+                                        setRequests(d.requests);
+                                    if (d.issueHist)
+                                        setIssueHist(d.issueHist);
+                                    if (d.recvHist)
+                                        setRecvHist(d.recvHist);
+                                    if (d.users)
+                                        setUsers(d.users);
+                                    toast("📥 Import ข้อมูลสำเร็จ! ข้อมูลทั้งหมดถูกโหลดแล้ว", "info");
                                 }
                                 catch (err) {
                                     alert("เปิดไฟล์ไม่ได้: " + err.message);
@@ -1170,24 +1082,13 @@ function StoreFlow() {
                         setRqErrors({});
                         setModal("req");
                         toast(`ℹ️ กำลังสร้าง Revised จาก ${r.id}`, "info");
-                    }, onCancel: async (id) => { 
-                        await sb.from('sf_requests').delete().eq('id', id); 
-                        setRequests(rs => rs.filter(r => r.id !== id)); 
-                        toast("✅ ยกเลิกและลบใบเบิกสำเร็จ", "ok"); 
-                    } }),
+                    }, onCancel: id => { setRequests(rs => rs.filter(r => r.id !== id)); toast("🗑️ ยกเลิกใบเบิกแล้ว", "warn"); } }),
                 page === "stock" && React.createElement(StkPage, { materials: materials, lots: lots, filter: stkFilter, setFilter: setStkFilter, master: master, goto: setPage, onLotDetail: m => setLotDetailMat(m) }),
                 page === "lotview" && React.createElement(LotPage, { materials: materials, lots: lots, master: master, onLotDetail: m => setLotDetailMat(m) }),
                 page === "receive" && React.createElement(RecvPage, { form: rvForm, setForm: setRvForm, materials: materials, master: master, onSubmit: submitRecv, recvHist: recvHist, addMaker: (n, t) => addMaker(n, [t]) }),
                 page === "history" && React.createElement(HistPage, { issueHist: issueHist, recvHist: recvHist, setRecvHist: setRecvHist, lots: lots, setLots: setLots, materials: materials }),
                 page === "users" && React.createElement(UsersPage, { users: users, setUsers: setUsers, currentUser: currentUser, toast: toast }),
-                page === "matmaster" && React.createElement(MatPage, { materials: materials, setMaterials: setMaterials, filter: mmFilter, setFilter: setMmFilter, master: master, onAdd: () => { setMmForm(emptyMm()); setMmErrors({}); setModal("mat"); }, onEdit: m => { setMmErrors({}); setMmForm({ editId: m.id, type: m.type, name: m.name, partNo: m.partNo, size: m.size, temper: m.temper, maker: m.maker, makerNew: "", extraMakers: m.extraMakers || [], customers: m.customers || [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: m.remark || "", productPartNos: m.productPartNos || [] }); setModal("mat"); }, onAddSize: m => { setMmErrors({}); setMmForm({ editId: "", type: m.type, name: m.name, partNo: m.partNo, size: "", temper: m.temper, maker: m.maker, makerNew: "", customers: [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: "", productPartNos: [] }); setModal("mat"); toast(`ℹ️ เพิ่ม Size ใหม่สำหรับ ${m.name}`, "info"); }, onToggle: async (id) => {
-                        const mat = materials.find(m => m.id === id);
-                        if (mat) {
-                            await sb.from('sf_materials').update({ active: !mat.active }).eq('id', id);
-                            setMaterials(ms => ms.map(m => m.id === id ? { ...m, active: !m.active } : m));
-                            toast(`${!mat.active ? '✅ เปิดใช้งาน' : '⏸️ ปิดใช้งาน'} "${mat.name} ${mat.size}"`, "info");
-                        }
-                    }, onDelete: async (m) => {
+                page === "matmaster" && React.createElement(MatPage, { materials: materials, setMaterials: setMaterials, filter: mmFilter, setFilter: setMmFilter, master: master, onAdd: () => { setMmForm(emptyMm()); setMmErrors({}); setModal("mat"); }, onEdit: m => { setMmErrors({}); setMmForm({ editId: m.id, type: m.type, name: m.name, partNo: m.partNo, size: m.size, temper: m.temper, maker: m.maker, makerNew: "", extraMakers: m.extraMakers || [], customers: m.customers || [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: m.remark || "", productPartNos: m.productPartNos || [] }); setModal("mat"); }, onAddSize: m => { setMmErrors({}); setMmForm({ editId: "", type: m.type, name: m.name, partNo: m.partNo, size: "", temper: m.temper, maker: m.maker, makerNew: "", customers: [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: "", productPartNos: [] }); setModal("mat"); toast(`ℹ️ เพิ่ม Size ใหม่สำหรับ ${m.name}`, "info"); }, onToggle: id => setMaterials(ms => ms.map(m => m.id === id ? { ...m, active: !m.active } : m)), onDelete: m => {
                         const hasLots = (lots[m.id] || []).some(l => (l.rem_kgs || 0) > 0 || (l.rem_pcs || 0) > 0 || (l.rem_coil || 0) > 0);
                         const hasTotalLots = (lots[m.id] || []).length > 0;
                         if (hasLots) {
@@ -1202,10 +1103,8 @@ function StoreFlow() {
                             if (!window.confirm(`ลบ "${m.name} ${m.size}" ออกจากระบบ?`))
                                 return;
                         }
-                        // ลบใน Supabase ก่อน
-                        await sb.from('sf_materials').delete().eq('id', m.id);
                         setMaterials(ms => ms.filter(x => x.id !== m.id));
-                        toast(`✅ ลบ "${m.name} ${m.size}" จาก Supabase สำเร็จ`, "ok");
+                        toast(`🗑️ ลบ "${m.name} ${m.size}" แล้ว`);
                     } }),
                 page === "masterdata" && React.createElement(MasterDataPage, { master: master, setMaster: setMaster, toast: toast }),
                 page === "emailsettings" && React.createElement(EmailPage, null))),
@@ -1289,7 +1188,7 @@ function UsersPage({ users, setUsers, currentUser, toast }) {
     const [form, setForm] = useState({ id: "", name: "", pin: "", role: "supervisor", active: true });
     const roleOpts = ["production", "supervisor", "store", "admin"];
     const roleLabel = { supervisor: "👨‍💼 หัวหน้างาน", store: "🏪 พนักงานสโตร์", admin: "⚙️ Admin", production: "👷 ฝ่ายผลิต" };
-    async function save() {
+    function save() {
         if (!form.name || !form.pin) {
             toast("กรุณากรอกชื่อและ PIN", "err");
             return;
@@ -1298,36 +1197,16 @@ function UsersPage({ users, setUsers, currentUser, toast }) {
             toast("PIN ต้องมีอย่างน้อย 4 หลัก", "err");
             return;
         }
-        try {
-            if (form.id) {
-                // Update existing user
-                await sb.from('sf_users').update({
-                    user_name: form.name,
-                    pin: form.pin,
-                    role: form.role,
-                    active: form.active
-                }).eq('id', form.id);
-                setUsers(us => us.map(u => u.id === form.id ? { ...u, ...form } : u));
-                toast(`✅ แก้ไข "${form.name}" และบันทึกลง Supabase สำเร็จ`);
-            }
-            else {
-                // Add new user
-                const id = "u" + Date.now();
-                await sb.from('sf_users').insert({
-                    id: id,
-                    user_name: form.name,
-                    pin: form.pin,
-                    role: form.role,
-                    active: form.active
-                });
-                setUsers(us => [...us, { ...form, id }]);
-                toast(`✅ เพิ่ม "${form.name}" และบันทึกลง Supabase สำเร็จ`);
-            }
-            setForm({ id: "", name: "", pin: "", role: "supervisor", active: true });
-        } catch (error) {
-            console.error('Error saving user:', error);
-            toast(`❌ บันทึกไม่สำเร็จ: ${error.message}`, "err");
+        if (form.id) {
+            setUsers(us => us.map(u => u.id === form.id ? { ...u, ...form } : u));
+            toast(`✅ แก้ไข "${form.name}" แล้ว`);
         }
+        else {
+            const id = "u" + Date.now();
+            setUsers(us => [...us, { ...form, id }]);
+            toast(`✅ เพิ่ม "${form.name}" แล้ว`);
+        }
+        setForm({ id: "", name: "", pin: "", role: "supervisor", active: true });
     }
     if ((currentUser === null || currentUser === void 0 ? void 0 : currentUser.role) !== "admin")
         return React.createElement(Card, null,
@@ -1352,15 +1231,10 @@ function UsersPage({ users, setUsers, currentUser, toast }) {
                         React.createElement("td", { style: { padding: "8px 12px", borderBottom: C.brd2 } },
                             React.createElement("div", { style: { display: "flex", gap: 4 } },
                                 React.createElement("button", { onClick: () => setForm({ ...u }), style: { background: "transparent", border: `1px solid ${C.brd}`, borderRadius: 4, color: C.tx2, cursor: "pointer", padding: "2px 8px", fontSize: 11 } }, "\u270F\uFE0F"),
-                                React.createElement("button", { onClick: async () => { 
-                                    if (u.id === (currentUser === null || currentUser === void 0 ? void 0 : currentUser.id)) {
+                                React.createElement("button", { onClick: () => { if (u.id === (currentUser === null || currentUser === void 0 ? void 0 : currentUser.id)) {
                                         toast("ไม่สามารถปิดตัวเองได้", "err");
                                         return;
-                                    }
-                                    await sb.from('sf_users').update({ active: !u.active }).eq('id', u.id);
-                                    setUsers(us => us.map(x => x.id === u.id ? { ...x, active: !x.active } : x));
-                                    toast(`${!u.active ? '✅ เปิดใช้งาน' : '🔒 ปิดใช้งาน'} "${u.name}"`, "info");
-                                }, style: { background: "transparent", border: `1px solid ${C.brd}`, borderRadius: 4, color: C.tx2, cursor: "pointer", padding: "2px 8px", fontSize: 11 } }, u.active ? "🔒" : "🔓"))))))),
+                                    } setUsers(us => us.map(x => x.id === u.id ? { ...x, active: !x.active } : x)); }, style: { background: "transparent", border: `1px solid ${C.brd}`, borderRadius: 4, color: C.tx2, cursor: "pointer", padding: "2px 8px", fontSize: 11 } }, u.active ? "🔒" : "🔓"))))))),
                 React.createElement("div", { style: { background: C.sur2, border: `1px solid ${C.brd}`, borderRadius: 8, padding: 14 } },
                     React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: C.tx, marginBottom: 10 } }, form.id ? "✏️ แก้ไขผู้ใช้" : "➕ เพิ่มผู้ใช้ใหม่"),
                     React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" } },
@@ -1418,7 +1292,7 @@ function DashPage({ requests, materials, lots, role, master, onAp, onIs, goto, i
                 React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12 } },
                     React.createElement("thead", null,
                         React.createElement("tr", { style: { background: C.sur2 } }, ["วัตถุดิบ", "Maker", "Size", "คงเหลือ", "Min", "สถานะ"].map(h => React.createElement("th", { key: h, style: { padding: "7px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}` } }, h)))),
-                    React.createElement("tbody", null, sortBySize(materials).filter(m => {
+                    React.createElement("tbody", null, materials.filter(m => {
                         const st = { kgs: (lots[m.id] || []).reduce((a, x) => a + (x.rem_kgs || 0), 0), pcs: (lots[m.id] || []).reduce((a, x) => a + (x.rem_pcs || 0), 0), coil: (lots[m.id] || []).reduce((a, x) => a + (x.rem_coil || 0), 0) };
                         const tot = st.kgs + st.pcs + st.coil;
                         // หมด หรือ ต่ำกว่า min
@@ -1945,7 +1819,7 @@ function IsBody({ req, lots, selectedLots, setSelectedLots }) {
 // ════════════════════════════════════════════════════════════
 function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail }) {
     const [search, setSearch] = useState("");
-    const baseList = sortBySize(filter === "all" ? materials : materials.filter(m => m.type === filter));
+    const baseList = filter === "all" ? materials : materials.filter(m => m.type === filter);
     const filtered = baseList
         .filter(m => !search || m.size.toLowerCase().includes(search.toLowerCase()) || m.name.toLowerCase().includes(search.toLowerCase()) || m.partNo.toLowerCase().includes(search.toLowerCase()) || m.maker.toLowerCase().includes(search.toLowerCase()))
         .sort((a, b) => {
@@ -2033,7 +1907,7 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
 // LOT / FIFO PAGE
 // ════════════════════════════════════════════════════════════
 function LotPage({ materials, lots, master, onLotDetail }) {
-    const mats = sortBySize(materials.filter(m => lots[m.id] && lots[m.id].length > 0));
+    const mats = materials.filter(m => lots[m.id] && lots[m.id].length > 0);
     return React.createElement("div", null,
         React.createElement("div", { style: { background: "rgba(88,166,255,.07)", border: "1px solid rgba(88,166,255,.2)", borderRadius: 8, padding: "9px 12px", fontSize: 11, color: C.acc2, marginBottom: 14, lineHeight: 1.7 } },
             React.createElement("strong", null, "\u2139\uFE0F FIFO"),
@@ -2437,8 +2311,7 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials }
 // MATERIAL MASTER PAGE
 // ════════════════════════════════════════════════════════════
 function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, onEdit, onAddSize, onToggle, onDelete }) {
-    const filtered = sortBySize(filter === "all" ? materials : materials.filter(m => m.type === filter));
-    const sortedFiltered = filtered.slice().sort((a, b) => {
+    const filtered = (filter === "all" ? materials : materials.filter(m => m.type === filter)).slice().sort((a, b) => {
         if (a.type !== b.type)
             return a.type.localeCompare(b.type);
         if (a.name !== b.name)
@@ -2516,13 +2389,7 @@ function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, error
         React.createElement(SecTitle, null, "\uD83C\uDFF7\uFE0F \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2B\u0E25\u0E31\u0E01"),
         React.createElement(FGrid, { cols: 3 },
             React.createElement(FG, { label: "\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A *", note: "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E14\u0E49\u0E17\u0E35\u0E48 Master Data" },
-                React.createElement(Sel, { value: form.type, onChange: v => { 
-                    let newUnit = "KGS";
-                    if (v === "CU") newUnit = "BOTH_KG_COIL";
-                    else if (v === "SUS") newUnit = "BOTH_KG_PCS";
-                    setForm(f => ({ ...f, type: v, maker: "", makerNew: "", unit: newUnit })); 
-                    clearErr && clearErr("type"); 
-                }, style: eb("type"), options: [{ v: "", l: "-- เลือกประเภท --" }, ...master.matTypes.map(t => ({ v: t.code, l: `${t.code} — ${t.label}` }))], placeholder: "-- \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17 --" }),
+                React.createElement(Sel, { value: form.type, onChange: v => { setForm(f => ({ ...f, type: v, maker: "", makerNew: "" })); clearErr && clearErr("type"); }, style: eb("type"), options: [{ v: "", l: "-- เลือกประเภท --" }, ...master.matTypes.map(t => ({ v: t.code, l: `${t.code} — ${t.label}` }))], placeholder: "-- \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17 --" }),
                 ef("type")),
             React.createElement(FG, { label: "Type Material *", note: "\u0E23\u0E2B\u0E31\u0E2A\u0E0A\u0E19\u0E34\u0E14 material \u0E40\u0E0A\u0E48\u0E19 A3003, A6063, SUS304, NAS254N, C1220T" },
                 React.createElement("div", { style: eb("name") },
