@@ -226,31 +226,33 @@ function reqFromDb(db) {
 // ════════════════════════════════════════════════════════════
 // ── ผู้ใช้งานระบบ (PIN-based auth) ──
 
+
 // ══════════════════════════════════════════════════════════
-// COLOR SYSTEM - แยกสีตาม Size, Maker, Temper
+// COLOR SYSTEM - แยกสีตาม Size, Maker, Temper (ชัดเจนบนพื้นมืด)
 // ══════════════════════════════════════════════════════════
 
-// สีสำหรับ Maker (สีพื้นฐาน - อ่อนๆ)
+// สีสำหรับ Maker - เน้นที่ Border และ Text Color
 const MAKER_COLORS = [
-    { bg: 'rgba(255, 255, 255, 0)', border: '#e1e4e8' }, // Default - ไม่มีสี
-    { bg: 'rgba(88, 166, 255, 0.08)', border: '#58a6ff' }, // น้ำเงิน
-    { bg: 'rgba(63, 185, 80, 0.08)', border: '#3fb950' }, // เขียว
-    { bg: 'rgba(210, 153, 34, 0.08)', border: '#d29922' }, // เหลือง
-    { bg: 'rgba(188, 140, 255, 0.08)', border: '#bc8cff' }, // ม่วง
-    { bg: 'rgba(248, 81, 73, 0.08)', border: '#f85149' }, // แดง
-    { bg: 'rgba(255, 136, 62, 0.08)', border: '#ff883e' }, // ส้ม
-    { bg: 'rgba(255, 192, 203, 0.08)', border: '#ffc0cb' }, // ชมพู
+    { border: 'transparent', text: 'inherit', badge: '' }, // Default
+    { border: '#58a6ff', text: '#58a6ff', badge: '🔵' }, // น้ำเงินสด
+    { border: '#3fb950', text: '#3fb950', badge: '🟢' }, // เขียวสด
+    { border: '#f0883e', text: '#f0883e', badge: '🟠' }, // ส้มสด
+    { border: '#bc8cff', text: '#bc8cff', badge: '🟣' }, // ม่วงสด
+    { border: '#f85149', text: '#f85149', badge: '🔴' }, // แดงสด
+    { border: '#ffd700', text: '#ffd700', badge: '🟡' }, // เหลืองสด
+    { border: '#ff69b4', text: '#ff69b4', badge: '🌸' }, // ชมพูสด
 ];
 
-// สีสำหรับ Temper (เข้มกว่า Maker)
+// สีสำหรับ Temper - เข้มกว่า Maker
 const TEMPER_COLORS = [
-    { bg: 'rgba(255, 255, 255, 0)', border: '#e1e4e8', accent: 'transparent' }, // Default
-    { bg: 'rgba(139, 92, 246, 0.12)', border: '#8b5cf6', accent: '#8b5cf6' }, // ม่วงเข้ม
-    { bg: 'rgba(236, 72, 153, 0.12)', border: '#ec4899', accent: '#ec4899' }, // ชมพูเข้ม
-    { bg: 'rgba(34, 197, 94, 0.12)', border: '#22c55e', accent: '#22c55e' }, // เขียวเข้ม
-    { bg: 'rgba(251, 146, 60, 0.12)', border: '#fb923c', accent: '#fb923c' }, // ส้มเข้ม
-    { bg: 'rgba(59, 130, 246, 0.12)', border: '#3b82f6', accent: '#3b82f6' }, // น้ำเงินเข้ม
-    { bg: 'rgba(239, 68, 68, 0.12)', border: '#ef4444', accent: '#ef4444' }, // แดงเข้ม
+    { border: 'transparent', text: 'inherit', badge: '' }, // Default
+    { border: '#a78bfa', text: '#a78bfa', badge: '●', label: 'Temper 2' }, // ม่วงเข้ม
+    { border: '#f472b6', text: '#f472b6', badge: '●', label: 'Temper 3' }, // ชมพูเข้ม
+    { border: '#4ade80', text: '#4ade80', badge: '●', label: 'Temper 4' }, // เขียวสว่าง
+    { border: '#fb923c', text: '#fb923c', badge: '●', label: 'Temper 5' }, // ส้มสว่าง
+    { border: '#60a5fa', text: '#60a5fa', badge: '●', label: 'Temper 6' }, // น้ำเงินสว่าง
+    { border: '#ef4444', text: '#ef4444', badge: '●', label: 'Temper 7' }, // แดงสว่าง
+    { border: '#22d3ee', text: '#22d3ee', badge: '●', label: 'Temper 8' }, // ฟ้าสว่าง
 ];
 
 // ฟังก์ชันหา Material ที่มี Size เดียวกัน
@@ -267,13 +269,13 @@ function getMaterialsWithSameSize(materials, material) {
 // ฟังก์ชันกำหนดสีตาม Maker
 function getMakerColor(materials, material) {
     const sameSizeMats = getMaterialsWithSameSize(materials, material);
-    if (sameSizeMats.length === 0) return MAKER_COLORS[0]; // ไม่มี duplicate = ไม่ต้องสี
+    if (sameSizeMats.length === 0) return MAKER_COLORS[0];
     
     // เรียงตาม Maker name
     const allMakers = [material, ...sameSizeMats].map(m => m.maker).sort();
     const uniqueMakers = [...new Set(allMakers)];
     
-    if (uniqueMakers.length === 1) return MAKER_COLORS[0]; // Maker เดียวกันหมด = ไม่ต้องสี
+    if (uniqueMakers.length === 1) return MAKER_COLORS[0];
     
     const makerIndex = uniqueMakers.indexOf(material.maker);
     return MAKER_COLORS[makerIndex % MAKER_COLORS.length];
@@ -289,13 +291,13 @@ function getTemperColor(materials, material) {
         m.active !== false
     );
     
-    if (sameSizeSameMaker.length === 0) return TEMPER_COLORS[0]; // ไม่มี duplicate = ไม่ต้องสี
+    if (sameSizeSameMaker.length === 0) return TEMPER_COLORS[0];
     
     // เรียงตาม Temper
     const allTempers = [material, ...sameSizeSameMaker].map(m => m.temper || '-').sort();
     const uniqueTempers = [...new Set(allTempers)];
     
-    if (uniqueTempers.length === 1) return TEMPER_COLORS[0]; // Temper เดียวกันหมด = ไม่ต้องสี
+    if (uniqueTempers.length === 1) return TEMPER_COLORS[0];
     
     const temperIndex = uniqueTempers.indexOf(material.temper || '-');
     return TEMPER_COLORS[temperIndex % TEMPER_COLORS.length];
@@ -307,13 +309,13 @@ function getMaterialColor(materials, material) {
     const temperColor = getTemperColor(materials, material);
     
     // ถ้ามีทั้ง Maker และ Temper แตกต่าง = ใช้ Temper (เข้มกว่า)
-    if (temperColor !== TEMPER_COLORS[0]) {
+    if (temperColor.border !== 'transparent') {
         return temperColor;
     }
     
-    // ถ้ามีแค่ Maker แตกต่าง = ใช้ Maker
     return makerColor;
 }
+
 
 
 const INIT_USERS = [
@@ -1963,13 +1965,9 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                         // ตรวจว่า row ก่อนหน้ามี size+name เดียวกัน → group แสดงสีต่าง
                         return React.createElement("tr", { key: m.id, style: { 
                     opacity: m.active === false ? .4 : 1,
-                    background: (() => {
-                        const color = getMaterialColor(materials, m);
-                        return color.bg;
-                    })(),
                     borderLeft: (() => {
                         const color = getMaterialColor(materials, m);
-                        return color.border && color.border !== '#e1e4e8' ? `3px solid ${color.border}` : 'none';
+                        return color.border !== 'transparent' ? `4px solid ${color.border}` : 'none';
                     })()
                 } },
                             React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2 } },
@@ -2409,6 +2407,50 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials }
 // MATERIAL MASTER PAGE
 // ════════════════════════════════════════════════════════════
 
+
+// Helper: แสดง Size พร้อมสีและ Badge
+function renderSizeWithColor(material, materials) {
+    const color = getMaterialColor(materials, material);
+    return React.createElement("span", { 
+        style: { 
+            color: color.text,
+            fontWeight: color.border !== 'transparent' ? 600 : 400
+        } 
+    }, 
+        color.badge && color.badge !== '' ? color.badge + ' ' : '',
+        material.size
+    );
+}
+
+// Helper: แสดง Maker พร้อมสี
+function renderMakerWithColor(material, materials) {
+    const color = getMakerColor(materials, material);
+    return React.createElement("span", { 
+        style: { 
+            color: color.text,
+            fontWeight: color.border !== 'transparent' ? 600 : 400
+        } 
+    }, 
+        color.badge && color.badge !== '' ? color.badge + ' ' : '',
+        material.maker
+    );
+}
+
+// Helper: แสดง Temper พร้อมสี
+function renderTemperWithColor(material, materials) {
+    const color = getTemperColor(materials, material);
+    return React.createElement("span", { 
+        style: { 
+            color: color.text,
+            fontWeight: color.border !== 'transparent' ? 600 : 400
+        } 
+    }, 
+        color.badge && color.badge !== '' ? color.badge + ' ' : '',
+        material.temper || '-'
+    );
+}
+
+
 // Color Legend Component - อธิบายสี
 function ColorLegend({ materials }) {
     // หา materials ที่มี duplicate size
@@ -2514,13 +2556,9 @@ function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, on
                         const mc = master.matTypes.find(t => t.code === m.type) || {};
                         return React.createElement("tr", { key: m.id, style: { 
                     opacity: m.active === false ? .4 : 1,
-                    background: (() => {
-                        const color = getMaterialColor(materials, m);
-                        return color.bg;
-                    })(),
                     borderLeft: (() => {
                         const color = getMaterialColor(materials, m);
-                        return color.border && color.border !== '#e1e4e8' ? `3px solid ${color.border}` : 'none';
+                        return color.border !== 'transparent' ? `4px solid ${color.border}` : 'none';
                     })()
                 } },
                             React.createElement("td", { style: { padding: "8px 11px", borderBottom: C.brd2 } },
