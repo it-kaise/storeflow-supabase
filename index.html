@@ -228,32 +228,33 @@ function reqFromDb(db) {
 
 
 
+
 // ══════════════════════════════════════════════════════════
-// COLOR SYSTEM - พื้นหลังสี LIGHT + ตัวอักษรสีเข้ม (ชัดเจนมาก!)
+// COLOR SYSTEM - ใช้สีที่มีอยู่แล้วในระบบ (มองเห็นชัดแน่นอน!)
 // ══════════════════════════════════════════════════════════
 
-// สีสำหรับ Maker - พื้นสีอ่อน + ข้อความสีเข้ม + Border สด
+// สีสำหรับ Maker - ใช้สีจากระบบ (C.acc, C.ok, etc.)
 const MAKER_COLORS = [
-    { bg: 'transparent', text: 'inherit', border: 'transparent', badge: '' }, // Default
-    { bg: '#e3f2fd', text: '#1565c0', border: '#1976d2', badge: '🔵' }, // น้ำเงิน
-    { bg: '#e8f5e9', text: '#2e7d32', border: '#388e3c', badge: '🟢' }, // เขียว
-    { bg: '#fff3e0', text: '#e65100', border: '#f57c00', badge: '🟠' }, // ส้ม
-    { bg: '#f3e5f5', text: '#6a1b9a', border: '#7b1fa2', badge: '🟣' }, // ม่วง
-    { bg: '#ffebee', text: '#c62828', border: '#d32f2f', badge: '🔴' }, // แดง
-    { bg: '#fffde7', text: '#f57f17', border: '#fbc02d', badge: '🟡' }, // เหลือง
-    { bg: '#fce4ec', text: '#c2185b', border: '#e91e63', badge: '🌸' }, // ชมพู
+    { text: 'inherit', border: 'transparent', bg: 'transparent', badge: '' }, // Default - ไม่มีสี
+    { text: '#58a6ff', border: '#58a6ff', bg: 'rgba(88,166,255,0.15)', badge: '🔵' }, // น้ำเงิน (C.acc2)
+    { text: '#3fb950', border: '#3fb950', bg: 'rgba(63,185,80,0.15)', badge: '🟢' }, // เขียว (C.ok)
+    { text: '#f0883e', border: '#f0883e', bg: 'rgba(240,136,62,0.15)', badge: '🟠' }, // ส้ม (C.acc)
+    { text: '#bc8cff', border: '#bc8cff', bg: 'rgba(188,140,255,0.15)', badge: '🟣' }, // ม่วง (C.acc3)
+    { text: '#f85149', border: '#f85149', bg: 'rgba(248,81,73,0.15)', badge: '🔴' }, // แดง (C.err)
+    { text: '#ffd700', border: '#ffd700', bg: 'rgba(255,215,0,0.15)', badge: '🟡' }, // เหลือง
+    { text: '#ff69b4', border: '#ff69b4', bg: 'rgba(255,105,180,0.15)', badge: '🌸' }, // ชมพู
 ];
 
-// สีสำหรับ Temper - เข้มกว่า Maker เล็กน้อย
+// สีสำหรับ Temper - สีสว่างกว่า Maker เล็กน้อย
 const TEMPER_COLORS = [
-    { bg: 'transparent', text: 'inherit', border: 'transparent', badge: '' }, // Default
-    { bg: '#ede7f6', text: '#4527a0', border: '#5e35b1', badge: '●' }, // ม่วงเข้ม
-    { bg: '#fce4ec', text: '#ad1457', border: '#c2185b', badge: '●' }, // ชมพูเข้ม
-    { bg: '#e0f2f1', text: '#00695c', border: '#00897b', badge: '●' }, // เขียวน้ำทะเล
-    { bg: '#fff8e1', text: '#e65100', border: '#ef6c00', badge: '●' }, // ส้มทอง
-    { bg: '#e1f5fe', text: '#01579b', border: '#0277bd', badge: '●' }, // น้ำเงินเข้ม
-    { bg: '#ffebee', text: '#b71c1c', border: '#c62828', badge: '●' }, // แดงเข้ม
-    { bg: '#e0f7fa', text: '#006064', border: '#00838f', badge: '●' }, // ฟ้าเข้ม
+    { text: 'inherit', border: 'transparent', bg: 'transparent', badge: '' }, // Default
+    { text: '#a78bfa', border: '#a78bfa', bg: 'rgba(167,139,250,0.2)', badge: '●' }, // ม่วงสว่าง
+    { text: '#f472b6', border: '#f472b6', bg: 'rgba(244,114,182,0.2)', badge: '●' }, // ชมพูสว่าง
+    { text: '#4ade80', border: '#4ade80', bg: 'rgba(74,222,128,0.2)', badge: '●' }, // เขียวสว่าง
+    { text: '#fb923c', border: '#fb923c', bg: 'rgba(251,146,60,0.2)', badge: '●' }, // ส้มสว่าง
+    { text: '#60a5fa', border: '#60a5fa', bg: 'rgba(96,165,250,0.2)', badge: '●' }, // น้ำเงินสว่าง
+    { text: '#ef4444', border: '#ef4444', bg: 'rgba(239,68,68,0.2)', badge: '●' }, // แดงสว่าง
+    { text: '#22d3ee', border: '#22d3ee', bg: 'rgba(34,211,238,0.2)', badge: '●' }, // ฟ้าสว่าง
 ];
 
 // ฟังก์ชันหา Material ที่มี Size เดียวกัน
@@ -279,7 +280,7 @@ function getMakerColor(materials, material) {
     if (uniqueMakers.length === 1) return MAKER_COLORS[0];
     
     const makerIndex = uniqueMakers.indexOf(material.maker);
-    return MAKER_COLORS[(makerIndex % (MAKER_COLORS.length - 1)) + 1]; // เริ่มจากสีที่ 1
+    return MAKER_COLORS[(makerIndex % (MAKER_COLORS.length - 1)) + 1];
 }
 
 // ฟังก์ชันกำหนดสีตาม Temper
@@ -301,7 +302,7 @@ function getTemperColor(materials, material) {
     if (uniqueTempers.length === 1) return TEMPER_COLORS[0];
     
     const temperIndex = uniqueTempers.indexOf(material.temper || '-');
-    return TEMPER_COLORS[(temperIndex % (TEMPER_COLORS.length - 1)) + 1]; // เริ่มจากสีที่ 1
+    return TEMPER_COLORS[(temperIndex % (TEMPER_COLORS.length - 1)) + 1];
 }
 
 // ฟังก์ชันรวมสี (Maker + Temper)
@@ -316,6 +317,7 @@ function getMaterialColor(materials, material) {
     
     return makerColor;
 }
+
 
 
 
@@ -1973,7 +1975,7 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                     })(),
                     borderLeft: (() => {
                         const color = getMaterialColor(materials, m);
-                        return color.border !== 'transparent' ? `5px solid ${color.border}` : 'none';
+                        return color.border !== 'transparent' ? `6px solid ${color.border}` : 'none';
                     })()
                 } },
                             React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2 } },
@@ -2581,7 +2583,7 @@ function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, on
                     })(),
                     borderLeft: (() => {
                         const color = getMaterialColor(materials, m);
-                        return color.border !== 'transparent' ? `5px solid ${color.border}` : 'none';
+                        return color.border !== 'transparent' ? `6px solid ${color.border}` : 'none';
                     })()
                 } },
                             React.createElement("td", { style: { padding: "8px 11px", borderBottom: C.brd2 } },
