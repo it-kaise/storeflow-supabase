@@ -229,6 +229,36 @@ function reqFromDb(db) {
 
 
 
+
+// ══════════════════════════════════════════════════════════
+// SORT FUNCTION - เรียง Size จากเล็กไปใหญ่
+// ══════════════════════════════════════════════════════════
+function sortBySize(materials) {
+    return [...materials].sort((a, b) => {
+        // แยก size ออกเป็นตัวเลข
+        const parseSize = (sizeStr) => {
+            if (!sizeStr) return [0, 0, 0];
+            // ลบข้อความที่ไม่ใช่ตัวเลข เช่น LWC, mm, Ø
+            const cleaned = sizeStr.toUpperCase().replace(/[^0-9.×xX]/g, ' ').replace(/Ø/g, '');
+            const nums = cleaned.split(/[×xX\s]+/).map(n => parseFloat(n) || 0).filter(n => n > 0);
+            return [nums[0] || 0, nums[1] || 0, nums[2] || 0]; // [OD, THK, LENGTH]
+        };
+        
+        const sizeA = parseSize(a.size);
+        const sizeB = parseSize(b.size);
+        
+        // เปรียบเทียบ OD, THK, LENGTH ตามลำดับ
+        for (let i = 0; i < 3; i++) {
+            if (sizeA[i] !== sizeB[i]) {
+                return sizeA[i] - sizeB[i];
+            }
+        }
+        
+        // ถ้าเท่ากันหมด ให้เรียงตามชื่อ
+        return (a.size || '').localeCompare(b.size || '');
+    });
+}
+
 // ══════════════════════════════════════════════════════════
 // COLOR SYSTEM - ใช้สีที่มีอยู่แล้วในระบบ (มองเห็นชัดแน่นอน!)
 // ══════════════════════════════════════════════════════════
@@ -1171,7 +1201,12 @@ function StoreFlow() {
                         if (!window.confirm(`แก้ไขใบเบิก ${r.id}?\n\nระบบจะ:\n1. เปลี่ยนสถานะใบ ${r.id} เป็น "แก้ไขแล้ว"\n2. สร้างใบใหม่เป็น ${r.id}-R01 (Revised)\n\nประวัติใบเดิมยังเก็บไว้ดูได้ครับ`))
                             return;
                         setRequests(rs => rs.map(x => x.id === r.id ? { ...x, status: "revised", revisedAt: new Date().toISOString() } : x));
-                        setRqForm({ ...r, _revisedFrom: r.id, items: r.items.map(it => ({ ...it, qty: it.qty || it.pcs || it.coil || "", _nextLot: it.lotNo })) });
+                        setRqForm({ 
+                            ...r, 
+                            _revisedFrom: r.id, 
+                            _originalData: JSON.stringify(r), // เก็บข้อมูลเดิมไว้
+                            items: r.items.map(it => ({ ...it, qty: it.qty || it.pcs || it.coil || "", _nextLot: it.lotNo })) 
+                        });
                         setRqErrors({});
                         setModal("req");
                         toast(`ℹ️ กำลังสร้าง Revised จาก ${r.id}`, "info");
@@ -1281,7 +1316,7 @@ function UsersPage({ users, setUsers, currentUser, toast }) {
     const [form, setForm] = useState({ id: "", name: "", pin: "", role: "supervisor", active: true });
     const roleOpts = ["production", "supervisor", "store", "admin"];
     const roleLabel = { supervisor: "👨‍💼 หัวหน้างาน", store: "🏪 พนักงานสโตร์", admin: "⚙️ Admin", production: "👷 ฝ่ายผลิต" };
-    function save() {
+    async function save() {
         if (!form.name || !form.pin) {
             toast("กรุณากรอกชื่อและ PIN", "err");
             return;
@@ -1386,7 +1421,7 @@ function DashPage({ requests, materials, lots, role, master, onAp, onIs, goto, i
                 React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12 } },
                     React.createElement("thead", null,
                         React.createElement("tr", { style: { background: C.sur2 } }, ["วัตถุดิบ", "Maker", "Size", "คงเหลือ", "Min", "สถานะ"].map(h => React.createElement("th", { key: h, style: { padding: "7px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}` } }, h)))),
-                    React.createElement("tbody", null, materials.filter(m => {
+                    React.createElement("tbody", null, sortBySize(materials).filter(m => {
                         const st = { kgs: (lots[m.id] || []).reduce((a, x) => a + (x.rem_kgs || 0), 0), pcs: (lots[m.id] || []).reduce((a, x) => a + (x.rem_pcs || 0), 0), coil: (lots[m.id] || []).reduce((a, x) => a + (x.rem_coil || 0), 0) };
                         const tot = st.kgs + st.pcs + st.coil;
                         // หมด หรือ ต่ำกว่า min
@@ -1913,7 +1948,7 @@ function IsBody({ req, lots, selectedLots, setSelectedLots }) {
 // ════════════════════════════════════════════════════════════
 function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail }) {
     const [search, setSearch] = useState("");
-    const baseList = filter === "all" ? materials : materials.filter(m => m.type === filter);
+    const baseList = sortBySize(filter === "all" ? materials : materials.filter(m => m.type === filter));
     const filtered = baseList
         .filter(m => !search || m.size.toLowerCase().includes(search.toLowerCase()) || m.name.toLowerCase().includes(search.toLowerCase()) || m.partNo.toLowerCase().includes(search.toLowerCase()) || m.maker.toLowerCase().includes(search.toLowerCase()))
         .sort((a, b) => {
@@ -2011,7 +2046,7 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
 // LOT / FIFO PAGE
 // ════════════════════════════════════════════════════════════
 function LotPage({ materials, lots, master, onLotDetail }) {
-    const mats = materials.filter(m => lots[m.id] && lots[m.id].length > 0);
+    const mats = sortBySize(materials.filter(m => lots[m.id] && lots[m.id].length > 0));
     return React.createElement("div", null,
         React.createElement("div", { style: { background: "rgba(88,166,255,.07)", border: "1px solid rgba(88,166,255,.2)", borderRadius: 8, padding: "9px 12px", fontSize: 11, color: C.acc2, marginBottom: 14, lineHeight: 1.7 } },
             React.createElement("strong", null, "\u2139\uFE0F FIFO"),
@@ -2538,7 +2573,7 @@ function ColorLegend({ materials }) {
 }
 
 function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, onEdit, onAddSize, onToggle, onDelete }) {
-    const filtered = (filter === "all" ? materials : materials.filter(m => m.type === filter)).slice().sort((a, b) => {
+    const filtered = sortBySize(filter === "all" ? materials : materials.filter(m => m.type === filter)).slice().sort((a, b) => {
         if (a.type !== b.type)
             return a.type.localeCompare(b.type);
         if (a.name !== b.name)
