@@ -1,6 +1,6 @@
 <!DOCTYPE html><html lang="th"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>StoreFlow v44 - Real-time Edition</title>
+<title>StoreFlow v45 - Real-time Edition</title>
 <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -764,6 +764,7 @@ function StoreFlow() {
         }
     }, [master, isLoading]);
     const [modal, setModal] = useState(null);
+    const [historyModal, setHistoryModal] = useState(null);
     const [pendingApId, setPendingApId] = useState(null);
     const [pendingIsId, setPendingIsId] = useState(null);
     const [reqFilter, setReqFilter] = useState("all");
@@ -1197,7 +1198,7 @@ function StoreFlow() {
                 React.createElement(Btn, { v: "primary", sz: "md", onClick: () => { setRqForm(emptyRq()); setRqErrors({}); setModal("req"); } }, "\u2795 \u0E2A\u0E23\u0E49\u0E32\u0E07\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01")),
             React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: "18px 20px" } },
                 page === "dashboard" && React.createElement(DashPage, { requests: requests, materials: materials, lots: lots, role: role, master: master, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, goto: setPage, issueHist: issueHist }),
-                page === "request" && React.createElement(ReqPage, { requests: requests, filter: reqFilter, setFilter: setReqFilter, role: role, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, onNew: () => { setRqForm(emptyRq()); setRqErrors({}); setModal("req"); }, onEdit: r => {
+                page === "request" && React.createElement(ReqPage, { requests: requests, filter: reqFilter, setFilter: setReqFilter, role: role, setHistoryModal: setHistoryModal, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, onNew: () => { setRqForm(emptyRq()); setRqErrors({}); setModal("req"); }, onEdit: r => {
                         if (!window.confirm(`แก้ไขใบเบิก ${r.id}?\n\nระบบจะ:\n1. เปลี่ยนสถานะใบ ${r.id} เป็น "แก้ไขแล้ว"\n2. สร้างใบใหม่เป็น ${r.id}-R01 (Revised)\n\nประวัติใบเดิมยังเก็บไว้ดูได้ครับ`))
                             return;
                         setRequests(rs => rs.map(x => x.id === r.id ? { ...x, status: "revised", revisedAt: new Date().toISOString() } : x));
@@ -1265,6 +1266,7 @@ function StoreFlow() {
                     " \u2014 ",
                     React.createElement("span", { style: { color: "#f85149", fontWeight: 600 } }, "\u0E2A\u0E15\u0E4A\u0E2D\u0E01\u0E40\u0E1B\u0E47\u0E19 0")))),
             React.createElement("div", { style: { fontSize: 11, color: C.tx2 } }, "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E41\u0E08\u0E49\u0E07\u0E43\u0E2B\u0E49\u0E1D\u0E48\u0E32\u0E22\u0E08\u0E31\u0E14\u0E0B\u0E37\u0E49\u0E2D\u0E14\u0E33\u0E40\u0E19\u0E34\u0E19\u0E01\u0E32\u0E23\u0E2A\u0E31\u0E48\u0E07\u0E0B\u0E37\u0E49\u0E2D\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A\u0E40\u0E1E\u0E34\u0E48\u0E21 \u0E2B\u0E23\u0E37\u0E2D\u0E41\u0E01\u0E49\u0E44\u0E02\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01\u0E01\u0E48\u0E2D\u0E19\u0E14\u0E33\u0E40\u0E19\u0E34\u0E19\u0E01\u0E32\u0E23\u0E15\u0E48\u0E2D")),
+        React.createElement(HistoryModal, { open: !!historyModal, onClose: () => setHistoryModal(null), request: historyModal }),
         React.createElement(LotDetailModal, { open: !!lotDetailMat, onClose: () => setLotDetailMat(null), mat: lotDetailMat, lots: lots, setLots: setLots, master: master }),
         React.createElement(Toasts, { list: toasts }),
         React.createElement(PinModal, { open: !!pinModal, config: pinModal, users: users, onClose: () => setPinModal(null), pinInput: pinInput, setPinInput: setPinInput, pinError: pinError, setPinError: setPinError })));
@@ -1326,11 +1328,24 @@ function UsersPage({ users, setUsers, currentUser, toast }) {
             return;
         }
         if (form.id) {
+            await sb.from('sf_users').update({
+                user_name: form.name,
+                pin: form.pin,
+                role: form.role,
+                active: form.active
+            }).eq('id', form.id);
             setUsers(us => us.map(u => u.id === form.id ? { ...u, ...form } : u));
             toast(`✅ แก้ไข "${form.name}" แล้ว`);
         }
         else {
             const id = "u" + Date.now();
+            await sb.from('sf_users').insert({
+                id: id,
+                user_name: form.name,
+                pin: form.pin,
+                role: form.role,
+                active: form.active
+            });
             setUsers(us => [...us, { ...form, id }]);
             toast(`✅ เพิ่ม "${form.name}" แล้ว`);
         }
@@ -1499,7 +1514,158 @@ function DashPage({ requests, materials, lots, role, master, onAp, onIs, goto, i
 // ════════════════════════════════════════════════════════════
 // REQUEST PAGE
 // ════════════════════════════════════════════════════════════
-function ReqPage({ requests, filter, setFilter, role, onAp, onIs, onNew, onEdit, onCancel }) {
+
+// ══════════════════════════════════════════════════════════
+// HISTORY MODAL - แสดงประวัติการแก้ไข
+// ══════════════════════════════════════════════════════════
+function HistoryModal({ open, onClose, request }) {
+    if (!open || !request) return null;
+    
+    // ถ้าไม่ใช่ Revised version ก็ไม่มีประวัติ
+    if (!request._revisedFrom && !request.id.includes('-R')) {
+        return React.createElement(Modal, { 
+            open: true, 
+            onClose: onClose, 
+            title: "ไม่มีประวัติการแก้ไข", 
+            width: 400,
+            footer: React.createElement(Btn, { v: "primary", onClick: onClose }, "ปิด")
+        },
+            React.createElement("div", { style: { padding: 20, textAlign: "center", color: C.tx2 } },
+                "ใบเบิกนี้ไม่ได้ถูกแก้ไข"
+            )
+        );
+    }
+    
+    const originalId = request._revisedFrom || request.id.split('-R')[0];
+    let originalData = null;
+    
+    try {
+        if (request._originalData) {
+            originalData = JSON.parse(request._originalData);
+        }
+    } catch (e) {
+        console.error('Cannot parse original data:', e);
+    }
+    
+    return React.createElement(Modal, { 
+        open: true, 
+        onClose: onClose, 
+        title: "📜 ประวัติการแก้ไข", 
+        sub: `ใบเบิก ${request.id}`,
+        width: 700,
+        footer: React.createElement(Btn, { v: "primary", onClick: onClose }, "ปิด")
+    },
+        React.createElement("div", { style: { padding: "10px 16px" } },
+            // ข้อมูลพื้นฐาน
+            React.createElement("div", { style: { 
+                background: "rgba(88,166,255,0.1)", 
+                border: "1px solid rgba(88,166,255,0.3)", 
+                borderRadius: 6, 
+                padding: "10px 14px", 
+                marginBottom: 16,
+                fontSize: 12
+            }},
+                React.createElement("div", { style: { fontWeight: 700, color: C.acc2, marginBottom: 6 } }, 
+                    "ℹ️ ข้อมูลการแก้ไข"
+                ),
+                React.createElement("div", { style: { color: C.tx2 } },
+                    `เลขที่เดิม: ${originalId}`,
+                    React.createElement("br"),
+                    `เลขที่ใหม่: ${request.id}`,
+                    React.createElement("br"),
+                    originalData && originalData.createdAt ? 
+                        `สร้างใบเดิม: ${new Date(originalData.createdAt).toLocaleString('th-TH')}` : '',
+                    React.createElement("br"),
+                    request.createdAt ? 
+                        `แก้ไขเมื่อ: ${new Date(request.createdAt).toLocaleString('th-TH')}` : ''
+                )
+            ),
+            
+            // เปรียบเทียบรายการ
+            originalData && originalData.items ? 
+                React.createElement("div", null,
+                    React.createElement("div", { style: { fontWeight: 700, fontSize: 13, color: C.tx, marginBottom: 10 } }, 
+                        "📋 การเปลี่ยนแปลงรายการ"
+                    ),
+                    React.createElement("div", { style: { display: "flex", gap: 10 } },
+                        // คอลัมน์ซ้าย: ข้อมูลเดิม
+                        React.createElement("div", { style: { flex: 1 } },
+                            React.createElement("div", { style: { 
+                                background: "rgba(248,81,73,0.1)", 
+                                border: "1px solid rgba(248,81,73,0.3)", 
+                                borderRadius: 6, 
+                                padding: "8px 12px",
+                                marginBottom: 6,
+                                fontSize: 11,
+                                fontWeight: 700,
+                                color: "#f85149"
+                            }}, "❌ ข้อมูลเดิม"),
+                            originalData.items.map((item, i) => 
+                                React.createElement("div", { 
+                                    key: i,
+                                    style: { 
+                                        background: C.sur2, 
+                                        border: `1px solid ${C.brd}`, 
+                                        borderRadius: 6, 
+                                        padding: "8px 10px", 
+                                        marginBottom: 6,
+                                        fontSize: 11
+                                    }
+                                },
+                                    React.createElement("div", { style: { fontWeight: 600, color: C.tx } }, item.name),
+                                    React.createElement("div", { style: { color: C.tx2, fontSize: 10 } }, 
+                                        `${item.qty || item.pcs || item.coil || 0} ${item.unit}`
+                                    )
+                                )
+                            )
+                        ),
+                        
+                        // คอลัมน์ขวา: ข้อมูลใหม่
+                        React.createElement("div", { style: { flex: 1 } },
+                            React.createElement("div", { style: { 
+                                background: "rgba(63,185,80,0.1)", 
+                                border: "1px solid rgba(63,185,80,0.3)", 
+                                borderRadius: 6, 
+                                padding: "8px 12px",
+                                marginBottom: 6,
+                                fontSize: 11,
+                                fontWeight: 700,
+                                color: "#3fb950"
+                            }}, "✅ ข้อมูลใหม่"),
+                            request.items.map((item, i) => 
+                                React.createElement("div", { 
+                                    key: i,
+                                    style: { 
+                                        background: C.sur2, 
+                                        border: `1px solid ${C.brd}`, 
+                                        borderRadius: 6, 
+                                        padding: "8px 10px", 
+                                        marginBottom: 6,
+                                        fontSize: 11
+                                    }
+                                },
+                                    React.createElement("div", { style: { fontWeight: 600, color: C.tx } }, item.name),
+                                    React.createElement("div", { style: { color: C.tx2, fontSize: 10 } }, 
+                                        `${item.qty || item.pcs || item.coil || 0} ${item.unit}`
+                                    )
+                                )
+                            )
+                        )
+                    )
+                ) :
+                React.createElement("div", { style: { 
+                    padding: 20, 
+                    textAlign: "center", 
+                    color: C.tx2,
+                    fontSize: 12
+                }},
+                    "ไม่พบข้อมูลเดิม (อาจถูกลบไปแล้ว)"
+                )
+        )
+    );
+}
+
+function ReqPage({ requests, filter, setFilter, role, setHistoryModal, onAp, onIs, onNew, onEdit, onCancel }) {
     const counts = { all: requests.length, ...Object.fromEntries(["pending", "approved", "issued", "rejected"].map(s => [s, requests.filter(r => r.status === s).length])) };
     const list = filter === "all" ? requests : requests.filter(r => r.status === filter);
     const smap = { pending: { lbl: "⏳ รออนุมัติ", c: C.warn }, approved: { lbl: "✅ อนุมัติแล้ว", c: C.acc2 }, issued: { lbl: "📤 จ่ายแล้ว", c: C.ok }, rejected: { lbl: "❌ ไม่อนุมัติ", c: C.err } };
