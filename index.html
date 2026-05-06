@@ -2168,23 +2168,48 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                 React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12 } },
                     React.createElement("thead", null,
                         React.createElement("tr", { style: { background: C.sur2 } }, ["ประเภท", "ชื่อ Material", "Maker", "Size", "Temper", "Next Lot", "KGS", "PCS", "COIL", "Status", ""].map(h => React.createElement("th", { key: h, style: { padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, h)))),
-                    React.createElement("tbody", null, filtered.map((m) => {
-                        const s = { kgs: (lots[m.id] || []).reduce((a, x) => a + (x.rem_kgs || 0), 0), pcs: (lots[m.id] || []).reduce((a, x) => a + (x.rem_pcs || 0), 0), coil: (lots[m.id] || []).reduce((a, x) => a + (x.rem_coil || 0), 0), next: (lots[m.id] || []).find(x => (x.rem_kgs || 0) > 0 || (x.rem_pcs || 0) > 0 || (x.rem_coil || 0) > 0), count: (lots[m.id] || []).length };
-                        const ok = s.kgs > 0 || s.pcs > 0 || s.coil > 0;
-                        const low = ok && ((s.kgs > 0 && s.kgs < m.minStock) || (s.pcs > 0 && s.pcs < m.minStock));
-                        const mc = master.matTypes.find(t => t.code === m.type) || {};
-                        // ตรวจว่า row ก่อนหน้ามี size+name เดียวกัน → group แสดงสีต่าง
-                        return React.createElement("tr", { key: m.id, style: { 
-                    opacity: m.active === false ? .4 : 1,
-                    background: (() => {
-                        const color = getMaterialColor(materials, m);
-                        return color.bg;
-                    })(),
-                    borderLeft: (() => {
-                        const color = getMaterialColor(materials, m);
-                        return color.border !== 'transparent' ? `6px solid ${color.border}` : 'none';
-                    })()
-                } },
+                    React.createElement("tbody", null, (() => {
+    const rows = [];
+    let lastGroupKey = null;
+    const MAKER_BADGE_COLORS = [
+        { text:'#58a6ff', bg:'rgba(88,166,255,.12)', brd:'rgba(88,166,255,.3)', emoji:'🔵' },
+        { text:'#3fb950', bg:'rgba(63,185,80,.12)', brd:'rgba(63,185,80,.3)', emoji:'🟢' },
+        { text:'#f0883e', bg:'rgba(240,136,62,.12)', brd:'rgba(240,136,62,.3)', emoji:'🟠' },
+        { text:'#bc8cff', bg:'rgba(188,140,255,.12)', brd:'rgba(188,140,255,.3)', emoji:'🟣' },
+        { text:'#f85149', bg:'rgba(248,81,73,.12)', brd:'rgba(248,81,73,.3)', emoji:'🔴' },
+        { text:'#ffd700', bg:'rgba(255,215,0,.12)', brd:'rgba(255,215,0,.3)', emoji:'🟡' },
+    ];
+    filtered.forEach((m) => {
+        const groupKey = `${m.type}_${m.name}_${m.size.toLowerCase()}`;
+        if (groupKey !== lastGroupKey) {
+            lastGroupKey = groupKey;
+            const groupMats = filtered.filter(x => x.type === m.type && x.name === m.name && x.size.toLowerCase() === m.size.toLowerCase());
+            const hasAnyStock = groupMats.some(x => { const l = lots[x.id]||[]; return l.reduce((a,b)=>a+(b.rem_kgs||0)+(b.rem_pcs||0)+(b.rem_coil||0),0)>0; });
+            const makerNames = [...new Set(groupMats.map(x=>x.maker))].join(' · ');
+            const tempers = [...new Set(groupMats.map(x=>x.temper||'-').filter(t=>t!=='-'))];
+            const groupColor = hasAnyStock ? '#3fb950' : '#f85149';
+            const groupBg = hasAnyStock ? 'rgba(63,185,80,0.08)' : 'rgba(88,166,255,0.07)';
+            const groupBrd = hasAnyStock ? 'rgba(63,185,80,0.25)' : 'rgba(88,166,255,0.2)';
+            if (groupMats.length > 1) {
+                rows.push(React.createElement("tr", { key: 'grp_'+groupKey, style: { background: groupBg, borderLeft: `5px solid ${groupColor}`, borderBottom: `1px solid ${groupBrd}` } },
+                    React.createElement("td", { colSpan: 11, style: { padding:'6px 12px', fontSize:11, fontWeight:700, color: groupColor } },
+                        `📐 ${m.size}`,
+                        React.createElement("span", { style:{ margin:'0 8px', color:'#8b949e', fontWeight:400 } }, '—'),
+                        React.createElement("span", { style:{ background: hasAnyStock?'rgba(63,185,80,.2)':'rgba(248,81,73,.2)', color: hasAnyStock?'#3fb950':'#f85149', padding:'1px 8px', borderRadius:4, fontSize:10, marginRight:8 } }, hasAnyStock ? `✅ มีสต๊อก` : `❌ หมดทั้ง ${groupMats.length} Maker`),
+                        makerNames,
+                        tempers.length > 0 && React.createElement("span", { style:{ background:'rgba(188,140,255,.15)', color:'#bc8cff', padding:'1px 8px', borderRadius:4, fontSize:10, marginLeft:8 } }, `● Temper: ${tempers.join(', ')}`)
+                    )
+                ));
+            }
+        }
+        const s = { kgs: (lots[m.id] || []).reduce((a, x) => a + (x.rem_kgs || 0), 0), pcs: (lots[m.id] || []).reduce((a, x) => a + (x.rem_pcs || 0), 0), coil: (lots[m.id] || []).reduce((a, x) => a + (x.rem_coil || 0), 0), next: (lots[m.id] || []).find(x => (x.rem_kgs || 0) > 0 || (x.rem_pcs || 0) > 0 || (x.rem_coil || 0) > 0), count: (lots[m.id] || []).length };
+        const ok = s.kgs > 0 || s.pcs > 0 || s.coil > 0;
+        const low = ok && ((s.kgs > 0 && s.kgs < m.minStock) || (s.pcs > 0 && s.pcs < m.minStock));
+        const mc = master.matTypes.find(t => t.code === m.type) || {};
+        const groupMatsForColor = filtered.filter(x => x.type === m.type && x.name === m.name && x.size.toLowerCase() === m.size.toLowerCase());
+        const uniqueMakersInGroup = [...new Set(groupMatsForColor.map(x=>x.maker))];
+        const makerColorIdx = uniqueMakersInGroup.indexOf(m.maker);
+        const makerBadgeColor = groupMatsForColor.length > 1 ? MAKER_BADGE_COLORS[makerColorIdx % MAKER_BADGE_COLORS.length] : null;
                             React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2 } },
                                 React.createElement(Tag, { color: mc.color || C.tx2, bg: mc.bg || "rgba(255,255,255,.06)", brd: `${mc.color || C.brd}44` }, m.type)),
                             React.createElement("td", { style: { padding: "9px 12px", fontWeight: 700, borderBottom: C.brd2, whiteSpace: "nowrap", fontSize: 13 } }, m.name),
