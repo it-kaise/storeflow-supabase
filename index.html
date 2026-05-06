@@ -2245,8 +2245,10 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                                 React.createElement(Btn, { v: "accent", sz: "xs", onClick: () => onLotDetail(m), disabled: !(lots[m.id] || []).length },
                                     "\uD83D\uDD22 ",
                                     (lots[m.id] || []).length || 0,
-                                   " Lot")));
-        rows.push(rowEl);
+                                    " Lot")));
+        rows.push(React.createElement("tr", { key: m.id, style: { opacity: !ok ? 0.5 : m.active === false ? .4 : 1 } },
+            ...lastRowCells
+        ));
     });
     return rows;
 })()))));
