@@ -1314,7 +1314,7 @@ function PinModal({ open, config, users, onClose, pinInput, setPinInput, pinErro
 // ════════════════════════════════════════════════════════════
 // USER MANAGEMENT PAGE (Admin only)
 // ════════════════════════════════════════════════════════════
-function UsersPage({ users, setUsers, currentUser, toast }) {
+function UsersPage({ users, setUsers, currentUser, toast, materials }) {
     const [form, setForm] = useState({ id: "", name: "", pin: "", role: "supervisor", active: true });
     const roleOpts = ["production", "supervisor", "store", "admin"];
     const roleLabel = { supervisor: "👨‍💼 หัวหน้างาน", store: "🏪 พนักงานสโตร์", admin: "⚙️ Admin", production: "👷 ฝ่ายผลิต" };
