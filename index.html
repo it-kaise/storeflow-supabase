@@ -2168,7 +2168,7 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                 React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12 } },
                     React.createElement("thead", null,
                         React.createElement("tr", { style: { background: C.sur2 } }, ["ประเภท", "ชื่อ Material", "Maker", "Size", "Temper", "Next Lot", "KGS", "PCS", "COIL", "Status", ""].map(h => React.createElement("th", { key: h, style: { padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, h)))),
-                    React.createElement("tbody", null, (() => {
+                   React.createElement("tbody", null, (() => {
     const rows = [];
     let lastGroupKey = null;
     const MAKER_BADGE_COLORS = [
@@ -2241,17 +2241,12 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                             React.createElement("td", { style: { padding: "9px 12px", fontFamily: "monospace", fontWeight: 700, borderBottom: C.brd2, fontSize: 13 } }, s.coil > 0 ? s.coil : "-"),
                             React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2 } },
                                 React.createElement(Tag, { color: !ok ? C.err : low ? C.warn : C.ok, bg: !ok ? "rgba(248,81,73,.1)" : low ? "rgba(210,153,34,.1)" : "rgba(63,185,80,.1)", brd: !ok ? "rgba(248,81,73,.2)" : low ? "rgba(210,153,34,.2)" : "rgba(63,185,80,.2)" }, !ok ? "❌ หมด" : low ? "⚠️ ต่ำ" : "✅ ปกติ")),
-                           React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2 } },
+                            React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2 } },
                                 React.createElement(Btn, { v: "accent", sz: "xs", onClick: () => onLotDetail(m), disabled: !(lots[m.id] || []).length },
                                     "\uD83D\uDD22 ",
                                     (lots[m.id] || []).length || 0,
                                     " Lot")));
-        rows.push(React.createElement("tr", { key: m.id, style: { opacity: !ok ? 0.5 : m.active === false ? .4 : 1 } },
-            ...lastRowCells
-        ));
-    });
-    return rows;
-})()))));
+                    }))))));
 }
 // ════════════════════════════════════════════════════════════
 // LOT/FIFO PAGE
@@ -2838,11 +2833,9 @@ function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, on
                             React.createElement("td", { style: { padding: "8px 11px", borderBottom: C.brd2 } },
                                 React.createElement(Tag, { color: mc.color || C.tx2, bg: mc.bg || "rgba(255,255,255,.06)", brd: `${mc.color || C.brd}44` }, m.type)),
                             React.createElement("td", { style: { padding: "8px 11px", fontWeight: 700, borderBottom: C.brd2, fontSize: 13 } }, m.name),
-                            React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2 } },
-                                makerBadgeColor
-                                    ? React.createElement(Tag, { color: makerBadgeColor.text, bg: makerBadgeColor.bg, brd: makerBadgeColor.brd }, `${makerBadgeColor.emoji} ${m.maker}`)
-                                    : React.createElement(Tag, { color: C.acc2, bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, m.maker)),
-                            React.createElement("td", { style: { padding: "9px 12px", fontFamily: "monospace", fontSize: 15, borderBottom: C.brd2, whiteSpace: "nowrap", fontWeight: 700, color: C.tx } }, m.size),
+                            React.createElement("td", { style: { padding: "8px 11px", borderBottom: C.brd2 } },
+                                React.createElement(Tag, { color: C.acc2, bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, m.maker)),
+                            React.createElement("td", { style: { padding: "8px 11px", fontFamily: "monospace", fontSize: 15, borderBottom: C.brd2, whiteSpace: "nowrap", fontWeight: 700, color: C.tx } }, m.size),
                             React.createElement("td", { style: { padding: "8px 11px", fontSize: 11, color: C.tx2, borderBottom: C.brd2 } }, m.temper),
                             React.createElement("td", { style: { padding: "8px 11px", fontFamily: "monospace", fontSize: 10, borderBottom: C.brd2 } }, m.kpp != null ? `${m.kpp} kg` : "-"),
                             React.createElement("td", { style: { padding: "8px 11px", borderBottom: C.brd2 } },
