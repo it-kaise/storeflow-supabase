@@ -5,7 +5,7 @@
 <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#0d1117;color:#e6edf3;font-family:system-ui,sans-serif;}::-webkit-scrollbar{width:6px;height:6px;}::-webkit-scrollbar-track{background:#161b22;}::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px;}select option{background:#1c2333;color:#e6edf3;}#loading{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:14px;color:#8b949e;}.spin{width:34px;height:34px;border:3px solid #30363d;border-top-color:#f0883e;border-radius:50%;animation:sp .8s linear infinite;}@keyframes sp{to{transform:rotate(360deg)}}</style>
+<style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#f6f8fa;color:#1f2328;font-family:system-ui,sans-serif;}::-webkit-scrollbar{width:8px;height:8px;}::-webkit-scrollbar-track{background:#eaeef2;}::-webkit-scrollbar-thumb{background:#c4ccd4;border-radius:4px;}select option{background:#ffffff;color:#1f2328;}#loading{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:14px;color:#57606a;}.spin{width:34px;height:34px;border:3px solid #d0d7de;border-top-color:#d97706;border-radius:50%;animation:sp .8s linear infinite;}@keyframes sp{to{transform:rotate(360deg)}}</style>
 </head><body>
 <div id="loading"><div class="spin"></div><div style="font-size:14px;font-weight:700">⚙️ StoreFlow</div><div style="font-size:11px">กำลังเชื่อมต่อ Supabase...</div></div>
 <div id="root" style="display:none"></div>
@@ -199,6 +199,14 @@ function reqToDb(req) {
     };
 }
 
+// ตรวจว่าใบเบิกนี้ถูกแทนที่ด้วยฉบับแก้ไข (Revised) แล้วหรือยัง
+// คำนวณจากความสัมพันธ์ revisedFrom (บันทึกได้ปกติ) แทนการพึ่งสถานะ "revised" ใน DB
+// เพราะคอลัมน์ status มี CHECK constraint ที่ไม่รับค่า "revised"
+function isSupersededReq(req, allRequests) {
+    if (!req || !req.id) return false;
+    return (allRequests || []).some(r => r.revisedFrom === req.id && r.status !== "rejected" && r.status !== "revised");
+}
+
 // แปลงข้อมูล Request จาก DB เป็น App
 function reqFromDb(db) {
     return {
@@ -263,28 +271,34 @@ function sortBySize(materials) {
 // COLOR SYSTEM - ใช้สีที่มีอยู่แล้วในระบบ (มองเห็นชัดแน่นอน!)
 // ══════════════════════════════════════════════════════════
 
-// สีสำหรับ Maker - ใช้สีจากระบบ (C.acc, C.ok, etc.)
+// สีสำหรับ Maker - โทนสว่าง อ่านชัดบนพื้นขาว / คงที่ต่อ maker แต่ละราย (12 สี ลดโอกาสสีซ้ำ)
 const MAKER_COLORS = [
-    { text: 'inherit', border: 'transparent', bg: 'transparent', badge: '' }, // Default - ไม่มีสี
-    { text: '#58a6ff', border: '#58a6ff', bg: 'rgba(88,166,255,0.15)', badge: '🔵' }, // น้ำเงิน (C.acc2)
-    { text: '#3fb950', border: '#3fb950', bg: 'rgba(63,185,80,0.15)', badge: '🟢' }, // เขียว (C.ok)
-    { text: '#f0883e', border: '#f0883e', bg: 'rgba(240,136,62,0.15)', badge: '🟠' }, // ส้ม (C.acc)
-    { text: '#bc8cff', border: '#bc8cff', bg: 'rgba(188,140,255,0.15)', badge: '🟣' }, // ม่วง (C.acc3)
-    { text: '#f85149', border: '#f85149', bg: 'rgba(248,81,73,0.15)', badge: '🔴' }, // แดง (C.err)
-    { text: '#ffd700', border: '#ffd700', bg: 'rgba(255,215,0,0.15)', badge: '🟡' }, // เหลือง
-    { text: '#ff69b4', border: '#ff69b4', bg: 'rgba(255,105,180,0.15)', badge: '🌸' }, // ชมพู
+    { text: '#0969da', border: '#0969da', bg: 'rgba(9,105,218,0.10)', badge: '' },   // น้ำเงิน
+    { text: '#1a7f37', border: '#1a7f37', bg: 'rgba(26,127,55,0.10)', badge: '' },   // เขียว
+    { text: '#bc4c00', border: '#bc4c00', bg: 'rgba(188,76,0,0.10)', badge: '' },    // ส้มเข้ม
+    { text: '#8250df', border: '#8250df', bg: 'rgba(130,80,223,0.10)', badge: '' },  // ม่วง
+    { text: '#cf222e', border: '#cf222e', bg: 'rgba(207,34,46,0.10)', badge: '' },   // แดง
+    { text: '#9a6700', border: '#9a6700', bg: 'rgba(154,103,0,0.10)', badge: '' },   // ทอง/มะกอก
+    { text: '#1b7c83', border: '#1b7c83', bg: 'rgba(27,124,131,0.10)', badge: '' },  // ฟ้าอมเขียว
+    { text: '#bf3989', border: '#bf3989', bg: 'rgba(191,57,137,0.10)', badge: '' },  // ชมพูบานเย็น
+    { text: '#3538cd', border: '#3538cd', bg: 'rgba(53,56,205,0.10)', badge: '' },   // คราม/อินดิโก้
+    { text: '#0e7490', border: '#0e7490', bg: 'rgba(14,116,144,0.10)', badge: '' },  // ฟ้าน้ำทะเล
+    { text: '#a21caf', border: '#a21caf', bg: 'rgba(162,28,175,0.10)', badge: '' },  // ม่วงบานเย็น
+    { text: '#4d7c0f', border: '#4d7c0f', bg: 'rgba(77,124,15,0.10)', badge: '' },   // เขียวมะนาว
 ];
+// สีเริ่มต้นเมื่อไม่มีชื่อ Maker
+const MAKER_DEFAULT_COLOR = { text: '#57606a', border: 'transparent', bg: 'transparent', badge: '' };
 
-// สีสำหรับ Temper - สีสว่างกว่า Maker เล็กน้อย
+// สีสำหรับ Temper - โทนสว่าง ใช้เป็นตัวแยกเมื่อ maker+size เดียวกันแต่ต่าง temper
 const TEMPER_COLORS = [
-    { text: 'inherit', border: 'transparent', bg: 'transparent', badge: '' }, // Default
-    { text: '#a78bfa', border: '#a78bfa', bg: 'rgba(167,139,250,0.2)', badge: '●' }, // ม่วงสว่าง
-    { text: '#f472b6', border: '#f472b6', bg: 'rgba(244,114,182,0.2)', badge: '●' }, // ชมพูสว่าง
-    { text: '#4ade80', border: '#4ade80', bg: 'rgba(74,222,128,0.2)', badge: '●' }, // เขียวสว่าง
-    { text: '#fb923c', border: '#fb923c', bg: 'rgba(251,146,60,0.2)', badge: '●' }, // ส้มสว่าง
-    { text: '#60a5fa', border: '#60a5fa', bg: 'rgba(96,165,250,0.2)', badge: '●' }, // น้ำเงินสว่าง
-    { text: '#ef4444', border: '#ef4444', bg: 'rgba(239,68,68,0.2)', badge: '●' }, // แดงสว่าง
-    { text: '#22d3ee', border: '#22d3ee', bg: 'rgba(34,211,238,0.2)', badge: '●' }, // ฟ้าสว่าง
+    { text: '#57606a', border: 'transparent', bg: 'transparent', badge: '' }, // Default - temper เดียว ไม่ต้องแยกสี
+    { text: '#8250df', border: '#8250df', bg: 'rgba(130,80,223,0.10)', badge: '●' }, // ม่วง
+    { text: '#bf3989', border: '#bf3989', bg: 'rgba(191,57,137,0.10)', badge: '●' }, // ชมพู
+    { text: '#1a7f37', border: '#1a7f37', bg: 'rgba(26,127,55,0.10)', badge: '●' }, // เขียว
+    { text: '#bc4c00', border: '#bc4c00', bg: 'rgba(188,76,0,0.10)', badge: '●' }, // ส้ม
+    { text: '#0969da', border: '#0969da', bg: 'rgba(9,105,218,0.10)', badge: '●' }, // น้ำเงิน
+    { text: '#cf222e', border: '#cf222e', bg: 'rgba(207,34,46,0.10)', badge: '●' }, // แดง
+    { text: '#1b7c83', border: '#1b7c83', bg: 'rgba(27,124,131,0.10)', badge: '●' }, // ฟ้าอมเขียว
 ];
 
 // ฟังก์ชันหา Material ที่มี Size เดียวกัน
@@ -298,19 +312,30 @@ function getMaterialsWithSameSize(materials, material) {
     );
 }
 
-// ฟังก์ชันกำหนดสีตาม Maker
+// hash ชื่อ -> ตัวเลขคงที่ (สำหรับเลือกสีให้คงที่ต่อ maker)
+function _strHash(s) {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return Math.abs(h);
+}
+
+// ทะเบียนสีของแต่ละ maker — กำหนดจากรายชื่อ maker ทั้งหมดเรียงตามตัวอักษร
+// เพื่อให้แต่ละ maker ได้คนละสี (ไม่ชนกัน) จนกว่าจะเกินจำนวนสีในจาน
+let MAKER_COLOR_MAP = {};
+function buildMakerColorMap(makerNames) {
+    const uniq = [...new Set((makerNames || []).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
+    const map = {};
+    uniq.forEach((name, i) => { map[name] = MAKER_COLORS[i % MAKER_COLORS.length]; });
+    MAKER_COLOR_MAP = map;
+    return map;
+}
+
+// ฟังก์ชันกำหนดสีตาม Maker — คงที่ต่อชื่อ maker เสมอ (ทุกหน้าได้สีเดียวกัน)
 function getMakerColor(materials, material) {
-    const sameSizeMats = getMaterialsWithSameSize(materials, material);
-    if (sameSizeMats.length === 0) return MAKER_COLORS[0];
-    
-    // เรียงตาม Maker name
-    const allMakers = [material, ...sameSizeMats].map(m => m.maker).sort();
-    const uniqueMakers = [...new Set(allMakers)];
-    
-    if (uniqueMakers.length === 1) return MAKER_COLORS[0];
-    
-    const makerIndex = uniqueMakers.indexOf(material.maker);
-    return MAKER_COLORS[(makerIndex % (MAKER_COLORS.length - 1)) + 1];
+    if (!material || !material.maker) return MAKER_DEFAULT_COLOR;
+    if (MAKER_COLOR_MAP[material.maker]) return MAKER_COLOR_MAP[material.maker];
+    // maker ที่ยังไม่อยู่ในทะเบียน (เช่นเพิ่งเพิ่มใหม่) → ใช้ hash ของชื่อชั่วคราว
+    return MAKER_COLORS[_strHash(material.maker) % MAKER_COLORS.length];
 }
 
 // ฟังก์ชันกำหนดสีตาม Temper
@@ -335,17 +360,9 @@ function getTemperColor(materials, material) {
     return TEMPER_COLORS[(temperIndex % (TEMPER_COLORS.length - 1)) + 1];
 }
 
-// ฟังก์ชันรวมสี (Maker + Temper)
+// สีของแถบซ้ายแต่ละแถว = สี Maker (คงที่ต่อ maker) | การแยก temper ไปแสดงที่ช่อง Temper
 function getMaterialColor(materials, material) {
-    const makerColor = getMakerColor(materials, material);
-    const temperColor = getTemperColor(materials, material);
-    
-    // ถ้ามีทั้ง Maker และ Temper แตกต่าง = ใช้ Temper (เฉพาะเจาะจงกว่า)
-    if (temperColor.border !== 'transparent') {
-        return temperColor;
-    }
-    
-    return makerColor;
+    return getMakerColor(materials, material);
 }
 
 
@@ -364,7 +381,7 @@ const INIT_MASTER = {
     matTypes: [
         { code: "CU", label: "ทองแดง", color: "#e8a87c", bg: "rgba(184,115,51,.2)" },
         { code: "SUS", label: "สแตนเลส", color: "#ccc", bg: "rgba(192,192,192,.1)" },
-        { code: "AL", label: "อะลูมิเนียม", color: "#58a6ff", bg: "rgba(88,166,255,.1)" },
+        { code: "AL", label: "อะลูมิเนียม", color: "#0969da", bg: "rgba(88,166,255,.1)" },
         { code: "FE", label: "เหล็ก", color: "#90a4ae", bg: "rgba(96,125,139,.2)" },
     ],
     // ชื่อวัตถุดิบ (Part Name + Part No) — เพิ่มได้
@@ -413,11 +430,11 @@ const INIT_REQUESTS = [];
 // DESIGN TOKENS
 // ════════════════════════════════════════════════════════════
 const C = {
-    bg: "#0d1117", sur: "#161b22", sur2: "#1c2333", sur3: "#21262d",
-    brd: "#30363d", brd2: "rgba(48,54,61,.5)",
-    acc: "#f0883e", acc2: "#58a6ff", acc3: "#bc8cff",
-    ok: "#3fb950", err: "#f85149", warn: "#d29922",
-    tx: "#e6edf3", tx2: "#8b949e", tx3: "#6e7681",
+    bg: "#f6f8fa", sur: "#ffffff", sur2: "#f0f3f6", sur3: "#e6eaef",
+    brd: "#d0d7de", brd2: "rgba(208,215,222,.7)",
+    acc: "#d97706", acc2: "#0969da", acc3: "#8250df",
+    ok: "#1a7f37", err: "#cf222e", warn: "#9a6700",
+    tx: "#1f2328", tx2: "#57606a", tx3: "#8c959f",
 };
 // ════════════════════════════════════════════════════════════
 // REUSABLE UI PRIMITIVES
@@ -481,7 +498,7 @@ function FGrid({ children, cols = 3 }) { return React.createElement("div", { sty
 function SecTitle({ children }) { return React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: C.tx2, textTransform: "uppercase", letterSpacing: .5, margin: "14px 0 8px", display: "flex", alignItems: "center", gap: 8 } },
     children,
     React.createElement("div", { style: { flex: 1, height: 1, background: C.brd } })); }
-function Tag({ children, color, bg, brd }) { return React.createElement("span", { style: { display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, color: color || C.tx2, background: bg || "rgba(255,255,255,.06)", border: `1px solid ${brd || C.brd}`, whiteSpace: "nowrap" } }, children); }
+function Tag({ children, color, bg, brd }) { return React.createElement("span", { style: { display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, color: color || C.tx2, background: bg || "rgba(0,0,0,.04)", border: `1px solid ${brd || C.brd}`, whiteSpace: "nowrap" } }, children); }
 function Modal({ open, onClose, title, sub, icon = "📋", children, footer, width = 700 }) {
     if (!open)
         return null;
@@ -520,93 +537,93 @@ function LotDetailModal({ open, onClose, mat, lots, setLots, master }) {
     const totCoil = ml.reduce((s, l) => s + (l.rem_coil || 0), 0);
     return React.createElement("div", { onClick: e => { if (e.target === e.currentTarget)
             onClose(); }, style: { position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center" } },
-        React.createElement("div", { style: { background: "#161b22", border: "1px solid #30363d", borderRadius: 10, width: 820, maxWidth: "97vw", maxHeight: "92vh", display: "flex", flexDirection: "column" } },
-            React.createElement("div", { style: { padding: "12px 16px", borderBottom: "1px solid #30363d", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 } },
+        React.createElement("div", { style: { background: "#ffffff", border: "1px solid #d0d7de", borderRadius: 10, width: 820, maxWidth: "97vw", maxHeight: "92vh", display: "flex", flexDirection: "column" } },
+            React.createElement("div", { style: { padding: "12px 16px", borderBottom: "1px solid #d0d7de", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 } },
                 React.createElement("span", { style: { fontSize: 18 } }, "\uD83D\uDD22"),
                 React.createElement("div", { style: { flex: 1 } },
                     React.createElement("div", { style: { fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" } },
                         React.createElement(Tag, { color: mc.color, bg: mc.bg, brd: mc.color + "44" }, mat.type),
                         React.createElement("span", null, mat.name),
-                        React.createElement("span", { style: { color: "#8b949e", fontWeight: 400, fontSize: 12 } }, mat.size),
-                        React.createElement(Tag, { color: "#58a6ff", bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, mat.maker)),
-                    React.createElement("div", { style: { fontSize: 10, color: "#8b949e", marginTop: 2 } },
+                        React.createElement("span", { style: { color: "#57606a", fontWeight: 400, fontSize: 12 } }, mat.size),
+                        (() => { const mk = getMakerColor(null, mat); return React.createElement(Tag, { color: mk.text, bg: mk.bg, brd: mk.border }, mat.maker); })()),
+                    React.createElement("div", { style: { fontSize: 10, color: "#57606a", marginTop: 2 } },
                         "Part No: ",
-                        React.createElement("strong", { style: { color: "#bc8cff" } }, mat.partNo),
+                        React.createElement("strong", { style: { color: "#8250df" } }, mat.partNo),
                         " | \u0E2B\u0E19\u0E48\u0E27\u0E22: ",
                         mat.unit)),
                 React.createElement("div", { style: { display: "flex", gap: 12, fontSize: 11, marginRight: 8 } },
                     totKgs > 0 && React.createElement("div", { style: { textAlign: "center" } },
-                        React.createElement("div", { style: { fontSize: 9, color: "#8b949e" } }, "\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D KGS"),
-                        React.createElement("div", { style: { fontFamily: "monospace", fontWeight: 800, color: "#f0883e", fontSize: 18 } }, totKgs.toFixed(1))),
+                        React.createElement("div", { style: { fontSize: 9, color: "#57606a" } }, "\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D KGS"),
+                        React.createElement("div", { style: { fontFamily: "monospace", fontWeight: 800, color: "#d97706", fontSize: 18 } }, totKgs.toFixed(1))),
                     totPcs > 0 && React.createElement("div", { style: { textAlign: "center" } },
-                        React.createElement("div", { style: { fontSize: 9, color: "#8b949e" } }, "\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D PCS"),
-                        React.createElement("div", { style: { fontFamily: "monospace", fontWeight: 800, color: "#f0883e", fontSize: 18 } }, totPcs)),
+                        React.createElement("div", { style: { fontSize: 9, color: "#57606a" } }, "\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D PCS"),
+                        React.createElement("div", { style: { fontFamily: "monospace", fontWeight: 800, color: "#d97706", fontSize: 18 } }, totPcs)),
                     totCoil > 0 && React.createElement("div", { style: { textAlign: "center" } },
-                        React.createElement("div", { style: { fontSize: 9, color: "#8b949e" } }, "\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D COIL"),
-                        React.createElement("div", { style: { fontFamily: "monospace", fontWeight: 800, color: "#f0883e", fontSize: 18 } }, totCoil))),
-                React.createElement("button", { onClick: onClose, style: { background: "none", border: "none", color: "#8b949e", cursor: "pointer", fontSize: 22, lineHeight: 1 } }, "\u00D7")),
-            React.createElement("div", { style: { padding: "7px 14px", background: "rgba(88,166,255,.06)", borderBottom: "1px solid #30363d", fontSize: 10, color: "#58a6ff", flexShrink: 0 } },
+                        React.createElement("div", { style: { fontSize: 9, color: "#57606a" } }, "\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D COIL"),
+                        React.createElement("div", { style: { fontFamily: "monospace", fontWeight: 800, color: "#d97706", fontSize: 18 } }, totCoil))),
+                React.createElement("button", { onClick: onClose, style: { background: "none", border: "none", color: "#57606a", cursor: "pointer", fontSize: 22, lineHeight: 1 } }, "\u00D7")),
+            React.createElement("div", { style: { padding: "7px 14px", background: "rgba(88,166,255,.06)", borderBottom: "1px solid #d0d7de", fontSize: 10, color: "#0969da", flexShrink: 0 } },
                 "\u2139\uFE0F ",
                 React.createElement("strong", null, "FIFO"),
                 " \u2014 Lot \u0E23\u0E31\u0E1A\u0E40\u0E02\u0E49\u0E32\u0E01\u0E48\u0E2D\u0E19 \u0E08\u0E48\u0E32\u0E22\u0E2D\u0E2D\u0E01\u0E01\u0E48\u0E2D\u0E19 | ",
-                React.createElement("strong", { style: { color: "#f0883e" } }, "\u25B6 NEXT"),
+                React.createElement("strong", { style: { color: "#d97706" } }, "\u25B6 NEXT"),
                 " = Lot \u0E16\u0E31\u0E14\u0E44\u0E1B\u0E17\u0E35\u0E48\u0E08\u0E30\u0E08\u0E48\u0E32\u0E22\u0E2D\u0E2D\u0E01"),
             React.createElement("div", { style: { overflowY: "auto", flex: 1 } }, ml.length === 0
-                ? React.createElement("div", { style: { padding: 32, textAlign: "center", color: "#8b949e", fontSize: 12 } }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 Lot")
+                ? React.createElement("div", { style: { padding: 32, textAlign: "center", color: "#57606a", fontSize: 12 } }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 Lot")
                 : React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11 } },
                     React.createElement("thead", { style: { position: "sticky", top: 0, zIndex: 1 } },
-                        React.createElement("tr", { style: { background: "#21262d" } }, [..."FIFO,Lot No.,วันที่รับ,PO No.,รับ KGS,รับ PCS,รับ COIL,คงเหลือ KGS,คงเหลือ PCS,คงเหลือ COIL,สถานะ".split(","), ...(setLots ? ["แก้ไข"] : [])].map(h => (React.createElement("th", { key: h, style: { padding: "7px 10px", textAlign: "left", fontSize: 9, fontWeight: 700, color: "#8b949e", textTransform: "uppercase", borderBottom: "1px solid #30363d", whiteSpace: "nowrap" } }, h))))),
+                        React.createElement("tr", { style: { background: "#e6eaef" } }, [..."FIFO,Lot No.,วันที่รับ,PO No.,รับ KGS,รับ PCS,รับ COIL,คงเหลือ KGS,คงเหลือ PCS,คงเหลือ COIL,สถานะ".split(","), ...(setLots ? ["แก้ไข"] : [])].map(h => (React.createElement("th", { key: h, style: { padding: "7px 10px", textAlign: "left", fontSize: 9, fontWeight: 700, color: "#57606a", textTransform: "uppercase", borderBottom: "1px solid #d0d7de", whiteSpace: "nowrap" } }, h))))),
                     React.createElement("tbody", null, ml.map((lot, i) => {
                         const empty = (lot.rem_kgs || 0) === 0 && (lot.rem_pcs || 0) === 0 && (lot.rem_coil || 0) === 0;
                         const fi = ml.findIndex(l => (l.rem_kgs || 0) > 0 || (l.rem_pcs || 0) > 0 || (l.rem_coil || 0) > 0);
                         const isNext = !empty && i === fi;
                         return React.createElement("tr", { key: i, style: { background: isNext ? "rgba(240,136,62,.06)" : "transparent", opacity: empty ? .3 : 1 } },
-                            React.createElement("td", { style: { padding: "8px 10px", borderBottom: "1px solid rgba(48,54,61,.5)" } }, isNext ? React.createElement("strong", { style: { color: "#f0883e" } }, "\u25B6 NEXT") : empty ? React.createElement("span", { style: { color: "#6e7681", fontSize: 10 } }, "\u2713 \u0E2B\u0E21\u0E14") : React.createElement("span", { style: { color: "#6e7681" } },
+                            React.createElement("td", { style: { padding: "8px 10px", borderBottom: "1px solid rgba(208,215,222,.7)" } }, isNext ? React.createElement("strong", { style: { color: "#d97706" } }, "\u25B6 NEXT") : empty ? React.createElement("span", { style: { color: "#8c959f", fontSize: 10 } }, "\u2713 \u0E2B\u0E21\u0E14") : React.createElement("span", { style: { color: "#8c959f" } },
                                 "#",
                                 i + 1)),
-                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", fontSize: 10, color: isNext ? "#f0883e" : "#e6edf3", fontWeight: isNext ? 700 : 400, borderBottom: "1px solid rgba(48,54,61,.5)" } }, lot.lotNo),
-                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", fontSize: 10, borderBottom: "1px solid rgba(48,54,61,.5)" } }, lot.date),
-                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", fontSize: 9, color: "#8b949e", borderBottom: "1px solid rgba(48,54,61,.5)" } }, lot.po),
-                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", color: "#8b949e", borderBottom: "1px solid rgba(48,54,61,.5)" } }, lot.kgs != null ? lot.kgs.toFixed(1) : "-"),
-                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", color: "#8b949e", borderBottom: "1px solid rgba(48,54,61,.5)" } }, lot.pcs != null ? lot.pcs : "-"),
-                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", color: "#8b949e", borderBottom: "1px solid rgba(48,54,61,.5)" } }, lot.coil != null ? lot.coil : "-"),
-                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", fontWeight: isNext ? 800 : 600, color: isNext && (lot.rem_kgs || 0) > 0 ? "#f0883e" : "#e6edf3", borderBottom: "1px solid rgba(48,54,61,.5)", fontSize: isNext ? 13 : 11 } }, lot.rem_kgs != null ? lot.rem_kgs.toFixed(1) : "-"),
-                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", fontWeight: isNext ? 800 : 600, color: isNext && (lot.rem_pcs || 0) > 0 ? "#f0883e" : "#e6edf3", borderBottom: "1px solid rgba(48,54,61,.5)", fontSize: isNext ? 13 : 11 } }, lot.rem_pcs != null ? lot.rem_pcs : "-"),
-                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", fontWeight: isNext ? 800 : 600, borderBottom: "1px solid rgba(48,54,61,.5)" } }, lot.rem_coil != null ? lot.rem_coil : "-"),
-                            React.createElement("td", { style: { padding: "8px 10px", borderBottom: "1px solid rgba(48,54,61,.5)" } }, empty ? React.createElement(Tag, { color: "#6e7681" }, "\u0E43\u0E0A\u0E49\u0E2B\u0E21\u0E14") : isNext ? React.createElement(Tag, { color: "#3fb950", bg: "rgba(63,185,80,.1)", brd: "rgba(63,185,80,.2)" }, "\u0E01\u0E33\u0E25\u0E31\u0E07\u0E43\u0E0A\u0E49") : React.createElement(Tag, { color: "#58a6ff", bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, "\u0E23\u0E2D\u0E04\u0E34\u0E27")),
-                            setLots && React.createElement("td", { style: { padding: "8px 10px", borderBottom: "1px solid rgba(48,54,61,.5)", whiteSpace: "nowrap" } },
+                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", fontSize: 10, color: isNext ? "#d97706" : "#1f2328", fontWeight: isNext ? 700 : 400, borderBottom: "1px solid rgba(208,215,222,.7)" } }, lot.lotNo),
+                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", fontSize: 10, borderBottom: "1px solid rgba(208,215,222,.7)" } }, lot.date),
+                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", fontSize: 9, color: "#57606a", borderBottom: "1px solid rgba(208,215,222,.7)" } }, lot.po),
+                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", color: "#57606a", borderBottom: "1px solid rgba(208,215,222,.7)" } }, lot.kgs != null ? lot.kgs.toFixed(1) : "-"),
+                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", color: "#57606a", borderBottom: "1px solid rgba(208,215,222,.7)" } }, lot.pcs != null ? lot.pcs : "-"),
+                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", color: "#57606a", borderBottom: "1px solid rgba(208,215,222,.7)" } }, lot.coil != null ? lot.coil : "-"),
+                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", fontWeight: isNext ? 800 : 600, color: isNext && (lot.rem_kgs || 0) > 0 ? "#d97706" : "#1f2328", borderBottom: "1px solid rgba(208,215,222,.7)", fontSize: isNext ? 13 : 11 } }, lot.rem_kgs != null ? lot.rem_kgs.toFixed(1) : "-"),
+                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", fontWeight: isNext ? 800 : 600, color: isNext && (lot.rem_pcs || 0) > 0 ? "#d97706" : "#1f2328", borderBottom: "1px solid rgba(208,215,222,.7)", fontSize: isNext ? 13 : 11 } }, lot.rem_pcs != null ? lot.rem_pcs : "-"),
+                            React.createElement("td", { style: { padding: "8px 10px", fontFamily: "monospace", fontWeight: isNext ? 800 : 600, borderBottom: "1px solid rgba(208,215,222,.7)" } }, lot.rem_coil != null ? lot.rem_coil : "-"),
+                            React.createElement("td", { style: { padding: "8px 10px", borderBottom: "1px solid rgba(208,215,222,.7)" } }, empty ? React.createElement(Tag, { color: "#8c959f" }, "\u0E43\u0E0A\u0E49\u0E2B\u0E21\u0E14") : isNext ? React.createElement(Tag, { color: "#1a7f37", bg: "rgba(63,185,80,.1)", brd: "rgba(63,185,80,.2)" }, "\u0E01\u0E33\u0E25\u0E31\u0E07\u0E43\u0E0A\u0E49") : React.createElement(Tag, { color: "#0969da", bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, "\u0E23\u0E2D\u0E04\u0E34\u0E27")),
+                            setLots && React.createElement("td", { style: { padding: "8px 10px", borderBottom: "1px solid rgba(208,215,222,.7)", whiteSpace: "nowrap" } },
                                 React.createElement("div", { style: { display: "flex", gap: 4 } },
-                                    React.createElement("button", { onClick: () => { setEditIdx(i); setEditForm({ lotNo: lot.lotNo, date: lot.date, pcs: lot.pcs, coil: lot.coil, kgs: lot.kgs, rem_kgs: lot.rem_kgs, rem_pcs: lot.rem_pcs, rem_coil: lot.rem_coil, po: lot.po }); }, style: { background: "rgba(88,166,255,.15)", border: "1px solid rgba(88,166,255,.3)", borderRadius: 4, color: "#58a6ff", cursor: "pointer", padding: "2px 7px", fontSize: 11 } }, "\u270F\uFE0F"),
+                                    React.createElement("button", { onClick: () => { setEditIdx(i); setEditForm({ lotNo: lot.lotNo, date: lot.date, pcs: lot.pcs, coil: lot.coil, kgs: lot.kgs, rem_kgs: lot.rem_kgs, rem_pcs: lot.rem_pcs, rem_coil: lot.rem_coil, po: lot.po }); }, style: { background: "rgba(88,166,255,.15)", border: "1px solid rgba(88,166,255,.3)", borderRadius: 4, color: "#0969da", cursor: "pointer", padding: "2px 7px", fontSize: 11 } }, "\u270F\uFE0F"),
                                     empty && React.createElement("button", { onClick: () => { if (window.confirm(`ลบ Lot "${lot.lotNo}"?`)) {
                                             setLots(ls => ({ ...ls, [mat.id]: ls[mat.id].filter((_, xi) => xi !== i) }));
-                                        } }, style: { background: "rgba(248,81,73,.15)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 4, color: "#f85149", cursor: "pointer", padding: "2px 7px", fontSize: 11 } }, "\uD83D\uDDD1\uFE0F"))));
+                                        } }, style: { background: "rgba(248,81,73,.15)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 4, color: "#cf222e", cursor: "pointer", padding: "2px 7px", fontSize: 11 } }, "\uD83D\uDDD1\uFE0F"))));
                         {
                             editIdx === i && setLots && React.createElement("tr", { key: "edit-" + i, style: { background: "rgba(88,166,255,.06)" } },
-                                React.createElement("td", { colSpan: 12, style: { padding: "10px 14px", borderBottom: "1px solid rgba(48,54,61,.5)" } },
+                                React.createElement("td", { colSpan: 12, style: { padding: "10px 14px", borderBottom: "1px solid rgba(208,215,222,.7)" } },
                                     React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" } },
                                         React.createElement("div", null,
-                                            React.createElement("div", { style: { fontSize: 9, color: "#8b949e", marginBottom: 2 } }, "Lot No."),
-                                            React.createElement("input", { value: editForm.lotNo || "", onChange: e => setEditForm(f => ({ ...f, lotNo: e.target.value })), style: { background: "#0d1117", border: "1px solid #30363d", borderRadius: 5, padding: "4px 8px", color: "#e6edf3", fontFamily: "monospace", fontSize: 11, width: 140, outline: "none" } })),
+                                            React.createElement("div", { style: { fontSize: 9, color: "#57606a", marginBottom: 2 } }, "Lot No."),
+                                            React.createElement("input", { value: editForm.lotNo || "", onChange: e => setEditForm(f => ({ ...f, lotNo: e.target.value })), style: { background: "#f6f8fa", border: "1px solid #d0d7de", borderRadius: 5, padding: "4px 8px", color: "#1f2328", fontFamily: "monospace", fontSize: 11, width: 140, outline: "none" } })),
                                         React.createElement("div", null,
-                                            React.createElement("div", { style: { fontSize: 9, color: "#8b949e", marginBottom: 2 } }, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"),
-                                            React.createElement("input", { type: "date", value: editForm.date || "", onChange: e => setEditForm(f => ({ ...f, date: e.target.value })), style: { background: "#0d1117", border: "1px solid #30363d", borderRadius: 5, padding: "4px 8px", color: "#e6edf3", fontFamily: "inherit", fontSize: 11, outline: "none" } })),
+                                            React.createElement("div", { style: { fontSize: 9, color: "#57606a", marginBottom: 2 } }, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"),
+                                            React.createElement("input", { type: "date", value: editForm.date || "", onChange: e => setEditForm(f => ({ ...f, date: e.target.value })), style: { background: "#f6f8fa", border: "1px solid #d0d7de", borderRadius: 5, padding: "4px 8px", color: "#1f2328", fontFamily: "inherit", fontSize: 11, outline: "none" } })),
                                         React.createElement("div", null,
-                                            React.createElement("div", { style: { fontSize: 9, color: "#8b949e", marginBottom: 2 } }, "KGS \u0E23\u0E31\u0E1A"),
-                                            React.createElement("input", { type: "number", value: editForm.kgs || "", onChange: e => setEditForm(f => ({ ...f, kgs: parseFloat(e.target.value) || null })), style: { background: "#0d1117", border: "1px solid #30363d", borderRadius: 5, padding: "4px 8px", color: "#e6edf3", fontFamily: "monospace", fontSize: 11, width: 80, outline: "none" } })),
+                                            React.createElement("div", { style: { fontSize: 9, color: "#57606a", marginBottom: 2 } }, "KGS \u0E23\u0E31\u0E1A"),
+                                            React.createElement("input", { type: "number", value: editForm.kgs || "", onChange: e => setEditForm(f => ({ ...f, kgs: parseFloat(e.target.value) || null })), style: { background: "#f6f8fa", border: "1px solid #d0d7de", borderRadius: 5, padding: "4px 8px", color: "#1f2328", fontFamily: "monospace", fontSize: 11, width: 80, outline: "none" } })),
                                         React.createElement("div", null,
-                                            React.createElement("div", { style: { fontSize: 9, color: "#8b949e", marginBottom: 2 } }, "PCS \u0E23\u0E31\u0E1A"),
-                                            React.createElement("input", { type: "number", value: editForm.pcs || "", onChange: e => setEditForm(f => ({ ...f, pcs: parseFloat(e.target.value) || null })), style: { background: "#0d1117", border: "1px solid #30363d", borderRadius: 5, padding: "4px 8px", color: "#e6edf3", fontFamily: "monospace", fontSize: 11, width: 70, outline: "none" } })),
+                                            React.createElement("div", { style: { fontSize: 9, color: "#57606a", marginBottom: 2 } }, "PCS \u0E23\u0E31\u0E1A"),
+                                            React.createElement("input", { type: "number", value: editForm.pcs || "", onChange: e => setEditForm(f => ({ ...f, pcs: parseFloat(e.target.value) || null })), style: { background: "#f6f8fa", border: "1px solid #d0d7de", borderRadius: 5, padding: "4px 8px", color: "#1f2328", fontFamily: "monospace", fontSize: 11, width: 70, outline: "none" } })),
                                         React.createElement("div", null,
-                                            React.createElement("div", { style: { fontSize: 9, color: "#8b949e", marginBottom: 2 } }, "COIL \u0E23\u0E31\u0E1A"),
-                                            React.createElement("input", { type: "number", value: editForm.coil || "", onChange: e => setEditForm(f => ({ ...f, coil: parseFloat(e.target.value) || null })), style: { background: "#0d1117", border: "1px solid #30363d", borderRadius: 5, padding: "4px 8px", color: "#e6edf3", fontFamily: "monospace", fontSize: 11, width: 70, outline: "none" } })),
+                                            React.createElement("div", { style: { fontSize: 9, color: "#57606a", marginBottom: 2 } }, "COIL \u0E23\u0E31\u0E1A"),
+                                            React.createElement("input", { type: "number", value: editForm.coil || "", onChange: e => setEditForm(f => ({ ...f, coil: parseFloat(e.target.value) || null })), style: { background: "#f6f8fa", border: "1px solid #d0d7de", borderRadius: 5, padding: "4px 8px", color: "#1f2328", fontFamily: "monospace", fontSize: 11, width: 70, outline: "none" } })),
                                         React.createElement("div", null,
-                                            React.createElement("div", { style: { fontSize: 9, color: "#8b949e", marginBottom: 2 } }, "PO No."),
-                                            React.createElement("input", { value: editForm.po || "", onChange: e => setEditForm(f => ({ ...f, po: e.target.value })), style: { background: "#0d1117", border: "1px solid #30363d", borderRadius: 5, padding: "4px 8px", color: "#e6edf3", fontFamily: "monospace", fontSize: 11, width: 100, outline: "none" } })),
-                                        React.createElement("button", { onClick: () => { setLots(ls => ({ ...ls, [mat.id]: ls[mat.id].map((x, xi) => xi === i ? { ...x, ...editForm } : x) })); setEditIdx(null); }, style: { background: "#238636", border: "none", borderRadius: 5, color: "#fff", cursor: "pointer", padding: "5px 12px", fontSize: 11, fontWeight: 700 } }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01"),
-                                        React.createElement("button", { onClick: () => setEditIdx(null), style: { background: "transparent", border: "1px solid #30363d", borderRadius: 5, color: "#8b949e", cursor: "pointer", padding: "5px 10px", fontSize: 11 } }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"))));
+                                            React.createElement("div", { style: { fontSize: 9, color: "#57606a", marginBottom: 2 } }, "PO No."),
+                                            React.createElement("input", { value: editForm.po || "", onChange: e => setEditForm(f => ({ ...f, po: e.target.value })), style: { background: "#f6f8fa", border: "1px solid #d0d7de", borderRadius: 5, padding: "4px 8px", color: "#1f2328", fontFamily: "monospace", fontSize: 11, width: 100, outline: "none" } })),
+                                        React.createElement("button", { onClick: () => { setLots(ls => ({ ...ls, [mat.id]: ls[mat.id].map((x, xi) => xi === i ? { ...x, ...editForm } : x) })); setEditIdx(null); }, style: { background: "#1a7f37", border: "none", borderRadius: 5, color: "#fff", cursor: "pointer", padding: "5px 12px", fontSize: 11, fontWeight: 700 } }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01"),
+                                        React.createElement("button", { onClick: () => setEditIdx(null), style: { background: "transparent", border: "1px solid #d0d7de", borderRadius: 5, color: "#57606a", cursor: "pointer", padding: "5px 10px", fontSize: 11 } }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"))));
                         }
                     })))),
-            React.createElement("div", { style: { padding: "10px 16px", borderTop: "1px solid #30363d", display: "flex", justifyContent: "flex-end", flexShrink: 0 } },
+            React.createElement("div", { style: { padding: "10px 16px", borderTop: "1px solid #d0d7de", display: "flex", justifyContent: "flex-end", flexShrink: 0 } },
                 React.createElement(Btn, { v: "ghost", onClick: onClose }, "\u0E1B\u0E34\u0E14"))));
 }
 // ── SheetJS Excel export helper ──
@@ -691,7 +708,10 @@ function StoreFlow() {
                 // โหลด Materials
                 const { data: matsData, error: matsError } = await sb.from('sf_materials').select('*');
                 if (matsError) throw matsError;
-                setMaterials((matsData || []).map(m => matFromDb(m)));
+                const matsMapped = (matsData || []).map(m => matFromDb(m));
+                setMaterials(matsMapped);
+                // สร้างทะเบียนสี maker จาก maker ทั้งหมด (วัตถุดิบ + master) เรียงตามชื่อ → แต่ละ maker คนละสี
+                buildMakerColorMap([...matsMapped.map(m => m.maker), ...((masterData.makers || []).map(x => x.name))]);
                 console.log('✅ โหลด Materials:', matsData?.length || 0, 'รายการ');
                 
                 // โหลด Lots
@@ -773,6 +793,29 @@ function StoreFlow() {
     const [lotDetailMat, setLotDetailMat] = useState(null);
     const [noStkItems, setNoStkItems] = useState([]);
     const [selectedLots, setSelectedLots] = useState({});
+    // ── Auto-refresh: ดึงสต๊อก/ใบเบิก/วัตถุดิบล่าสุดทุก 20 วิ ให้หลายคนเห็นตรงกัน
+    //    (หยุดชั่วคราวขณะเปิด Modal/ฟอร์ม เพื่อไม่ให้ข้อมูลที่กำลังกรอกถูกเขียนทับ) ──
+    useEffect(() => {
+        if (isLoading || modal || lotDetailMat || historyModal) return;
+        const iv = setInterval(async () => {
+            if (document.hidden) return;
+            try {
+                const [lotsData, reqsRes, matsRes] = await Promise.all([
+                    loadLots(),
+                    sb.from('sf_requests').select('*').order('request_date', { ascending: false }),
+                    sb.from('sf_materials').select('*')
+                ]);
+                setLots(lotsData);
+                if (!reqsRes.error) setRequests((reqsRes.data || []).map(reqFromDb));
+                if (!matsRes.error) {
+                    const matsMapped = (matsRes.data || []).map(matFromDb);
+                    setMaterials(matsMapped);
+                    buildMakerColorMap([...matsMapped.map(m => m.maker), ...((master?.makers || []).map(x => x.name))]);
+                }
+            } catch (e) { console.warn('auto-refresh failed:', e); }
+        }, 20000);
+        return () => clearInterval(iv);
+    }, [isLoading, modal, lotDetailMat, historyModal]);
     // forms
     const emptyRq = () => ({ date: new Date().toISOString().split("T")[0], dept: "CU1", requester: "", jo: "", forecast: "", customer: "", note: "",
         items: [{ type: "", maker: "", matId: "", qty: "", unit: "PCS", kgs: "", coil: "", customer: "" }] });
@@ -851,9 +894,12 @@ function StoreFlow() {
             const maxSeq = requests.filter(r => r.id.startsWith(`REQ-${yr}-`) && !r.id.includes("-R")).reduce((max, r) => { const n = parseInt(r.id.split("-")[2] || 0); return n > max ? n : max; }, 0);
             id = `REQ-${yr}-${String(maxSeq + 1).padStart(4, "0")}`;
         }
-        const { _revisedFrom, ...rqClean } = rqForm;
+        const { _revisedFrom, _originalData, ...rqClean } = rqForm;
         const newReq = { ...rqClean, id, status: "pending", approvedBy: null, issuedBy: null, issuedDate: null, items: builtItems, revisedFrom: _revisedFrom || null };
         await sb.from('sf_requests').insert(reqToDb(newReq));
+        // หมายเหตุ: ใบเดิมจะถูกถือว่า "ถูกแทนที่/แก้ไขแล้ว" โดยอัตโนมัติผ่าน isSupersededReq
+        //   (ดูจากความสัมพันธ์ revised_from ของใบใหม่) — ไม่ต้องเขียนสถานะ "revised" ลง DB
+        //   เพราะคอลัมน์ status มี CHECK constraint ที่ไม่รับค่านั้น และจะกันการอนุมัติที่ approveReq อยู่แล้ว
         setRequests(r => [newReq, ...r]);
         setModal(null);
         setRqForm(emptyRq());
@@ -861,6 +907,34 @@ function StoreFlow() {
         setTimeout(() => toast(`📧 ส่ง Email แจ้งเตือนหัวหน้างานแล้ว`, "info"), 700);
     }
     async function approveReq(id) {
+        // ── กันอนุมัติใบที่ถูกแก้ไข (Revised) แล้ว ──
+        // เช็กล่าสุดจากฐานข้อมูลก่อนเสมอ เผื่อมีคนอื่นเพิ่งแก้ไขใบนี้ระหว่างที่รออนุมัติ
+        try {
+            const { data: fresh } = await sb.from('sf_requests')
+                .select('id,status,revised_from')
+                .or(`id.eq.${id},revised_from.eq.${id}`);
+            if (fresh && fresh.length) {
+                const self = fresh.find(r => r.id === id);
+                const child = fresh.find(r => r.revised_from === id && r.status !== "rejected");
+                if (self && self.status === "revised") {
+                    setRequests(rs => rs.map(r => r.id === id ? { ...r, status: "revised" } : r));
+                    toast(`⛔ ใบ ${id} ถูกแก้ไขเป็นฉบับใหม่แล้ว — อนุมัติไม่ได้`, "err");
+                    setModal(null);
+                    return;
+                }
+                if (child) {
+                    toast(`⛔ ใบ ${id} มีฉบับแก้ไขแล้ว (${child.id}) — กรุณาอนุมัติฉบับล่าสุดแทน`, "err");
+                    setModal(null);
+                    return;
+                }
+                if (self && (self.status === "approved" || self.status === "issued")) {
+                    toast(`ℹ️ ใบ ${id} ถูกดำเนินการไปแล้ว (${self.status})`, "warn");
+                    setModal(null);
+                    return;
+                }
+            }
+        } catch (e) { console.warn('approve precheck failed:', e); }
+
         const updated = { status: "approved", approvedBy: (currentUser === null || currentUser === void 0 ? void 0 : currentUser.name) || "หัวหน้างาน", approvedAt: new Date().toISOString() };
         await sb.from('sf_requests').update({ status: updated.status, approved_by: updated.approvedBy, approved_at: updated.approvedAt }).eq('id', id);
         setRequests(rs => rs.map(r => r.id === id ? { ...r, ...updated } : r));
@@ -894,54 +968,68 @@ function StoreFlow() {
     const today = new Date().toISOString().split("T")[0];
     const issuedByName = currentUser?.name || "พนักงานสโตร์";
 
-    // 2. Update Request Status
-    setRequests(rs => rs.map(x => x.id === id ? { 
-        ...x, status: "issued", issuedBy: issuedByName, issuedDate: today 
+    // 2. Update Request Status (local + DB)
+    setRequests(rs => rs.map(x => x.id === id ? {
+        ...x, status: "issued", issuedBy: issuedByName, issuedDate: today
     } : x));
+    await sb.from('sf_requests').update({ status: "issued", issued_by: issuedByName, issued_date: today }).eq('id', id);
 
     // Prepare arrays to hold data for batch updates
     let newHistoryRecords = [];
+    const workingLots = {}; // สำเนาที่ตัดต่อเนื่อง เผื่อ matId เดียวกันมีหลายบรรทัดในใบเดียว
 
     // 3. Process Items using for...of (to allow await)
     for (const item of r.items) {
         const selKey = `${r.items.indexOf(item)}_${item.matId}`;
         const chosenLots = (selectedLots && selectedLots[selKey]) || [];
 
-        // Logic for updating Lots state
-        setLots(ls => {
-            const ml = [...(ls[item.matId] || [])];
-            const matInfo = materials.find(x => x.id === item.matId);
-            const unit = item.unit || matInfo?.unit || "PCS";
-            let rem = parseFloat(item.qty) || 0;
+        // Logic for updating Lots: คำนวณยอดตัด แล้วบันทึกกลับเข้า DB (sf_lots)
+        const ml = [...(workingLots[item.matId] || lots[item.matId] || [])];
+        const matInfo = materials.find(x => x.id === item.matId);
+        const unit = item.unit || matInfo?.unit || "PCS";
+        let rem = parseFloat(item.qty) || 0;
 
-            const sortedByDate = [...ml].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
-            const processOrder = chosenLots.length > 0
-                ? chosenLots.map(cl => ({ lotIdx: ml.findIndex(l => l.lotNo === cl.lotNo), fixedQty: cl.qty })).filter(x => x.lotIdx >= 0)
-                : sortedByDate.map(l => ({ lotIdx: ml.findIndex(x => x.lotNo === l.lotNo), fixedQty: null })).filter(x => x.lotIdx >= 0);
+        const sortedByDate = [...ml].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+        const processOrder = chosenLots.length > 0
+            ? chosenLots.map(cl => ({ lotIdx: ml.findIndex(l => l.lotNo === cl.lotNo), fixedQty: cl.qty })).filter(x => x.lotIdx >= 0)
+            : sortedByDate.map(l => ({ lotIdx: ml.findIndex(x => x.lotNo === l.lotNo), fixedQty: null })).filter(x => x.lotIdx >= 0);
 
-            for (const { lotIdx: i, fixedQty } of processOrder) {
-                if (rem <= 0) break;
-                const takeAmt = fixedQty != null ? Math.min(fixedQty, rem) : rem;
+        const changedIdx = new Set();
+        for (const { lotIdx: i, fixedQty } of processOrder) {
+            if (rem <= 0) break;
+            const takeAmt = fixedQty != null ? Math.min(fixedQty, rem) : rem;
 
-                if (unit === "COIL" || (ml[i].rem_coil != null && ml[i].rem_pcs == null && ml[i].rem_kgs == null)) {
-                    const take = Math.min(takeAmt, ml[i].rem_coil || 0);
-                    const kgsPerCoil = (ml[i].coil && ml[i].kgs) ? (ml[i].kgs / ml[i].coil) : 0;
-                    ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (take * kgsPerCoil)) : ml[i].rem_kgs };
-                    rem -= take;
-                } else if (unit === "KGS" && ml[i].rem_kgs != null && ml[i].rem_pcs == null) {
-                    const take = Math.min(takeAmt, ml[i].rem_kgs || 0);
-                    ml[i] = { ...ml[i], rem_kgs: Math.max(0, (ml[i].rem_kgs || 0) - take) };
-                    rem -= take;
-                } else {
-                    const take = Math.min(takeAmt, ml[i].rem_pcs || 0);
-                    ml[i] = { ...ml[i], rem_pcs: Math.max(0, (ml[i].rem_pcs || 0) - take) };
-                    if (ml[i].rem_kgs != null && matInfo?.kpp)
-                        ml[i] = { ...ml[i], rem_kgs: Math.max(0, ml[i].rem_kgs - (take * matInfo.kpp)) };
-                    rem -= take;
-                }
+            if (unit === "COIL" || (ml[i].rem_coil != null && ml[i].rem_pcs == null && ml[i].rem_kgs == null)) {
+                const take = Math.min(takeAmt, ml[i].rem_coil || 0);
+                const kgsPerCoil = (ml[i].coil && ml[i].kgs) ? (ml[i].kgs / ml[i].coil) : 0;
+                ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (take * kgsPerCoil)) : ml[i].rem_kgs };
+                rem -= take;
+            } else if (unit === "KGS" && ml[i].rem_kgs != null && ml[i].rem_pcs == null) {
+                const take = Math.min(takeAmt, ml[i].rem_kgs || 0);
+                ml[i] = { ...ml[i], rem_kgs: Math.max(0, (ml[i].rem_kgs || 0) - take) };
+                rem -= take;
+            } else {
+                const take = Math.min(takeAmt, ml[i].rem_pcs || 0);
+                ml[i] = { ...ml[i], rem_pcs: Math.max(0, (ml[i].rem_pcs || 0) - take) };
+                if (ml[i].rem_kgs != null && matInfo?.kpp)
+                    ml[i] = { ...ml[i], rem_kgs: Math.max(0, ml[i].rem_kgs - (take * matInfo.kpp)) };
+                rem -= take;
             }
-            return { ...ls, [item.matId]: ml };
-        });
+            changedIdx.add(i);
+        }
+        workingLots[item.matId] = ml;
+        setLots(ls => ({ ...ls, [item.matId]: ml }));
+        // บันทึกยอดคงเหลือที่ตัดแล้วกลับเข้าฐานข้อมูล (ก่อนหน้านี้ไม่ถูกบันทึก → สต๊อกกลางเพี้ยน)
+        for (const i of changedIdx) {
+            const lot = ml[i];
+            if (lot && lot._dbId) {
+                await updateLot(lot._dbId, {
+                    rem_kgs: lot.rem_kgs != null ? lot.rem_kgs : null,
+                    rem_pcs: lot.rem_pcs != null ? lot.rem_pcs : null,
+                    rem_coil: lot.rem_coil != null ? lot.rem_coil : null
+                });
+            }
+        }
 
         // 4. Database Insertion Logic
         const recordsToInsert = chosenLots.length > 0 
@@ -967,7 +1055,15 @@ function StoreFlow() {
     }
 
     // 5. Finalize UI
-    setIssueHist(h => [...newHistoryRecords, ...h]);
+    // แปลงชื่อคอลัมน์จาก DB (snake_case) → รูปแบบที่หน้าจอใช้ (camelCase)
+    // มิฉะนั้นแถวที่เพิ่งจ่ายจะแสดง วัตถุดิบ/Lot/เลขใบเบิก/ผู้จ่าย เป็นค่าว่างจนกว่าจะ refresh
+    const newHistCamel = newHistoryRecords.map(h => ({
+        date: h.issue_date, reqId: h.req_id, name: h.material_name, maker: h.maker,
+        lotNo: h.lot_no, pcs: h.pcs, kgs: h.kgs, coil: h.coil, unit: h.unit,
+        forecast: h.forecast, dept: h.dept, requester: h.requester,
+        approver: h.approver, issuedBy: h.issued_by
+    }));
+    setIssueHist(h => [...newHistCamel, ...h]);
     toast("📤 จ่ายวัตถุดิบสำเร็จ! ตัดยอด FIFO แล้ว");
     setModal(null);
     setSelectedLots({});
@@ -1090,8 +1186,8 @@ function StoreFlow() {
         setModal(null);
         setMmForm(emptyMm());
     }
-    const pending = requests.filter(r => r.status === "pending").length;
-    const approved = requests.filter(r => r.status === "approved").length;
+    const pending = requests.filter(r => r.status === "pending" && !isSupersededReq(r, requests)).length;
+    const approved = requests.filter(r => r.status === "approved" && !isSupersededReq(r, requests)).length;
     const navGroups = [
         { lbl: "หน้าหลัก", items: [
                 { id: "dashboard", icon: "📊", lbl: "ภาพรวมสต๊อก" },
@@ -1116,7 +1212,7 @@ function StoreFlow() {
         React.createElement("aside", { style: { width: 224, background: C.sur, borderRight: `1px solid ${C.brd}`, display: "flex", flexDirection: "column", flexShrink: 0, overflowY: "auto" } },
             React.createElement("div", { style: { padding: "14px 16px 12px", borderBottom: `1px solid ${C.brd}` } },
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 9 } },
-                    React.createElement("div", { style: { width: 30, height: 30, background: "linear-gradient(135deg,#b87333,#f0883e)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 } }, "\u2699\uFE0F"),
+                    React.createElement("div", { style: { width: 30, height: 30, background: "linear-gradient(135deg,#b87333,#d97706)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 } }, "\u2699\uFE0F"),
                     React.createElement("div", null,
                         React.createElement("div", { style: { fontSize: 13, fontWeight: 800 } }, "StoreFlow"),
                         React.createElement("div", { style: { fontSize: 10, color: C.tx2 } }, "\u0E23\u0E30\u0E1A\u0E1A\u0E40\u0E1A\u0E34\u0E01-\u0E08\u0E48\u0E32\u0E22\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A")))),
@@ -1128,20 +1224,20 @@ function StoreFlow() {
                     n.badge > 0 && React.createElement("span", { style: { background: C.err, color: "#fff", fontSize: 9, padding: "1px 5px", borderRadius: 10, fontWeight: 700 } }, n.badge)))))))),
             React.createElement("div", { style: { padding: "10px 14px", borderTop: `1px solid ${C.brd}` } },
                 React.createElement("div", { style: { background: C.sur2, borderRadius: 7, padding: "7px 9px", marginBottom: 7, display: "flex", alignItems: "center", gap: 7 } },
-                    React.createElement("div", { style: { width: 26, height: 26, borderRadius: "50%", background: currentUser ? "linear-gradient(135deg,#58a6ff,#bc8cff)" : "#30363d", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#fff", fontWeight: 700 } }, currentUser ? currentUser.name.slice(0, 1) : "?"),
+                    React.createElement("div", { style: { width: 26, height: 26, borderRadius: "50%", background: currentUser ? "linear-gradient(135deg,#0969da,#8250df)" : "#d0d7de", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#fff", fontWeight: 700 } }, currentUser ? currentUser.name.slice(0, 1) : "?"),
                     React.createElement("div", null,
                         React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: C.tx } }, currentUser ? currentUser.name : "ยังไม่ได้ Login"),
                         React.createElement("div", { style: { fontSize: 9, color: C.tx3 } }, currentUser ? (currentUser.role === "supervisor" ? "👨‍💼 หัวหน้างาน" : currentUser.role === "store" ? "🏪 พนักงานสโตร์" : currentUser.role === "admin" ? "⚙️ Admin" : "👷 ฝ่ายผลิต") : "🔒 กรุณาเข้าสู่ระบบ"))),
                 currentUser
-                    ? React.createElement("button", { onClick: () => { setCurrentUser(null); setPinInput(""); setPinError(""); }, style: { width: "100%", padding: "5px 0", border: `1px solid ${C.brd}`, background: "rgba(248,81,73,.12)", color: "#f85149", borderRadius: 5, fontSize: 10, cursor: "pointer", fontFamily: "inherit", marginTop: 4 } }, "\uD83D\uDEAA \u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E23\u0E30\u0E1A\u0E1A")
+                    ? React.createElement("button", { onClick: () => { setCurrentUser(null); setPinInput(""); setPinError(""); }, style: { width: "100%", padding: "5px 0", border: `1px solid ${C.brd}`, background: "rgba(248,81,73,.12)", color: "#cf222e", borderRadius: 5, fontSize: 10, cursor: "pointer", fontFamily: "inherit", marginTop: 4 } }, "\uD83D\uDEAA \u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E23\u0E30\u0E1A\u0E1A")
                     : React.createElement("button", { onClick: () => setPinModal({ mode: "login", title: "เข้าสู่ระบบ", onSuccess: (u) => { setCurrentUser(u); setPinModal(null); } }), style: { width: "100%", padding: "5px 0", border: `1px solid ${C.acc}`, background: "rgba(240,136,62,.1)", color: C.acc, borderRadius: 5, fontSize: 10, cursor: "pointer", fontFamily: "inherit", marginTop: 4 } }, "\uD83D\uDD10 \u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A"))),
         React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" } },
-            React.createElement("div", { style: { padding: "10px 20px", borderBottom: `1px solid ${C.brd}`, background: "rgba(13,17,23,.96)", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 } },
+            React.createElement("div", { style: { padding: "10px 20px", borderBottom: `1px solid ${C.brd}`, background: C.sur, display: "flex", alignItems: "center", gap: 12, flexShrink: 0 } },
                 React.createElement("span", { style: { fontSize: 14, fontWeight: 700, flex: 1 } }, (_a = navGroups.flatMap(g => g.items).find(n => n.id === page)) === null || _a === void 0 ? void 0 :
                     _a.icon,
                     " ", (_b = navGroups.flatMap(g => g.items).find(n => n.id === page)) === null || _b === void 0 ? void 0 :
                     _b.lbl),
-                React.createElement("div", { style: { fontSize: 10, color: "#3fb950", padding: "3px 10px", background: "rgba(63,185,80,.1)", border: "1px solid rgba(63,185,80,.25)", borderRadius: 6 } }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34"),
+                React.createElement("div", { style: { fontSize: 10, color: "#1a7f37", padding: "3px 10px", background: "rgba(63,185,80,.1)", border: "1px solid rgba(63,185,80,.25)", borderRadius: 6 } }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34"),
                 React.createElement("button", { onClick: () => {
                         const data = { master, materials, lots, requests, issueHist, recvHist, users, exportedAt: new Date().toISOString() };
                         const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -1150,8 +1246,8 @@ function StoreFlow() {
                         a.download = `StoreFlow_backup_${new Date().toISOString().slice(0, 10)}.json`;
                         a.click();
                         toast("📤 Export ข้อมูลสำเร็จ — นำไฟล์ .json ไปด้วยพร้อมกับ .html");
-                    }, style: { background: "rgba(88,166,255,.12)", border: "1px solid rgba(88,166,255,.3)", borderRadius: 6, color: "#58a6ff", cursor: "pointer", padding: "4px 10px", fontSize: 10, fontFamily: "inherit" } }, "\uD83D\uDCE4 Export \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25"),
-                React.createElement("label", { style: { background: "rgba(188,140,255,.12)", border: "1px solid rgba(188,140,255,.3)", borderRadius: 6, color: "#bc8cff", cursor: "pointer", padding: "4px 10px", fontSize: 10, fontFamily: "inherit" } },
+                    }, style: { background: "rgba(88,166,255,.12)", border: "1px solid rgba(88,166,255,.3)", borderRadius: 6, color: "#0969da", cursor: "pointer", padding: "4px 10px", fontSize: 10, fontFamily: "inherit" } }, "\uD83D\uDCE4 Export \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25"),
+                React.createElement("label", { style: { background: "rgba(188,140,255,.12)", border: "1px solid rgba(188,140,255,.3)", borderRadius: 6, color: "#8250df", cursor: "pointer", padding: "4px 10px", fontSize: 10, fontFamily: "inherit" } },
                     "\uD83D\uDCE5 Import \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25",
                     React.createElement("input", { type: "file", accept: ".json", style: { display: "none" }, onChange: e => {
                             const file = e.target.files[0];
@@ -1194,15 +1290,15 @@ function StoreFlow() {
                 React.createElement("button", { onClick: () => { if (window.confirm("ล้างข้อมูลทั้งหมดใน browser นี้? (กู้คืนไม่ได้)")) {
                         ["master", "materials", "lots", "requests", "issueHist", "recvHist"].forEach(k => localStorage.removeItem("sf_" + k));
                         window.location.reload();
-                    } }, style: { background: "rgba(248,81,73,.12)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 6, color: "#f85149", cursor: "pointer", padding: "4px 10px", fontSize: 10, fontFamily: "inherit" } }, "\uD83D\uDDD1\uFE0F \u0E25\u0E49\u0E32\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25"),
+                    } }, style: { background: "rgba(248,81,73,.12)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 6, color: "#cf222e", cursor: "pointer", padding: "4px 10px", fontSize: 10, fontFamily: "inherit" } }, "\uD83D\uDDD1\uFE0F \u0E25\u0E49\u0E32\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25"),
                 React.createElement(Btn, { v: "primary", sz: "md", onClick: () => { setRqForm(emptyRq()); setRqErrors({}); setModal("req"); } }, "\u2795 \u0E2A\u0E23\u0E49\u0E32\u0E07\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01")),
             React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: "18px 20px" } },
                 page === "dashboard" && React.createElement(DashPage, { requests: requests, materials: materials, lots: lots, role: role, master: master, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, goto: setPage, issueHist: issueHist }),
                 page === "request" && React.createElement(ReqPage, { requests: requests, filter: reqFilter, setFilter: setReqFilter, role: role, setHistoryModal: setHistoryModal, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, onNew: () => { setRqForm(emptyRq()); setRqErrors({}); setModal("req"); }, onEdit: r => {
                         if (!window.confirm(`แก้ไขใบเบิก ${r.id}?\n\nระบบจะ:\n1. เปลี่ยนสถานะใบ ${r.id} เป็น "แก้ไขแล้ว"\n2. สร้างใบใหม่เป็น ${r.id}-R01 (Revised)\n\nประวัติใบเดิมยังเก็บไว้ดูได้ครับ`))
                             return;
-                        setRequests(rs => rs.map(x => x.id === r.id ? { ...x, status: "revised", revisedAt: new Date().toISOString() } : x));
-                        setRqForm({ 
+                        // หมายเหตุ: ใบเดิมจะถูกเปลี่ยนเป็น "แก้ไขแล้ว" และบันทึกลง DB ตอนกดส่งใบ Revised สำเร็จ
+                        setRqForm({
                             ...r, 
                             _revisedFrom: r.id, 
                             _originalData: JSON.stringify(r), // เก็บข้อมูลเดิมไว้
@@ -1259,12 +1355,12 @@ function StoreFlow() {
             React.createElement(MatForm, { form: mmForm, setForm: setMmForm, clearErr: (k) => setMmErrors(e => ({ ...e, [k]: undefined })), master: master, addMaker: addMaker, addCustomer: addCustomer, errors: mmErrors, materials: materials, lots: lots })),
         React.createElement(Modal, { open: modal === "nostock", onClose: () => setModal(null), title: "\u0E44\u0E21\u0E48\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16\u0E08\u0E48\u0E32\u0E22\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A\u0E44\u0E14\u0E49", icon: "\u26D4", sub: "\u0E2A\u0E15\u0E4A\u0E2D\u0E01\u0E44\u0E21\u0E48\u0E40\u0E1E\u0E35\u0E22\u0E07\u0E1E\u0E2D", width: 480, footer: React.createElement(Btn, { v: "primary", onClick: () => setModal(null) }, "\u0E23\u0E31\u0E1A\u0E17\u0E23\u0E32\u0E1A") },
             React.createElement("div", { style: { background: "rgba(248,81,73,.07)", border: "1px solid rgba(248,81,73,.2)", borderRadius: 8, padding: "14px 16px", marginBottom: 12 } },
-                React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "#f85149", marginBottom: 8 } }, "\u26D4 \u0E44\u0E21\u0E48\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16\u0E40\u0E1A\u0E34\u0E01\u0E44\u0E14\u0E49\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E32\u0E01\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2A\u0E15\u0E4A\u0E2D\u0E01"),
+                React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "#cf222e", marginBottom: 8 } }, "\u26D4 \u0E44\u0E21\u0E48\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16\u0E40\u0E1A\u0E34\u0E01\u0E44\u0E14\u0E49\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E32\u0E01\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2A\u0E15\u0E4A\u0E2D\u0E01"),
                 noStkItems.map((it, i) => React.createElement("div", { key: i, style: { fontSize: 12, color: C.tx, padding: "4px 0", borderTop: i > 0 ? `1px solid ${C.brd2}` : "none" } },
                     "\u2022 ",
                     it.name || it.matId,
                     " \u2014 ",
-                    React.createElement("span", { style: { color: "#f85149", fontWeight: 600 } }, "\u0E2A\u0E15\u0E4A\u0E2D\u0E01\u0E40\u0E1B\u0E47\u0E19 0")))),
+                    React.createElement("span", { style: { color: "#cf222e", fontWeight: 600 } }, "\u0E2A\u0E15\u0E4A\u0E2D\u0E01\u0E40\u0E1B\u0E47\u0E19 0")))),
             React.createElement("div", { style: { fontSize: 11, color: C.tx2 } }, "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E41\u0E08\u0E49\u0E07\u0E43\u0E2B\u0E49\u0E1D\u0E48\u0E32\u0E22\u0E08\u0E31\u0E14\u0E0B\u0E37\u0E49\u0E2D\u0E14\u0E33\u0E40\u0E19\u0E34\u0E19\u0E01\u0E32\u0E23\u0E2A\u0E31\u0E48\u0E07\u0E0B\u0E37\u0E49\u0E2D\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A\u0E40\u0E1E\u0E34\u0E48\u0E21 \u0E2B\u0E23\u0E37\u0E2D\u0E41\u0E01\u0E49\u0E44\u0E02\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01\u0E01\u0E48\u0E2D\u0E19\u0E14\u0E33\u0E40\u0E19\u0E34\u0E19\u0E01\u0E32\u0E23\u0E15\u0E48\u0E2D")),
         React.createElement(HistoryModal, { open: !!historyModal, onClose: () => setHistoryModal(null), request: historyModal }),
         React.createElement(LotDetailModal, { open: !!lotDetailMat, onClose: () => setLotDetailMat(null), mat: lotDetailMat, lots: lots, setLots: setLots, master: master }),
@@ -1369,7 +1465,7 @@ function UsersPage({ users, setUsers, currentUser, toast, materials }) {
                     React.createElement("tbody", null, users.map(u => React.createElement("tr", { key: u.id, style: { opacity: u.active ? 1 : .4 } },
                         React.createElement("td", { style: { padding: "8px 12px", fontWeight: 600, borderBottom: C.brd2 } }, u.name),
                         React.createElement("td", { style: { padding: "8px 12px", borderBottom: C.brd2 } },
-                            React.createElement("span", { style: { fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "rgba(88,166,255,.1)", color: "#58a6ff" } }, roleLabel[u.role] || u.role)),
+                            React.createElement("span", { style: { fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "rgba(88,166,255,.1)", color: "#0969da" } }, roleLabel[u.role] || u.role)),
                         React.createElement("td", { style: { padding: "8px 12px", fontFamily: "monospace", borderBottom: C.brd2, color: C.acc } }, "●".repeat(u.pin.length)),
                         React.createElement("td", { style: { padding: "8px 12px", borderBottom: C.brd2 } }, u.active ? React.createElement("span", { style: { color: C.ok } }, "\u2705 \u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19") : React.createElement("span", { style: { color: C.err } }, "\uD83D\uDD12 \u0E1B\u0E34\u0E14")),
                         React.createElement("td", { style: { padding: "8px 12px", borderBottom: C.brd2 } },
@@ -1395,8 +1491,8 @@ function UsersPage({ users, setUsers, currentUser, toast, materials }) {
                         form.id && React.createElement("button", { onClick: () => setForm({ id: "", name: "", pin: "", role: "supervisor", active: true }), style: { background: "transparent", border: `1px solid ${C.brd}`, borderRadius: 6, color: C.tx2, cursor: "pointer", padding: "6px 12px", fontSize: 11, fontFamily: "inherit" } }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"))))));
 }
 function DashPage({ requests, materials, lots, role, master, onAp, onIs, goto, issueHist }) {
-    const pending = requests.filter(r => r.status === "pending");
-    const approved = requests.filter(r => r.status === "approved");
+    const pending = requests.filter(r => r.status === "pending" && !isSupersededReq(r, requests));
+    const approved = requests.filter(r => r.status === "approved" && !isSupersededReq(r, requests));
     function stockTotal(type, field) {
         return materials.filter(m => m.type === type).reduce((s, m) => { const st = getStockLocal(lots, m.id); return s + (st[field] || 0); }, 0);
         function getStockLocal(l, id) { const ll = l[id] || []; return { kgs: ll.reduce((a, x) => a + (x.rem_kgs || 0), 0), pcs: ll.reduce((a, x) => a + (x.rem_pcs || 0), 0) }; }
@@ -1452,7 +1548,7 @@ function DashPage({ requests, materials, lots, role, master, onAp, onIs, goto, i
                         return React.createElement("tr", { key: m.id, style: { background: isEmpty ? "rgba(248,81,73,.04)" : "transparent" } },
                             React.createElement("td", { style: { padding: "9px 12px", fontWeight: 700, borderBottom: C.brd2 } }, m.name),
                             React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2 } },
-                                React.createElement(Tag, { color: C.acc2, bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, m.maker)),
+                                React.createElement(Tag, (() => { const mk = getMakerColor(null, m); return { color: mk.text, bg: mk.bg, brd: mk.border }; })(), m.maker)),
                             React.createElement("td", { style: { padding: "9px 12px", fontFamily: "monospace", fontSize: 14, borderBottom: C.brd2, fontWeight: 700 } }, m.size),
                             React.createElement("td", { style: { padding: "9px 12px", fontFamily: "monospace", fontWeight: 700, color: sc, borderBottom: C.brd2 } },
                                 isEmpty ? "—" : val.toFixed ? val.toFixed(1) : val,
@@ -1598,7 +1694,7 @@ function HistoryModal({ open, onClose, request }) {
                                 marginBottom: 6,
                                 fontSize: 11,
                                 fontWeight: 700,
-                                color: "#f85149"
+                                color: "#cf222e"
                             }}, "❌ ข้อมูลเดิม"),
                             originalData.items.map((item, i) => 
                                 React.createElement("div", { 
@@ -1630,7 +1726,7 @@ function HistoryModal({ open, onClose, request }) {
                                 marginBottom: 6,
                                 fontSize: 11,
                                 fontWeight: 700,
-                                color: "#3fb950"
+                                color: "#1a7f37"
                             }}, "✅ ข้อมูลใหม่"),
                             request.items.map((item, i) => 
                                 React.createElement("div", { 
@@ -1666,18 +1762,16 @@ function HistoryModal({ open, onClose, request }) {
 }
 
 function ReqPage({ requests, filter, setFilter, role, setHistoryModal, onAp, onIs, onNew, onEdit, onCancel }) {
-    const counts = { all: requests.length, ...Object.fromEntries(["pending", "approved", "issued", "rejected"].map(s => [s, requests.filter(r => r.status === s).length])) };
-    const allFiltered = filter === "all" ? requests : requests.filter(r => r.status === filter);
-const list = [...allFiltered].sort((a, b) => {
-    const getKey = id => { const m = id.match(/REQ-(\d+)-(\d+)(?:-R(\d+))?/); return m ? [parseInt(m[1]), parseInt(m[2]), parseInt(m[3]||0)] : [0,0,0]; };
-    const ka = getKey(a.id), kb = getKey(b.id);
-    for(let i=0;i<3;i++){ if(ka[i]!==kb[i]) return kb[i]-ka[i]; }
-    return 0;
-});
-    const smap = { pending: { lbl: "⏳ รออนุมัติ", c: C.warn }, approved: { lbl: "✅ อนุมัติแล้ว", c: C.acc2 }, issued: { lbl: "📤 จ่ายแล้ว", c: C.ok }, rejected: { lbl: "❌ ไม่อนุมัติ", c: C.err } };
+    // สถานะที่แสดงจริง: ใบที่ถูกแทนที่ด้วยฉบับแก้ไข จะถือเป็น "revised" แม้ใน DB จะยังเป็น pending/approved
+    const effStatus = r => isSupersededReq(r, requests) ? "revised" : r.status;
+    const counts = { all: requests.length, ...Object.fromEntries(["pending", "approved", "issued", "rejected", "revised"].map(s => [s, requests.filter(r => effStatus(r) === s).length])) };
+    const list = (filter === "all" ? requests : requests.filter(r => effStatus(r) === filter))
+        .slice()
+        .sort((a, b) => (b.id || "").localeCompare(a.id || "", undefined, { numeric: true, sensitivity: "base" }));
+    const smap = { pending: { lbl: "⏳ รออนุมัติ", c: C.warn }, approved: { lbl: "✅ อนุมัติแล้ว", c: C.acc2 }, issued: { lbl: "📤 จ่ายแล้ว", c: C.ok }, rejected: { lbl: "❌ ไม่อนุมัติ", c: C.err }, revised: { lbl: "🔁 แก้ไขแล้ว", c: C.tx3 } };
     return React.createElement("div", null,
         React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" } },
-            [["all", "ทั้งหมด"], ["pending", "⏳ รออนุมัติ"], ["approved", "✅ อนุมัติแล้ว"], ["issued", "📤 จ่ายแล้ว"], ["rejected", "❌ ไม่อนุมัติ"]].map(([f, l]) => (React.createElement("button", { key: f, onClick: () => setFilter(f), style: { padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", border: `1px solid ${filter === f ? C.acc : C.brd}`, background: filter === f ? C.acc : "transparent", color: filter === f ? "#fff" : C.tx2, fontFamily: "inherit" } },
+            [["all", "ทั้งหมด"], ["pending", "⏳ รออนุมัติ"], ["approved", "✅ อนุมัติแล้ว"], ["issued", "📤 จ่ายแล้ว"], ["rejected", "❌ ไม่อนุมัติ"], ["revised", "🔁 แก้ไขแล้ว"]].map(([f, l]) => (React.createElement("button", { key: f, onClick: () => setFilter(f), style: { padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", border: `1px solid ${filter === f ? C.acc : C.brd}`, background: filter === f ? C.acc : "transparent", color: filter === f ? "#fff" : C.tx2, fontFamily: "inherit" } },
                 l,
                 " (",
                 counts[f] || 0,
@@ -1685,8 +1779,9 @@ const list = [...allFiltered].sort((a, b) => {
             React.createElement("div", { style: { marginLeft: "auto" } },
                 React.createElement(Btn, { v: "primary", sz: "sm", onClick: onNew }, "\u2795 \u0E2A\u0E23\u0E49\u0E32\u0E07\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01"))),
         list.map(r => {
-            const sm = smap[r.status] || {};
-            const steps = [{ lbl: "สร้าง", done: true }, { lbl: "อนุมัติ", done: ["approved", "issued"].includes(r.status), active: r.status === "pending" }, { lbl: "จ่าย", done: r.status === "issued", active: r.status === "approved" }, { lbl: "เสร็จ", done: r.status === "issued" }];
+            const es = effStatus(r);
+            const sm = smap[es] || {};
+            const steps = [{ lbl: "สร้าง", done: true }, { lbl: "อนุมัติ", done: ["approved", "issued"].includes(es), active: es === "pending" }, { lbl: "จ่าย", done: es === "issued", active: es === "approved" }, { lbl: "เสร็จ", done: es === "issued" }];
             return React.createElement("div", { key: r.id, style: { background: C.sur2, border: `1px solid ${C.brd}`, borderRadius: 10, padding: "14px 16px", marginBottom: 10 } },
                 React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 } },
                     React.createElement("div", { style: { flex: 1 } },
@@ -1755,12 +1850,12 @@ const list = [...allFiltered].sort((a, b) => {
                         React.createElement("div", { style: { width: 6, height: 6, borderRadius: "50%", background: s.done ? C.ok : s.active ? C.warn : C.brd } }),
                         React.createElement("span", { style: { fontSize: 10, color: s.done ? C.ok : s.active ? C.warn : C.tx3 } }, s.lbl))),
                     React.createElement("div", { style: { marginLeft: "auto", display: "flex", gap: 5 } },
-                        r.status === "pending" && (role === "production" || role === "admin") && React.createElement(Btn, { v: "ghost", sz: "xs", onClick: () => onEdit && onEdit(r) }, "\u270F\uFE0F \u0E41\u0E01\u0E49\u0E44\u0E02"),
-                        r.status === "pending" && (role === "production" || role === "admin") && React.createElement(Btn, { v: "danger", sz: "xs", onClick: () => { if (window.confirm(`ยกเลิกใบเบิก ${r.id}?`))
-                                onCancel && onCancel(r.id); }, style: { background: "rgba(248,81,73,.15)", border: "1px solid rgba(248,81,73,.3)", color: "#f85149" } }, "\uD83D\uDDD1\uFE0F \u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"),
-                        r.status === "pending" && (role === "supervisor" || role === "admin") && React.createElement(React.Fragment, null,
+                        es === "pending" && (role === "production" || role === "admin") && React.createElement(Btn, { v: "ghost", sz: "xs", onClick: () => onEdit && onEdit(r) }, "\u270F\uFE0F \u0E41\u0E01\u0E49\u0E44\u0E02"),
+                        es === "pending" && (role === "production" || role === "admin") && React.createElement(Btn, { v: "danger", sz: "xs", onClick: () => { if (window.confirm(`ยกเลิกใบเบิก ${r.id}?`))
+                                onCancel && onCancel(r.id); }, style: { background: "rgba(248,81,73,.15)", border: "1px solid rgba(248,81,73,.3)", color: "#cf222e" } }, "\uD83D\uDDD1\uFE0F \u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"),
+                        es === "pending" && (role === "supervisor" || role === "admin") && React.createElement(React.Fragment, null,
                             React.createElement(Btn, { v: "success", sz: "xs", onClick: () => onAp(r.id) }, "\u2705 \u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34")),
-                        r.status === "approved" && role === "store" && React.createElement(Btn, { v: "primary", sz: "xs", onClick: () => onIs(r.id) }, "\uD83D\uDCE4 \u0E08\u0E48\u0E32\u0E22\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A"))));
+                        es === "approved" && role === "store" && React.createElement(Btn, { v: "primary", sz: "xs", onClick: () => onIs(r.id) }, "\uD83D\uDCE4 \u0E08\u0E48\u0E32\u0E22\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A"))));
         }),
         list.length === 0 && React.createElement("div", { style: { textAlign: "center", color: C.tx2, padding: 40 } }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"));
 }
@@ -1769,10 +1864,10 @@ const list = [...allFiltered].sort((a, b) => {
 // ════════════════════════════════════════════════════════════
 function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept, errors = {}, clearErr }) {
     function hasStock(matId) { const ml = lots[matId] || []; return ml.reduce((s, l) => s + (l.rem_kgs || 0) + (l.rem_pcs || 0) + (l.rem_coil || 0), 0) > 0; }
-    const ef = (k) => errors[k] ? React.createElement("div", { style: { color: "#f85149", fontSize: 10, marginTop: 3 } },
+    const ef = (k) => errors[k] ? React.createElement("div", { style: { color: "#cf222e", fontSize: 10, marginTop: 3 } },
         "\u26A0\uFE0F ",
         errors[k]) : null;
-    const eb = (k) => errors[k] ? { border: "1.5px solid #f85149", boxShadow: "0 0 0 2px rgba(248,81,73,.15)" } : {};
+    const eb = (k) => errors[k] ? { border: "1.5px solid #cf222e", boxShadow: "0 0 0 2px rgba(248,81,73,.15)" } : {};
     const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     const years = ["2026", "2027", "2028"];
     const fcopts = [{ v: "", l: "-- Select Month --" }, ...months.flatMap(m => years.map(y => ({ v: `${m} ${y}`, l: `${m} ${y}` })))];
@@ -1838,8 +1933,8 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
     const errList = Object.values(errors).filter(Boolean);
     return React.createElement("div", null,
         errList.length > 0 && React.createElement("div", { style: { background: "rgba(248,81,73,.08)", border: "1.5px solid rgba(248,81,73,.4)", borderRadius: 8, padding: "10px 14px", marginBottom: 14 } },
-            React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "#f85149", marginBottom: 6 } }, "\u274C \u0E01\u0E23\u0E38\u0E13\u0E32\u0E01\u0E23\u0E2D\u0E01\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E15\u0E48\u0E2D\u0E44\u0E1B\u0E19\u0E35\u0E49\u0E43\u0E2B\u0E49\u0E04\u0E23\u0E1A:"),
-            errList.map((e, i) => React.createElement("div", { key: i, style: { fontSize: 11, color: "#f85149", padding: "2px 0" } },
+            React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "#cf222e", marginBottom: 6 } }, "\u274C \u0E01\u0E23\u0E38\u0E13\u0E32\u0E01\u0E23\u0E2D\u0E01\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E15\u0E48\u0E2D\u0E44\u0E1B\u0E19\u0E35\u0E49\u0E43\u0E2B\u0E49\u0E04\u0E23\u0E1A:"),
+            errList.map((e, i) => React.createElement("div", { key: i, style: { fontSize: 11, color: "#cf222e", padding: "2px 0" } },
                 "\u2022 ",
                 e))),
         React.createElement(SecTitle, null, "\uD83D\uDCCC \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E01\u0E32\u0E23\u0E40\u0E1A\u0E34\u0E01"),
@@ -1862,7 +1957,7 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
             React.createElement(FG, { label: "\u0E25\u0E39\u0E01\u0E04\u0E49\u0E32 (Customer)", note: "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E14\u0E49" },
                 React.createElement(SmartSelect, { value: form.customer, onChange: v => setForm(f => ({ ...f, customer: v })), options: [...master.customers].sort(), onAddNew: v => { addCustomer(v); setForm(f => ({ ...f, customer: v })); }, addLabel: "\u2795 \u0E25\u0E39\u0E01\u0E04\u0E49\u0E32\u0E43\u0E2B\u0E21\u0E48" }))),
         React.createElement(SecTitle, null, "\uD83D\uDCE6 \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A\u0E17\u0E35\u0E48\u0E40\u0E1A\u0E34\u0E01 *"),
-        errors.items && React.createElement("div", { style: { background: "rgba(248,81,73,.08)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 6, padding: "7px 12px", marginBottom: 10, fontSize: 11, color: "#f85149" } },
+        errors.items && React.createElement("div", { style: { background: "rgba(248,81,73,.08)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 6, padding: "7px 12px", marginBottom: 10, fontSize: 11, color: "#cf222e" } },
             "\u26A0\uFE0F ",
             errors.items),
         form.items.map((it, idx) => {
@@ -1898,12 +1993,12 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                         return React.createElement(Sel, { value: it.maker || "", onChange: v => updateItem(idx, "maker", v), options: [{ v: "", l: makerOpts.length ? "-- เลือก Maker (ไม่บังคับ) --" : "-- เลือกประเภทก่อน --" }, ...makerOpts.map(mk => ({ v: mk, l: mk }))], placeholder: "-- Maker --" });
                     })()),
                     React.createElement(FG, { label: "Size" }, filtMats.length === 0 && it.type
-                        ? React.createElement("div", { style: { padding: "8px 10px", background: "rgba(248,81,73,.08)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 7, fontSize: 11, color: "#f85149" } }, "\u26D4 \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2A\u0E15\u0E4A\u0E2D\u0E01")
+                        ? React.createElement("div", { style: { padding: "8px 10px", background: "rgba(248,81,73,.08)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 7, fontSize: 11, color: "#cf222e" } }, "\u26D4 \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2A\u0E15\u0E4A\u0E2D\u0E01")
                         : React.createElement(Sel, { value: it.matId, onChange: v => updateItem(idx, "matId", v), options: [{ v: "", l: "-- เลือก Size --" }, ...filtMats.map(m => ({ v: m.id, l: `${m.size}${m.temper && m.temper !== "-" ? " (" + m.temper + ")" : ""} — ${m.maker}` }))], placeholder: "-- \u0E40\u0E25\u0E37\u0E2D\u0E01 Size --" }))),
                 React.createElement(FGrid, { cols: 4 },
                     React.createElement(FG, { label: "\u0E08\u0E33\u0E19\u0E27\u0E19 *" },
-                        React.createElement(Inp, { type: "number", value: it.qty, onChange: v => { updateItem(idx, "qty", v); clearErr && clearErr(`item_qty_${idx}`); }, placeholder: "0", style: errors[`item_qty_${idx}`] ? { border: "1.5px solid #f85149" } : {} }),
-                        errors[`item_qty_${idx}`] && React.createElement("div", { style: { fontSize: 10, color: "#f85149", marginTop: 2 } },
+                        React.createElement(Inp, { type: "number", value: it.qty, onChange: v => { updateItem(idx, "qty", v); clearErr && clearErr(`item_qty_${idx}`); }, placeholder: "0", style: errors[`item_qty_${idx}`] ? { border: "1.5px solid #cf222e" } : {} }),
+                        errors[`item_qty_${idx}`] && React.createElement("div", { style: { fontSize: 10, color: "#cf222e", marginTop: 2 } },
                             "\u26A0\uFE0F ",
                             errors[`item_qty_${idx}`])),
                     React.createElement(FG, { label: "\u0E2B\u0E19\u0E48\u0E27\u0E22" },
@@ -2176,22 +2271,19 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                         // ตรวจว่า row ก่อนหน้ามี size+name เดียวกัน → group แสดงสีต่าง
                         return React.createElement("tr", { key: m.id, style: { 
                     opacity: m.active === false ? .4 : 1,
-                    background: (() => {
-                        const color = getMaterialColor(materials, m);
-                        return color.bg;
-                    })(),
+                    background: C.sur,
                     borderLeft: (() => {
                         const color = getMaterialColor(materials, m);
-                        return color.border !== 'transparent' ? `6px solid ${color.border}` : 'none';
+                        return color.border !== 'transparent' ? `5px solid ${color.border}` : '5px solid transparent';
                     })()
                 } },
                             React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2 } },
                                 React.createElement(Tag, { color: mc.color || C.tx2, bg: mc.bg || "rgba(255,255,255,.06)", brd: `${mc.color || C.brd}44` }, m.type)),
                             React.createElement("td", { style: { padding: "9px 12px", fontWeight: 700, borderBottom: C.brd2, whiteSpace: "nowrap", fontSize: 13 } }, m.name),
                             React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2 } },
-                                React.createElement(Tag, { color: C.acc2, bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, m.maker)),
+                                React.createElement(Tag, (() => { const mk = getMakerColor(null, m); return { color: mk.text, bg: mk.bg, brd: mk.border }; })(), m.maker)),
                             React.createElement("td", { style: { padding: "9px 12px", fontFamily: "monospace", fontSize: 15, borderBottom: C.brd2, whiteSpace: "nowrap", fontWeight: 700, color: C.tx } }, m.size),
-                            React.createElement("td", { style: { padding: "9px 12px", fontSize: 11, color: C.tx2, borderBottom: C.brd2 } }, m.temper),
+                            (() => { const tc = getTemperColor(materials, m); const diff = tc.border !== 'transparent'; return React.createElement("td", { style: { padding: "9px 12px", fontSize: 11, borderBottom: C.brd2 } }, diff ? React.createElement(Tag, { color: tc.text, bg: tc.bg, brd: tc.border }, m.temper || "-") : React.createElement("span", { style: { color: C.tx2 } }, m.temper || "-")); })(),
                             React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2 } }, s.next ? React.createElement(React.Fragment, null,
                                 React.createElement(Tag, { color: C.acc, bg: "rgba(240,136,62,.1)", brd: "rgba(240,136,62,.3)" },
                                     "\u25B6 ",
@@ -2239,7 +2331,7 @@ function LotPage({ materials, lots, master, onLotDetail }) {
                     React.createElement("div", { style: { flex: 1, minWidth: 0 } },
                         React.createElement("div", { style: { fontWeight: 700, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.name),
                         React.createElement("div", { style: { fontSize: 13, color: C.tx, fontFamily: "monospace", fontWeight: 700 } }, m.size),
-                        React.createElement("div", { style: { fontSize: 10, color: C.acc2, marginTop: 1 } },
+                        React.createElement("div", { style: { fontSize: 11, color: getMakerColor(null, m).text, fontWeight: 700, marginTop: 1 } },
                             "\uD83C\uDFED ",
                             m.maker))),
                 React.createElement("div", { style: { padding: "10px 12px" } },
@@ -2593,8 +2685,8 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials }
                                     React.createElement("td", { style: { padding: "8px 11px", borderBottom: C.brd2, fontFamily: "monospace", fontWeight: 700 } }, r.kgs || "-"),
                                     React.createElement("td", { style: { padding: "8px 11px", borderBottom: C.brd2 } }, r.rohs || "-"),
                                     React.createElement("td", { style: { padding: "8px 11px", borderBottom: C.brd2 } }, setRecvHist && React.createElement("div", { style: { display: "flex", gap: 4 } },
-                                        React.createElement("button", { onClick: () => isEditing ? setEditRecvIdx(null) : startEditRecv(gi, r), style: { background: isEditing ? "rgba(210,153,34,.2)" : "rgba(88,166,255,.15)", border: `1px solid ${isEditing ? "rgba(210,153,34,.4)" : "rgba(88,166,255,.3)"}`, borderRadius: 4, color: isEditing ? C.warn : "#58a6ff", cursor: "pointer", padding: "3px 8px", fontSize: 11 } }, isEditing ? "✕ ปิด" : "✏️"),
-                                        React.createElement("button", { onClick: () => deleteRecv(gi, r), style: { background: "rgba(248,81,73,.15)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 4, color: "#f85149", cursor: "pointer", padding: "3px 8px", fontSize: 11 } }, "\uD83D\uDDD1\uFE0F")))),
+                                        React.createElement("button", { onClick: () => isEditing ? setEditRecvIdx(null) : startEditRecv(gi, r), style: { background: isEditing ? "rgba(210,153,34,.2)" : "rgba(88,166,255,.15)", border: `1px solid ${isEditing ? "rgba(210,153,34,.4)" : "rgba(88,166,255,.3)"}`, borderRadius: 4, color: isEditing ? C.warn : "#0969da", cursor: "pointer", padding: "3px 8px", fontSize: 11 } }, isEditing ? "✕ ปิด" : "✏️"),
+                                        React.createElement("button", { onClick: () => deleteRecv(gi, r), style: { background: "rgba(248,81,73,.15)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 4, color: "#cf222e", cursor: "pointer", padding: "3px 8px", fontSize: 11 } }, "\uD83D\uDDD1\uFE0F")))),
                                 isEditing && React.createElement("tr", null,
                                     React.createElement("td", { colSpan: 11, style: { padding: "12px 14px", borderBottom: `1px solid ${C.brd}`, background: "rgba(88,166,255,.04)" } },
                                         React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: C.acc2, marginBottom: 8 } },
@@ -2610,7 +2702,7 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials }
                                                     React.createElement("option", null, "ROHS"),
                                                     React.createElement("option", null, "NON ROHS"))),
                                             React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 12 } },
-                                                React.createElement("button", { onClick: () => saveEditRecv(gi), style: { background: "#238636", border: "none", borderRadius: 5, color: "#fff", cursor: "pointer", padding: "5px 14px", fontSize: 11, fontWeight: 700 } }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01"),
+                                                React.createElement("button", { onClick: () => saveEditRecv(gi), style: { background: "#1a7f37", border: "none", borderRadius: 5, color: "#fff", cursor: "pointer", padding: "5px 14px", fontSize: 11, fontWeight: 700 } }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01"),
                                                 React.createElement("button", { onClick: () => setEditRecvIdx(null), style: { background: "transparent", border: `1px solid ${C.brd}`, borderRadius: 5, color: C.tx2, cursor: "pointer", padding: "5px 10px", fontSize: 11 } }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"))),
                                         React.createElement("div", { style: { fontSize: 10, color: C.acc3, marginTop: 8 } },
                                             "\u2139\uFE0F \u0E01\u0E32\u0E23\u0E41\u0E01\u0E49\u0E44\u0E02\u0E17\u0E35\u0E48\u0E19\u0E35\u0E48\u0E08\u0E30\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E23\u0E31\u0E1A\u0E40\u0E17\u0E48\u0E32\u0E19\u0E31\u0E49\u0E19 \u2014 \u0E2B\u0E32\u0E01 KGS/PCS \u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E1C\u0E34\u0E14 \u0E43\u0E2B\u0E49\u0E41\u0E01\u0E49\u0E15\u0E48\u0E2D\u0E17\u0E35\u0E48 ",
@@ -2673,29 +2765,21 @@ function renderTemperWithColor(material, materials) {
 
 // Color Legend Component - อธิบายสี (ปรับให้เห็นชัดบนพื้น Light)
 function ColorLegend({ materials }) {
-    // หา materials ที่มี duplicate size
-    const duplicates = [];
-    const seen = new Set();
-    
-    materials.forEach(m => {
+    // หากลุ่ม materials ที่มี size เดียวกันมากกว่า 1 ราย (จัดกลุ่มครั้งเดียว ไม่ให้มีตัวซ้ำ)
+    const groups = {};
+    (materials || []).forEach(m => {
         if (!m.active) return;
-        const key = `${m.type}_${m.size.toLowerCase()}`;
-        if (seen.has(key)) {
-            const existing = duplicates.find(d => d.key === key);
-            if (existing) {
-                existing.items.push(m);
-            } else {
-                const all = materials.filter(x => 
-                    x.active && x.type === m.type && 
-                    x.size.toLowerCase() === m.size.toLowerCase()
-                );
-                if (all.length > 1) {
-                    duplicates.push({ key, size: m.size, type: m.type, items: all });
-                }
-            }
+        const key = `${m.type}_${(m.size || "").toLowerCase()}`;
+        if (groups[key]) return; // จัดกลุ่มนี้ไปแล้ว
+        const all = (materials || []).filter(x =>
+            x.active && x.type === m.type &&
+            (x.size || "").toLowerCase() === (m.size || "").toLowerCase()
+        );
+        if (all.length > 1) {
+            groups[key] = { key, size: m.size, type: m.type, items: all };
         }
-        seen.add(key);
     });
+    const duplicates = Object.values(groups);
     
     if (duplicates.length === 0) return null;
     
@@ -2712,10 +2796,10 @@ function ColorLegend({ materials }) {
         ),
         React.createElement("div", { style: { color: "#5d4037", marginBottom: 12, lineHeight: 1.6 } },
             "• Size เดียวกันแต่ต่าง Maker = ",
-            React.createElement("strong", null, "พื้นสีอ่อน + ตัวอักษรสีเข้ม + Border สีสด"),
+            React.createElement("strong", null, "ชื่อ Maker คนละสี (สีประจำแต่ละ maker)"),
             React.createElement("br", null),
-            "• Size เดียวกัน, Maker เดียวกัน แต่ต่าง Temper = ",
-            React.createElement("strong", null, "สีเข้มกว่า")
+            "• Size + Maker เดียวกัน แต่ต่าง Temper = ",
+            React.createElement("strong", null, "ป้าย Temper คนละสี")
         ),
         React.createElement("div", { style: { fontSize: 11, color: "#5d4037", fontWeight: 600, marginBottom: 6 } }, "ตัวอย่าง:"),
         duplicates.slice(0, 3).map((dup, i) => 
@@ -2723,20 +2807,31 @@ function ColorLegend({ materials }) {
                 React.createElement("span", { style: { color: "#e65100", fontWeight: 700, minWidth: 120 } }, `${dup.size}:`),
                 React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
                     dup.items.map((item, j) => {
-                        const color = getMaterialColor(materials, item);
-                        return React.createElement("span", { 
+                        const mkc = getMakerColor(materials, item);
+                        const tpc = getTemperColor(materials, item);
+                        const temperDiff = tpc.border !== 'transparent';
+                        return React.createElement("span", {
                             key: j,
-                            style: { 
-                                display: "inline-block",
-                                background: color.bg,
-                                border: `2px solid ${color.border}`,
+                            style: {
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 5,
+                                background: mkc.bg,
+                                border: `2px solid ${mkc.border}`,
                                 borderRadius: 6,
                                 padding: "4px 10px",
-                                color: color.text,
+                                color: mkc.text,
                                 fontWeight: 700,
                                 fontSize: 12
                             }
-                        }, `${color.badge || ''} ${item.maker}${item.temper !== '-' ? ` (${item.temper})` : ''}`);
+                        },
+                            item.maker,
+                            item.temper && item.temper !== '-' ? React.createElement("span", {
+                                style: temperDiff
+                                    ? { color: tpc.text, background: tpc.bg, border: `1px solid ${tpc.border}`, borderRadius: 4, padding: "0 5px", fontSize: 11 }
+                                    : { color: mkc.text, fontSize: 11 }
+                            }, `(${item.temper})`) : null
+                        );
                     })
                 )
             )
@@ -2784,20 +2879,17 @@ function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, on
                         const mc = master.matTypes.find(t => t.code === m.type) || {};
                         return React.createElement("tr", { key: m.id, style: { 
                     opacity: m.active === false ? .4 : 1,
-                    background: (() => {
-                        const color = getMaterialColor(materials, m);
-                        return color.bg;
-                    })(),
+                    background: C.sur,
                     borderLeft: (() => {
                         const color = getMaterialColor(materials, m);
-                        return color.border !== 'transparent' ? `6px solid ${color.border}` : 'none';
+                        return color.border !== 'transparent' ? `5px solid ${color.border}` : '5px solid transparent';
                     })()
                 } },
                             React.createElement("td", { style: { padding: "8px 11px", borderBottom: C.brd2 } },
                                 React.createElement(Tag, { color: mc.color || C.tx2, bg: mc.bg || "rgba(255,255,255,.06)", brd: `${mc.color || C.brd}44` }, m.type)),
                             React.createElement("td", { style: { padding: "8px 11px", fontWeight: 700, borderBottom: C.brd2, fontSize: 13 } }, m.name),
                             React.createElement("td", { style: { padding: "8px 11px", borderBottom: C.brd2 } },
-                                React.createElement(Tag, { color: C.acc2, bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, m.maker)),
+                                React.createElement(Tag, (() => { const mk = getMakerColor(null, m); return { color: mk.text, bg: mk.bg, brd: mk.border }; })(), m.maker)),
                             React.createElement("td", { style: { padding: "8px 11px", fontFamily: "monospace", fontSize: 15, borderBottom: C.brd2, whiteSpace: "nowrap", fontWeight: 700, color: C.tx } }, m.size),
                             React.createElement("td", { style: { padding: "8px 11px", fontSize: 11, color: C.tx2, borderBottom: C.brd2 } }, m.temper),
                             React.createElement("td", { style: { padding: "8px 11px", fontFamily: "monospace", fontSize: 10, borderBottom: C.brd2 } }, m.kpp != null ? `${m.kpp} kg` : "-"),
@@ -2810,24 +2902,24 @@ function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, on
                                     React.createElement(Btn, { v: "ghost", sz: "xs", onClick: () => onEdit(m) }, "\u270F\uFE0F"),
                                     React.createElement(Btn, { v: "accent", sz: "xs", onClick: () => onAddSize(m) }, "\u2795 Size"),
                                     React.createElement(Btn, { v: "ghost", sz: "xs", onClick: () => onToggle(m.id) }, m.active !== false ? "🔒" : "🔓"),
-                                    React.createElement(Btn, { v: "danger", sz: "xs", onClick: () => onDelete(m), style: { background: "rgba(248,81,73,.15)", border: "1px solid rgba(248,81,73,.4)", color: "#f85149" } }, "\uD83D\uDDD1\uFE0F"))));
+                                    React.createElement(Btn, { v: "danger", sz: "xs", onClick: () => onDelete(m), style: { background: "rgba(248,81,73,.15)", border: "1px solid rgba(248,81,73,.4)", color: "#cf222e" } }, "\uD83D\uDDD1\uFE0F"))));
                     }))))));
 }
 // ════════════════════════════════════════════════════════════
 // MATERIAL MASTER FORM
 // ════════════════════════════════════════════════════════════
 function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, errors = {}, materials = [], lots = {} }) {
-    const ef = (k, label) => errors[k] ? React.createElement("div", { style: { color: "#f85149", fontSize: 10, marginTop: 3, display: "flex", alignItems: "center", gap: 4 } },
+    const ef = (k, label) => errors[k] ? React.createElement("div", { style: { color: "#cf222e", fontSize: 10, marginTop: 3, display: "flex", alignItems: "center", gap: 4 } },
         "\u26A0\uFE0F ",
         errors[k]) : null;
-    const eb = (k) => errors[k] ? { border: "1.5px solid #f85149", boxShadow: "0 0 0 2px rgba(248,81,73,.15)" } : {};
+    const eb = (k) => errors[k] ? { border: "1.5px solid #cf222e", boxShadow: "0 0 0 2px rgba(248,81,73,.15)" } : {};
     const clr = (k) => () => clearErr && clearErr(k);
     const mkrs = form.type ? master.makers.filter(x => x.types.includes(form.type)).map(x => x.name) : master.makers.map(x => x.name);
     const errList = Object.values(errors).filter(Boolean);
     return React.createElement("div", null,
         errList.length > 0 && React.createElement("div", { style: { background: "rgba(248,81,73,.08)", border: "1.5px solid rgba(248,81,73,.4)", borderRadius: 8, padding: "10px 14px", marginBottom: 14 } },
-            React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "#f85149", marginBottom: 6 } }, "\u274C \u0E01\u0E23\u0E38\u0E13\u0E32\u0E01\u0E23\u0E2D\u0E01\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E15\u0E48\u0E2D\u0E44\u0E1B\u0E19\u0E35\u0E49\u0E43\u0E2B\u0E49\u0E04\u0E23\u0E1A:"),
-            errList.map((e, i) => React.createElement("div", { key: i, style: { fontSize: 11, color: "#f85149", padding: "2px 0" } },
+            React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "#cf222e", marginBottom: 6 } }, "\u274C \u0E01\u0E23\u0E38\u0E13\u0E32\u0E01\u0E23\u0E2D\u0E01\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E15\u0E48\u0E2D\u0E44\u0E1B\u0E19\u0E35\u0E49\u0E43\u0E2B\u0E49\u0E04\u0E23\u0E1A:"),
+            errList.map((e, i) => React.createElement("div", { key: i, style: { fontSize: 11, color: "#cf222e", padding: "2px 0" } },
                 "\u2022 ",
                 e))),
         React.createElement(SecTitle, null, "\uD83C\uDFF7\uFE0F \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2B\u0E25\u0E31\u0E01"),
@@ -2843,8 +2935,8 @@ function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, error
                 React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
                     (form.productPartNos || []).map((pn, pi) => (React.createElement("div", { key: pi, style: { display: "flex", gap: 6, alignItems: "center" } },
                         React.createElement(Inp, { value: pn, onChange: v => setForm(f => ({ ...f, productPartNos: f.productPartNos.map((x, xi) => xi === pi ? v : x) })), placeholder: `Part No. สินค้า ${pi + 1} เช่น 6YGDB-0213`, style: { flex: 1 } }),
-                        React.createElement("button", { onClick: () => setForm(f => ({ ...f, productPartNos: f.productPartNos.filter((_, xi) => xi !== pi) })), style: { background: "rgba(248,81,73,.15)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 5, color: "#f85149", cursor: "pointer", padding: "4px 8px", fontSize: 12, lineHeight: 1 } }, "\u2715")))),
-                    React.createElement("button", { onClick: () => setForm(f => ({ ...f, productPartNos: [...(f.productPartNos || []), ""] })), style: { background: "rgba(63,185,80,.1)", border: "1px dashed rgba(63,185,80,.4)", borderRadius: 6, color: "#3fb950", cursor: "pointer", padding: "6px 12px", fontSize: 11, textAlign: "left" } },
+                        React.createElement("button", { onClick: () => setForm(f => ({ ...f, productPartNos: f.productPartNos.filter((_, xi) => xi !== pi) })), style: { background: "rgba(248,81,73,.15)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 5, color: "#cf222e", cursor: "pointer", padding: "4px 8px", fontSize: 12, lineHeight: 1 } }, "\u2715")))),
+                    React.createElement("button", { onClick: () => setForm(f => ({ ...f, productPartNos: [...(f.productPartNos || []), ""] })), style: { background: "rgba(63,185,80,.1)", border: "1px dashed rgba(63,185,80,.4)", borderRadius: 6, color: "#1a7f37", cursor: "pointer", padding: "6px 12px", fontSize: 11, textAlign: "left" } },
                         "\u2795 \u0E40\u0E1E\u0E34\u0E48\u0E21 Part No. \u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32",
                         (form.productPartNos || []).length > 0 ? ` (${form.productPartNos.length} รายการ)` : ""))),
             React.createElement(FG, { label: "Size * (OD\u00D7THK\u00D7LENGTH)", span: true },
@@ -2858,11 +2950,11 @@ function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, error
                         return null;
                     const hasStock = dups.some(m => (lots[m.id] || []).reduce((s, l) => s + (l.rem_kgs || 0) + (l.rem_pcs || 0) + (l.rem_coil || 0), 0) > 0);
                     return React.createElement("div", { style: { marginTop: 6, background: hasStock ? "rgba(88,166,255,.08)" : "rgba(210,153,34,.08)", border: `1px solid ${hasStock ? "rgba(88,166,255,.3)" : "rgba(210,153,34,.3)"}`, borderRadius: 6, padding: "7px 12px", fontSize: 11 } },
-                        hasStock ? React.createElement("span", { style: { color: "#58a6ff" } }, "\u2139\uFE0F Size \u0E19\u0E35\u0E49\u0E21\u0E35\u0E43\u0E19\u0E04\u0E25\u0E31\u0E07\u0E41\u0E25\u0E49\u0E27") : React.createElement("span", { style: { color: "#d29922" } }, "\u26A0\uFE0F Size \u0E19\u0E35\u0E49\u0E21\u0E35\u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A\u0E41\u0E25\u0E49\u0E27 (\u0E2A\u0E15\u0E4A\u0E2D\u0E01 0)"),
-                        React.createElement("div", { style: { marginTop: 4, color: "#8b949e" } },
+                        hasStock ? React.createElement("span", { style: { color: "#0969da" } }, "\u2139\uFE0F Size \u0E19\u0E35\u0E49\u0E21\u0E35\u0E43\u0E19\u0E04\u0E25\u0E31\u0E07\u0E41\u0E25\u0E49\u0E27") : React.createElement("span", { style: { color: "#9a6700" } }, "\u26A0\uFE0F Size \u0E19\u0E35\u0E49\u0E21\u0E35\u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A\u0E41\u0E25\u0E49\u0E27 (\u0E2A\u0E15\u0E4A\u0E2D\u0E01 0)"),
+                        React.createElement("div", { style: { marginTop: 4, color: "#57606a" } },
                             "Maker \u0E17\u0E35\u0E48\u0E21\u0E35\u0E2D\u0E22\u0E39\u0E48: ",
-                            dups.map(m => React.createElement("span", { key: m.id, style: { marginRight: 8, background: "rgba(255,255,255,.06)", padding: "1px 7px", borderRadius: 4, color: "#e6edf3" } }, m.maker))),
-                        React.createElement("div", { style: { marginTop: 2, color: "#8b949e", fontSize: 10 } }, "* \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E14\u0E49\u0E16\u0E49\u0E32\u0E0B\u0E37\u0E49\u0E2D\u0E08\u0E32\u0E01 Maker \u0E2D\u0E37\u0E48\u0E19"));
+                            dups.map(m => React.createElement("span", { key: m.id, style: { marginRight: 8, background: "rgba(255,255,255,.06)", padding: "1px 7px", borderRadius: 4, color: "#1f2328" } }, m.maker))),
+                        React.createElement("div", { style: { marginTop: 2, color: "#57606a", fontSize: 10 } }, "* \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E14\u0E49\u0E16\u0E49\u0E32\u0E0B\u0E37\u0E49\u0E2D\u0E08\u0E32\u0E01 Maker \u0E2D\u0E37\u0E48\u0E19"));
                 })()),
             React.createElement(FG, { label: "Temper / Grade" },
                 React.createElement(Inp, { value: form.temper, onChange: v => setForm(f => ({ ...f, temper: v })), placeholder: "O, OL, H/2, 1/2H, -" }))),
@@ -2881,8 +2973,8 @@ function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, error
                     (form.extraMakers || []).map((mk, mi) => (React.createElement("div", { key: mi, style: { display: "flex", gap: 5, alignItems: "center" } },
                         React.createElement("div", { style: { flex: 1 } },
                             React.createElement(SmartSelect, { value: mk, onChange: v => setForm(f => ({ ...f, extraMakers: f.extraMakers.map((x, xi) => xi === mi ? v : x) })), options: mkrs, onAddNew: v => { addMaker(v, [form.type]); setForm(f => ({ ...f, extraMakers: f.extraMakers.map((x, xi) => xi === mi ? v : x) })); }, addLabel: "\u2795" })),
-                        React.createElement("button", { onClick: () => setForm(f => ({ ...f, extraMakers: f.extraMakers.filter((_, xi) => xi !== mi) })), style: { background: "rgba(248,81,73,.15)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 5, color: "#f85149", cursor: "pointer", padding: "4px 8px", fontSize: 12, lineHeight: 1 } }, "\u2715")))),
-                    React.createElement("button", { onClick: () => setForm(f => ({ ...f, extraMakers: [...(f.extraMakers || []), ""] })), style: { background: "rgba(63,185,80,.1)", border: "1px dashed rgba(63,185,80,.4)", borderRadius: 6, color: "#3fb950", cursor: "pointer", padding: "5px 12px", fontSize: 11, textAlign: "left" } },
+                        React.createElement("button", { onClick: () => setForm(f => ({ ...f, extraMakers: f.extraMakers.filter((_, xi) => xi !== mi) })), style: { background: "rgba(248,81,73,.15)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 5, color: "#cf222e", cursor: "pointer", padding: "4px 8px", fontSize: 12, lineHeight: 1 } }, "\u2715")))),
+                    React.createElement("button", { onClick: () => setForm(f => ({ ...f, extraMakers: [...(f.extraMakers || []), ""] })), style: { background: "rgba(63,185,80,.1)", border: "1px dashed rgba(63,185,80,.4)", borderRadius: 6, color: "#1a7f37", cursor: "pointer", padding: "5px 12px", fontSize: 11, textAlign: "left" } },
                         "\u2795 \u0E40\u0E1E\u0E34\u0E48\u0E21 Maker \u0E2D\u0E37\u0E48\u0E19",
                         (form.extraMakers || []).length > 0 ? ` (${form.extraMakers.length} เพิ่มเติม)` : ""))),
             React.createElement(FG, { label: "Customer (\u0E25\u0E39\u0E01\u0E04\u0E49\u0E32)", note: "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E14\u0E49" },
@@ -2904,7 +2996,7 @@ function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, error
 function MasterDataPage({ master, setMaster, toast }) {
     const [newType, setNewType] = useState({ code: "", label: "", color: "#aaaaaa" });
     const [newPart, setNewPart] = useState({ name: "", partNo: "", type: "" });
-    const [newMaker, setNewMaker] = useState({ name: "", type: "" });
+    const [newMaker, setNewMaker] = useState({ name: "", types: [] });
     const [newCustomer, setNewCustomer] = useState("");
     const [newDept, setNewDept] = useState("");
     function addType() {
@@ -2939,9 +3031,20 @@ function MasterDataPage({ master, setMaster, toast }) {
             toast("กรุณากรอกชื่อ Maker", "err");
             return;
         }
-        setMaster(m => ({ ...m, makers: [...m.makers, { name: newMaker.name, types: newMaker.type ? [newMaker.type] : [] }] }));
-        toast(`✅ เพิ่ม Maker "${newMaker.name}" แล้ว`);
-        setNewMaker({ name: "", type: "" });
+        if (!newMaker.types || newMaker.types.length === 0) {
+            toast("กรุณาเลือกชนิด material อย่างน้อย 1 ชนิด", "err");
+            return;
+        }
+        const exist = master.makers.find(mk => mk.name === newMaker.name);
+        if (exist) {
+            // ถ้ามี maker ชื่อนี้แล้ว → รวมชนิด material เข้าด้วยกัน (ไม่สร้างซ้ำ)
+            setMaster(m => ({ ...m, makers: m.makers.map(mk => mk.name === newMaker.name ? { ...mk, types: [...new Set([...(mk.types || []), ...newMaker.types])] } : mk) }));
+            toast(`✅ อัปเดตชนิดของ "${newMaker.name}" เป็น ${[...new Set([...(exist.types || []), ...newMaker.types])].join(", ")}`);
+        } else {
+            setMaster(m => ({ ...m, makers: [...m.makers, { name: newMaker.name, types: newMaker.types }] }));
+            toast(`✅ เพิ่ม Maker "${newMaker.name}" (${newMaker.types.join(", ")}) แล้ว`);
+        }
+        setNewMaker({ name: "", types: [] });
     }
     function addCustomer() {
         if (!newCustomer || master.customers.includes(newCustomer)) {
@@ -3000,7 +3103,11 @@ function MasterDataPage({ master, setMaster, toast }) {
             items: master.makers.map(mk => ({ key: mk.name, label: mk.name, sub: mk.types.join(",") })),
             addForm: React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
                 React.createElement(Inp, { value: newMaker.name, onChange: v => setNewMaker(x => ({ ...x, name: v })), placeholder: "\u0E0A\u0E37\u0E48\u0E2D Maker \u0E40\u0E0A\u0E48\u0E19 KOBE STEEL", style: { width: 200 } }),
-                React.createElement(Sel, { value: newMaker.type, onChange: v => setNewMaker(x => ({ ...x, type: v })), options: [{ v: "", l: "ทุกประเภท" }, ...master.matTypes.map(t => ({ v: t.code, l: `${t.code}` }))], style: { width: 120 } }),
+                React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 11, color: C.tx2 } },
+                    "ชนิด:",
+                    master.matTypes.map(t => React.createElement("label", { key: t.code, style: { display: "inline-flex", alignItems: "center", gap: 3, cursor: "pointer", padding: "2px 6px", border: `1px solid ${newMaker.types.includes(t.code) ? C.acc : C.brd}`, borderRadius: 5, background: newMaker.types.includes(t.code) ? "rgba(217,119,6,.08)" : "transparent" } },
+                        React.createElement("input", { type: "checkbox", checked: newMaker.types.includes(t.code), onChange: e => setNewMaker(x => ({ ...x, types: e.target.checked ? [...x.types, t.code] : x.types.filter(c => c !== t.code) })) }),
+                        t.code))),
                 React.createElement(Btn, { v: "success", sz: "sm", onClick: addMaker }, "\u2795 \u0E40\u0E1E\u0E34\u0E48\u0E21 Maker")),
             removeKey: "makers", removeVal: mk => mk.name
         },
@@ -3089,5 +3196,5 @@ function EmailPage() {
                             React.createElement(Inp, { placeholder: "user_xxxxxxx", value: "", onChange: () => { } }))),
                     React.createElement(Btn, { v: "primary", sz: "sm" }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01 SMTP")))));
 }
-window.addEventListener('load',function(){try{document.getElementById('loading').style.display='none';document.getElementById('root').style.display='block';ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(StoreFlow));}catch(e){document.getElementById('loading').innerHTML='<div style="color:#f85149;font-size:13px;padding:24px;">❌ '+e.message+'</div>';}});
+window.addEventListener('load',function(){try{document.getElementById('loading').style.display='none';document.getElementById('root').style.display='block';ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(StoreFlow));}catch(e){document.getElementById('loading').innerHTML='<div style="color:#cf222e;font-size:13px;padding:24px;">❌ '+e.message+'</div>';}});
 </script></body></html>
