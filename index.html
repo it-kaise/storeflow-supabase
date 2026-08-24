@@ -1,3 +1,4 @@
+
 <!DOCTYPE html><html lang="th"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Material Control System (MCS) — KAISE</title>
@@ -140,6 +141,22 @@ function autoPriceUnit(kgs, pcs, coil) {
     if ((parseFloat(pcs) || 0) > 0) return "pcs";
     if ((parseFloat(coil) || 0) > 0) return "coil";
     return "kgs";
+}
+// ── หน่วยที่ "เกี่ยวข้องจริง" ของวัตถุดิบแต่ละชนิด (ใช้ซ่อนคอลัมน์ที่ไม่ได้ใช้) ──
+//    CU (ทองแดง)  → COIL / KGS / PCS
+//    ST/SUS/AL/BRASS/JFE → KGS / PCS (ไม่มี COIL, ไม่มี M)
+//    PART ASSY    → KGS / PCS / M (M ใช้เฉพาะ maker KU NOMURA)
+function unitsForMat(m) {
+    const t = String((m && m.type) || "").toUpperCase();
+    const u = String((m && m.unit) || "").toUpperCase();
+    const mk = String((m && m.maker) || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const r = { kgs: true, pcs: true, coil: false, m: false };
+    if (t === "CU") r.coil = true;
+    if (/PART|ASSY/.test(t) && (mk.indexOf("KUNOMURA") >= 0 || u === "M")) r.m = true;
+    // เคารพหน่วยที่ตั้งไว้ที่ตัว material เอง (เผื่อมีเคสพิเศษนอกกฎด้านบน)
+    if (u.indexOf("COIL") >= 0) r.coil = true;
+    if (u === "M") r.m = true;
+    return r;
 }
 function lotPriceOf(map, matId, lotNo) {
     const x = (map || {})[matId + "||" + lotNo];
@@ -2058,6 +2075,21 @@ function StoreFlow() {
                         const tgt = materials.find(m => m.id === matId);
                         logAudit && logAudit("Part No.", "ผูกคลัง", `${pn} → ${tgt ? tgt.maker + " " + tgt.size : matId}`);
                         toast(`✅ ผูก ${pn} กับ ${tgt ? tgt.maker : ""} แล้ว`);
+                    }, onUnlinkMat: async (pe, matId) => {
+                        // ถอด Part No. ออกจากวัตถุดิบตัวนี้ (กรณีผูกผิดตัว)
+                        // ถอดเฉพาะตัวที่ระบุ ไม่ไปยุ่งกับตัวอื่นที่ผูกไว้ถูกแล้ว
+                        const pn = String(pe.pn == null ? "" : pe.pn).replace(/\s+/g, " ").trim();
+                        if (!pn) return;
+                        const same = x => String(x == null ? "" : x).replace(/\s+/g, " ").trim().toLowerCase() === pn.toLowerCase();
+                        const tgt = materials.find(m => m.id === matId);
+                        if (!tgt || !(tgt.productPartNos || []).some(same)) { toast("ℹ️ ไม่ได้ผูกไว้อยู่แล้ว"); return; }
+                        const upd = { ...tgt, productPartNos: (tgt.productPartNos || []).filter(x => !same(x)) };
+                        const { error } = await sb.from('sf_materials').update(matToDb(upd)).eq('id', matId);
+                        if (error) { console.error(error); toast("❌ ถอดไม่สำเร็จ", "err"); return; }
+                        setMaterials(ms => ms.map(m => m.id === matId ? upd : m));
+                        logAudit && logAudit("Part No.", "ถอดการผูก", `${pn} ✕ ${tgt.maker} ${tgt.size}`);
+                        toast(`🔓 ถอด ${pn} ออกจาก ${tgt.maker} แล้ว`);
+
                     } }),
                 page === "emailsettings" && canEditSettings && React.createElement(EmailPage, null))),
         isRestoring && React.createElement("div", { style: { position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" } },
@@ -2462,7 +2494,12 @@ function QuickCheckPage({ materials, lots, toast }) {
             PART_DB.forEach(p => {
                 const hay = ((p.pn || "") + " " + (p.mdl || "") + " " + (p.nm || "") + " " + (p.cust || "")).toLowerCase();
                 if (hay.indexOf(ql) < 0) return;
-                const mats = findMatsForPart(p, materials);
+                // ค้นจาก "ที่ผูกไว้จริง" เท่านั้น ไม่เดาจาก Size
+                // เพราะ Size เดียวกันมักมีหลาย Maker/Temper การเดาอาจชี้ไปผิดตัว
+                // ตัวที่ยังไม่ได้ผูกจะไปอยู่กลุ่ม "ยังไม่ได้ผูกกับคลัง" ให้ไล่เก็บทีหลัง
+                const _pnl = String(p.pn == null ? "" : p.pn).replace(/\s+/g, " ").trim().toLowerCase();
+                const mats = _pnl ? materials.filter(m => m.active !== false
+                    && (m.productPartNos || []).some(x => String(x == null ? "" : x).replace(/\s+/g, " ").trim().toLowerCase() === _pnl)) : [];
                 if (mats.length) { mats.forEach(m => addM(m, p.pn)); }
                 else if (regOnly.length < 10) { regOnly.push(p); }
             });
@@ -2557,9 +2594,13 @@ function QuickCheckPage({ materials, lots, toast }) {
                                 : React.createElement("div", { style: { fontSize: 15, fontWeight: 800, color: C.err } }, "หมด"),
                             low ? React.createElement("div", { style: { fontSize: 10.5, color: "#9a6700", fontWeight: 700 } }, "⚠ ต่ำกว่า Min (" + fmtQty(m.minStock) + ")") : null));
                 }),
-                regOnly.length > 0 && React.createElement("div", { style: { marginTop: 6, padding: "10px 14px", background: "rgba(154,103,0,.06)", border: "1px dashed rgba(154,103,0,.35)", borderRadius: 8, fontSize: 11.5, color: "#9a6700", lineHeight: 1.9 } },
-                    "อยู่ในทะเบียน Part No. แต่ยังไม่พบวัตถุดิบในคลัง: ",
-                    regOnly.map(p => (p.pn || "") + (p.sz ? " (" + p.sz + ")" : "")).join(", "))));
+                regOnly.length > 0 && React.createElement("div", { style: { marginTop: 6, padding: "11px 14px", background: "rgba(154,103,0,.07)", border: "1px solid rgba(154,103,0,.4)", borderRadius: 8, fontSize: 12, color: "#9a6700", lineHeight: 1.75 } },
+                    React.createElement("div", { style: { fontWeight: 800, marginBottom: 3 } }, "⚠️ Part No. นี้ยังไม่ได้ผูกกับวัตถุดิบในคลัง"),
+                    React.createElement("div", null, regOnly.map(p => (p.pn || "") + (p.sz ? " (" + String(p.sz).replace(/^size:/i, "") + ")" : "")).join(" · ")),
+                    React.createElement("div", { style: { marginTop: 4, color: C.tx2, fontSize: 11 } },
+                        "อาจมีของอยู่ในคลังแล้วแต่ยังไม่ได้เชื่อมข้อมูลกัน — ไปที่ ",
+                        React.createElement("strong", null, "จัดการ Part No."),
+                        " แล้วกดปุ่ม 🔀 ที่รายการนี้ เพื่อเลือกวัตถุดิบที่ตรงกัน"))));
 }
 function DashPage({ requests, materials, lots, role, master, onAp, onIs, goto, issueHist, recvHist, priceMap, onSavePrice, lotPriceMap, only }) {
     // หน่วยหลักที่ใช้คิดมูลค่า
@@ -3827,6 +3868,21 @@ function IsBody({ req, lots, selectedLots, setSelectedLots }) {
 // ════════════════════════════════════════════════════════════
 function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail }) {
     const [search, setSearch] = useState("");
+    // แสดงเฉพาะคอลัมน์หน่วยที่เกี่ยวข้องกับรายการที่เห็นอยู่ (เลือกทองแดง = ไม่ต้องเห็น M)
+    const pickUCols = (rows) => {
+        const u = { kgs: false, pcs: false, coil: false, m: false };
+        rows.forEach(mm => { const r = unitsForMat(mm); if (r.kgs) u.kgs = true; if (r.pcs) u.pcs = true; if (r.coil) u.coil = true; if (r.m) u.m = true; });
+        // ถ้ามีของค้างในหน่วยไหนอยู่จริง ต้องโชว์เสมอ — กันตัวเลขหายจากตา
+        rows.forEach(mm => {
+            const ml = lots[mm.id] || [];
+            if (ml.some(x => (x.rem_kgs || 0) > 0)) u.kgs = true;
+            if (ml.some(x => (x.rem_pcs || 0) > 0)) u.pcs = true;
+            if (ml.some(x => (x.rem_coil || 0) > 0)) u.coil = true;
+            if (ml.some(x => (x.rem_m || 0) > 0)) u.m = true;
+        });
+        if (!u.kgs && !u.pcs && !u.coil && !u.m) u.kgs = true;
+        return [["kgs", "KGS", 62], ["pcs", "PCS", 56], ["coil", "COIL", 54], ["m", "M", 50]].filter(x => u[x[0]]);
+    };
     const baseList = sortBySize(filter === "all" ? materials : materials.filter(m => m.type === filter));
     const filtered = baseList
         .filter(m => !search || m.size.toLowerCase().includes(search.toLowerCase()) || m.name.toLowerCase().includes(search.toLowerCase()) || m.partNo.toLowerCase().includes(search.toLowerCase()) || m.maker.toLowerCase().includes(search.toLowerCase()))
@@ -3849,6 +3905,7 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
             return a.size.localeCompare(b.size);
         return (a.maker || "").localeCompare(b.maker || "");
     });
+    const uCols = pickUCols(filtered);
     return React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "calc(100vh - 80px)" } },
         React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" } },
             [["all", "ทั้งหมด"], ...master.matTypes.map(t => [t.code, `${t.label} (${t.code})`])].map(([f, l]) => (React.createElement("button", { key: f, onClick: () => setFilter(f), style: { padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", border: `1px solid ${filter === f ? C.acc : C.brd}`, background: filter === f ? C.acc : "transparent", color: filter === f ? "#fff" : C.tx2, fontFamily: "inherit" } }, l))),
@@ -3873,9 +3930,9 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
         React.createElement(Card, { grow: true },
             React.createElement("div", { style: { overflow: "auto", flex: 1, minHeight: 240 } },
                 React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed" } },
-                    React.createElement("colgroup", null, [56, "auto", 96, "auto", 74, 88, 50, 46, 42, 38, 66, 72].map((w, ci) => React.createElement("col", { key: ci, style: w === "auto" ? { width: "18%" } : { width: w } }))),
+                    React.createElement("colgroup", null, [56, "auto", 96, "auto", 74, 88, ...uCols.map(x => x[2]), 66, 72].map((w, ci) => React.createElement("col", { key: ci, style: w === "auto" ? { width: "18%" } : { width: w } }))),
                     React.createElement("thead", { style: { position: "sticky", top: 0, zIndex: 3 } },
-                        React.createElement("tr", { style: { background: C.sur2 } }, ["ประเภท", "ชื่อ Material", "Maker", "Size", "Temper", "Next Lot", "KGS", "PCS", "COIL", "M", "Status", ""].map(h => React.createElement("th", { key: h, title: h, style: { overflow: "hidden", textOverflow: "ellipsis", padding: "5px 6px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, h)))),
+                        React.createElement("tr", { style: { background: C.sur2 } }, ["ประเภท", "ชื่อ Material", "Maker", "Size", "Temper", "Next Lot", ...uCols.map(x => x[1]), "Status", ""].map(h => React.createElement("th", { key: h, title: h, style: { overflow: "hidden", textOverflow: "ellipsis", padding: "5px 6px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, h)))),
                     React.createElement("tbody", null, filtered.map((m) => {
                         const s = { kgs: (lots[m.id] || []).reduce((a, x) => a + (x.rem_kgs || 0), 0), pcs: (lots[m.id] || []).reduce((a, x) => a + (x.rem_pcs || 0), 0), coil: (lots[m.id] || []).reduce((a, x) => a + (x.rem_coil || 0), 0), m: (lots[m.id] || []).reduce((a, x) => a + (x.rem_m || 0), 0), next: (lots[m.id] || []).find(x => (x.rem_kgs || 0) > 0 || (x.rem_pcs || 0) > 0 || (x.rem_coil || 0) > 0 || (x.rem_m || 0) > 0), count: (lots[m.id] || []).length };
                         const ok = s.kgs > 0 || s.pcs > 0 || s.coil > 0 || (s.m || 0) > 0;
@@ -3904,10 +3961,13 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                                 React.createElement("div", { style: { fontSize: 9, color: C.tx2, marginTop: 1 } },
                                     s.count,
                                     " lots")) : React.createElement("span", { style: { color: C.tx3 } }, "-")),
-                            React.createElement("td", { style: { padding: "5px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "monospace", fontWeight: 700, borderBottom: C.brd2, fontSize: 13 } }, s.kgs > 0 ? fmtQty(s.kgs, 1) : "-"),
-                            React.createElement("td", { style: { padding: "5px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "monospace", fontWeight: 700, borderBottom: C.brd2, fontSize: 13 } }, s.pcs > 0 ? fmtQty(s.pcs) : "-"),
-                            React.createElement("td", { style: { padding: "5px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "monospace", fontWeight: 700, borderBottom: C.brd2, fontSize: 13 } }, s.coil > 0 ? fmtQty(s.coil) : "-"),
-                            React.createElement("td", { style: { padding: "5px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "monospace", fontWeight: 700, borderBottom: C.brd2, fontSize: 13 } }, (s.m || 0) > 0 ? fmtQty(s.m, 1) : "-"),
+                            ...uCols.map(uc => {
+                                const k = uc[0];
+                                const rel = unitsForMat(m)[k];
+                                const v = k === "kgs" ? s.kgs : k === "pcs" ? s.pcs : k === "coil" ? s.coil : (s.m || 0);
+                                // หน่วยที่ไม่เกี่ยวกับชนิดนี้ ทำจางไว้ ให้สายตาไปโฟกัสหน่วยที่ใช้จริง
+                                return React.createElement("td", { key: k, style: { padding: "5px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "monospace", fontWeight: 700, borderBottom: C.brd2, fontSize: 13, color: v > 0 ? C.tx : rel ? C.tx3 : "rgba(140,149,159,.35)" } }, v > 0 ? fmtQty(v, k === "pcs" || k === "coil" ? 0 : 1) : rel ? "-" : "");
+                            }),
                             React.createElement("td", { style: { padding: "5px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderBottom: C.brd2 } },
                                 React.createElement(Tag, { color: !ok ? C.err : low ? C.warn : C.ok, bg: !ok ? "rgba(248,81,73,.1)" : low ? "rgba(210,153,34,.1)" : "rgba(63,185,80,.1)", brd: !ok ? "rgba(248,81,73,.2)" : low ? "rgba(210,153,34,.2)" : "rgba(63,185,80,.2)" }, !ok ? "❌ หมด" : low ? "⚠️ ต่ำ" : "✅ ปกติ")),
                             React.createElement("td", { style: { padding: "5px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderBottom: C.brd2 } },
@@ -3976,6 +4036,8 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
     var _a;
     // กันกดปุ่มบันทึกซ้ำระหว่างที่ยังบันทึกไม่เสร็จ — เดิมกดรัวได้ ทำให้ของเข้าคลัง 2 รอบ
     const [saving, setSaving] = useState(false);
+    // ราคาเดียวกันทุก Lot — สโตร์รับหลาย Lot แต่ราคาเดียว จะได้ไม่ต้องพิมพ์ซ้ำทุกแถว
+    const [samePrice, setSamePrice] = useState(true);
     const filtMats = form.type ? sortBySize(materials.filter(m => m.type === form.type && m.active !== false)) : [];
     const mkrs = form.matId
         ? [(_a = materials.find(m => m.id === form.matId)) === null || _a === void 0 ? void 0 : _a.maker].filter(Boolean)
@@ -3985,7 +4047,10 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
     const selMatsForSize = baseMat2 ? materials.filter(m => m.active !== false && m.size === baseMat2.size && m.name === baseMat2.name && m.type === baseMat2.type) : [];
     const mkrsForSize = [...new Set([...((baseMat2 === null || baseMat2 === void 0 ? void 0 : baseMat2.allMakers) || [baseMat2 === null || baseMat2 === void 0 ? void 0 : baseMat2.maker].filter(Boolean)), ...selMatsForSize.flatMap(m => m.allMakers || [m.maker])].filter(Boolean))];
     function updLot(idx, field, val) { setForm(f => ({ ...f, lots: f.lots.map((l, i) => i === idx ? { ...l, [field]: val } : l) })); }
-    function addLot() { setForm(f => ({ ...f, lots: [...f.lots, { lotNo: "", pcs: "", coil: "", kgs: "", m: "", price: "", priceUnit: "kgs" }] })); }
+    // เพิ่ม Lot ใหม่ = ก๊อปราคา/หน่วยจากแถวก่อนหน้ามาให้เลย (ส่วนใหญ่ราคาเดียวกัน)
+    function addLot() { setForm(f => { const pv = f.lots[f.lots.length - 1] || {}; return { ...f, lots: [...f.lots, { lotNo: "", pcs: "", coil: "", kgs: "", m: "", price: pv.price || "", priceUnit: pv.priceUnit || "kgs" }] }; }); }
+    // ใส่ราคา/หน่วยเดียวกันให้ทุก Lot พร้อมกัน
+    function setAllPrice(field, val) { setForm(f => ({ ...f, lots: f.lots.map(l => ({ ...l, [field]: val })) })); }
     function remLot(idx) { setForm(f => ({ ...f, lots: f.lots.filter((_, i) => i !== idx) })); }
     const selMat = materials.find(m => m.id === form.matId);
     const totalKgs = form.lots.reduce((s, l) => s + (parseFloat(l.kgs) || 0), 0);
@@ -4064,23 +4129,39 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
                     React.createElement("br", null),
                     "\u0E41\u0E15\u0E48\u0E25\u0E30\u0E41\u0E16\u0E27 = 1 Lot No. | \u0E01\u0E23\u0E2D\u0E01 PCS \u0E2B\u0E23\u0E37\u0E2D COIL \u0E2B\u0E23\u0E37\u0E2D KGS \u0E15\u0E32\u0E21\u0E0A\u0E19\u0E34\u0E14\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A"),
                 React.createElement("div", { style: { background: C.sur2, border: `1px solid ${C.brd}`, borderRadius: 8, overflow: "hidden", marginBottom: 12 } },
-                    React.createElement("div", { style: { display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr 1.2fr 36px", gap: 0, background: C.sur3, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: C.tx2, textTransform: "uppercase", letterSpacing: .5 } },
+                (() => {
+                    // แถบราคาเดียวกันทุก Lot — พิมพ์ราคาครั้งเดียว ใส่ให้ทุกแถวอัตโนมัติ
+                    const l0 = form.lots[0] || {};
+                    return React.createElement("div", { style: { background: samePrice ? "rgba(26,127,55,.06)" : C.sur2, border: "1px solid " + (samePrice ? "rgba(26,127,55,.3)" : C.brd), borderRadius: 8, padding: "9px 12px", marginBottom: 10, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
+                        React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 7, cursor: "pointer", fontSize: 12, fontWeight: 700, color: samePrice ? "#1a7f37" : C.tx2, whiteSpace: "nowrap" } },
+                            React.createElement("input", { type: "checkbox", checked: samePrice, onChange: e => setSamePrice(e.target.checked), style: { width: 15, height: 15, cursor: "pointer", accentColor: "#1a7f37" } }),
+                            "💰 ราคาเดียวกันทุก Lot"),
+                        samePrice
+                            ? React.createElement(React.Fragment, null,
+                                React.createElement("div", { style: { width: 130 } },
+                                    React.createElement(Inp, { type: "number", value: l0.price || "", onChange: v => { const u = l0.priceUnit || autoPriceUnit(l0.kgs, l0.pcs, l0.coil); setForm(f => ({ ...f, lots: f.lots.map(x => ({ ...x, price: v, priceUnit: u })) })); }, placeholder: "ราคา ฿" })),
+                                React.createElement("div", { style: { width: 125 } },
+                                    React.createElement(Sel, { value: l0.priceUnit || autoPriceUnit(l0.kgs, l0.pcs, l0.coil), onChange: v => setAllPrice("priceUnit", v), options: PRICE_UNITS })),
+                                React.createElement("span", { style: { fontSize: 11, color: C.tx3 } }, "→ ระบบใส่ราคานี้ให้ครบทุก Lot (" + form.lots.length + " Lot) ไม่ต้องพิมพ์ซ้ำ"))
+                            : React.createElement("span", { style: { fontSize: 11, color: C.tx3 } }, "→ กรอกราคาแยกทีละ Lot ในตารางด้านล่าง"));
+                })(),
+                    React.createElement("div", { style: { display: "grid", gridTemplateColumns: samePrice ? "2fr 1fr 1fr 1fr 1fr 36px" : "2fr 1fr 1fr 1fr 1fr 1fr 1.2fr 36px", gap: 0, background: C.sur3, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: C.tx2, textTransform: "uppercase", letterSpacing: .5 } },
                         React.createElement("span", null, "Lot No. *"),
                         React.createElement("span", null, "PCS"),
                         React.createElement("span", null, "COIL"),
                         React.createElement("span", null, "KGS"),
                         React.createElement("span", null, "M (\u0E40\u0E21\u0E15\u0E23)"),
-                        React.createElement("span", null, "ราคา ฿"),
-                        React.createElement("span", null, "หน่วยราคา"),
+                        !samePrice && React.createElement("span", null, "ราคา ฿"),
+                        !samePrice && React.createElement("span", null, "หน่วยราคา"),
                         React.createElement("span", null)),
-                    form.lots.map((l, i) => React.createElement("div", { key: i, style: { display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr 1.2fr 36px", gap: 0, borderTop: `1px solid ${C.brd}`, padding: "6px 10px", alignItems: "center", gap: 6 } },
+                    form.lots.map((l, i) => React.createElement("div", { key: i, style: { display: "grid", gridTemplateColumns: samePrice ? "2fr 1fr 1fr 1fr 1fr 36px" : "2fr 1fr 1fr 1fr 1fr 1fr 1.2fr 36px", gap: 0, borderTop: `1px solid ${C.brd}`, padding: "6px 10px", alignItems: "center", gap: 6 } },
                         React.createElement(Inp, { value: l.lotNo, onChange: v => updLot(i, "lotNo", v), placeholder: `LOT-${String(i + 1).padStart(3, "0")}` }),
                         React.createElement(Inp, { type: "number", value: l.pcs, onChange: v => updLot(i, "pcs", v), placeholder: "0" }),
                         React.createElement(Inp, { type: "number", value: l.coil, onChange: v => updLot(i, "coil", v), placeholder: "0" }),
                         React.createElement(Inp, { type: "number", value: l.kgs, onChange: v => { updLot(i, "kgs", v); }, placeholder: "0.00" }),
                         React.createElement(Inp, { type: "number", value: l.m, onChange: v => updLot(i, "m", v), placeholder: "0" }),
-                        React.createElement(Inp, { type: "number", value: l.price, onChange: v => updLot(i, "price", v), placeholder: "\u0E23\u0E32\u0E04\u0E32" }),
-                        React.createElement(Sel, { value: l.priceUnit || autoPriceUnit(l.kgs, l.pcs, l.coil), onChange: v => updLot(i, "priceUnit", v), options: PRICE_UNITS }),
+                        !samePrice && React.createElement(Inp, { type: "number", value: l.price, onChange: v => updLot(i, "price", v), placeholder: "\u0E23\u0E32\u0E04\u0E32" }),
+                        !samePrice && React.createElement(Sel, { value: l.priceUnit || autoPriceUnit(l.kgs, l.pcs, l.coil), onChange: v => updLot(i, "priceUnit", v), options: PRICE_UNITS }),
                         i > 0 ? React.createElement(Btn, { v: "ghost", sz: "xs", onClick: () => remLot(i), style: { padding: "3px 6px" } }, "\uD83D\uDDD1\uFE0F") : React.createElement("div", null))),
                     React.createElement("div", { style: { padding: "8px 12px", borderTop: `1px solid ${C.brd}`, display: "flex", alignItems: "center", justifyContent: "space-between" } },
                         React.createElement(Btn, { v: "accent", sz: "xs", onClick: addLot }, "\u2795 \u0E40\u0E1E\u0E34\u0E48\u0E21 Lot"),
@@ -4761,18 +4842,31 @@ function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, error
 // ════════════════════════════════════════════════════════════
 // PART NO. PAGE — ทะเบียน Part No./Customer (แบบระบบที่ 2 แต่ไม่มี Code Stock)
 // ════════════════════════════════════════════════════════════
-function PartNoPage({ partDb, onSave, master, materials, toast, onAddMat, onLinkMat }) {
+function PartNoPage({ partDb, onSave, master, materials, toast, onAddMat, onLinkMat, onUnlinkMat }) {
     const [q, setQ] = useState("");
     const [cat, setCat] = useState("");
     const [edit, setEdit] = useState(null);
     const [pick, setPick] = useState(null);   // Part No. ที่กำลังเลือกผูกคลังเอง
     const [pickQ, setPickQ] = useState("");
+    // ดูเฉพาะรายการที่ยังไม่ได้ผูกกับวัตถุดิบในคลัง — ไว้ไล่เก็บให้ครบ
+    const [onlyUnlinked, setOnlyUnlinked] = useState(false);
     const list = (partDb || []).map((p, i) => ({ ...p, _i: i }));
     // ยุบช่องว่างซ้ำก่อนเทียบ — ข้อมูลบางแถวมี 2 ช่องว่าง บางแถวมี 1 ("AZ26F767H01  PIPE" vs "AZ26F767H01 PIPE")
     // ถ้าเทียบตรงตัวจะค้นไม่เจอบางรายการ
     const _sq = v => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
     const ql = _sq(q);
+    const matPnIdx = {};
+    (materials || []).forEach(m => {
+        if (m.active === false) return;
+        (m.productPartNos || []).forEach(x => {
+            const k = String(x == null ? "" : x).replace(/\s+/g, " ").trim().toLowerCase();
+            if (!k) return;
+            if (!matPnIdx[k]) matPnIdx[k] = [];
+            matPnIdx[k].push(m);
+        });
+    });
     const filtered = list.filter(p => {
+        if (onlyUnlinked && (matPnIdx[_sq(p.pn)] || []).length) return false;
         if (cat && (PART_CAT_MAP[p.cat] || p.cat) !== cat) return false;
         if (!ql) return true;
         return [p.pn, p.nm, p.cust, p.sz, p.vnd].some(v => _sq(v).includes(ql));
@@ -4789,16 +4883,6 @@ function PartNoPage({ partDb, onSave, master, materials, toast, onAddMat, onLink
     });
     // ดัชนี "Part No. สินค้า" ที่ผูกไว้กับ material โดยตรง — ต้องชนะการเดาจาก size เสมอ
     // (เดิม fastMats ดูแต่ size ทำให้ part ที่ผูกไว้แล้วยังขึ้นปุ่ม "เพิ่มเข้าคลัง" ทั้งที่มีของ)
-    const matPnIdx = {};
-    (materials || []).forEach(m => {
-        if (m.active === false) return;
-        (m.productPartNos || []).forEach(x => {
-            const k = String(x == null ? "" : x).replace(/\s+/g, " ").trim().toLowerCase();
-            if (!k) return;
-            if (!matPnIdx[k]) matPnIdx[k] = [];
-            matPnIdx[k].push(m);
-        });
-    });
     function fastMats(p) {
         // รวมผู้เข้าข่ายทั้งจาก "ผูก Part No. ไว้ตรงๆ" และ "size+หมวดตรง" แล้วให้คะแนนเลือก
         // (ใช้ตรรกะเดียวกับ findMatsForPart แต่อ่านจากดัชนีที่ทำไว้แล้ว จึงเร็วพอสำหรับ ~900 แถว)
@@ -4819,7 +4903,7 @@ function PartNoPage({ partDb, onSave, master, materials, toast, onAddMat, onLink
     function saveEdit() {
         // ตัดช่องว่าง/แท็บที่ติดมาจากการ copy-paste (เช่น Excel) ทุกช่อง
         // ไม่งั้นจะได้ค่าอย่าง "KENMAX\t" ซึ่งหน้าตาเหมือน "KENMAX" แต่เป็นคนละค่า
-        const T = v => String(v == null ? "" : v).replace(/[\s ]+/g, " ").trim();
+        const T = v => String(v == null ? "" : v).replace(/[\s ]+/g, " ").trim();
         const pnT = T(edit.pn);
         if (!pnT) { toast("กรุณากรอก Part No.", "err"); return; }
         const isNew = edit._i === -1;
@@ -4876,6 +4960,18 @@ function PartNoPage({ partDb, onSave, master, materials, toast, onAddMat, onLink
             React.createElement("div", { style: { padding: "12px 14px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderBottom: `1px solid ${C.brd}` } },
                 React.createElement(Inp, { value: q, onChange: setQ, placeholder: "🔍 ค้นหา Part No. / Part Name / Customer / Size / Vendor...", style: { flex: 1, minWidth: 220 } }),
                 React.createElement(Sel, { value: cat, onChange: setCat, options: [{ v: "", l: "ทุกหมวด" }, ...catOpts], style: { width: 150 } }),
+                (() => {
+                    // จำนวน Part No. ที่ยังไม่ได้ผูกกับวัตถุดิบในคลัง — กดเพื่อไล่เก็บ
+                    const nUn = list.filter(p => !(matPnIdx[_sq(p.pn)] || []).length).length;
+                    if (!nUn && !onlyUnlinked) return null;
+                    return React.createElement("button", { onClick: () => setOnlyUnlinked(v => !v),
+                        title: "รายการที่ยังไม่ได้เชื่อมกับวัตถุดิบในคลัง — กด 🔀 ที่แต่ละแถวเพื่อผูก",
+                        style: { background: onlyUnlinked ? "#9a6700" : "rgba(210,153,34,.12)",
+                            border: "1px solid " + (onlyUnlinked ? "#9a6700" : "rgba(210,153,34,.45)"),
+                            borderRadius: 7, color: onlyUnlinked ? "#fff" : "#9a6700", cursor: "pointer",
+                            padding: "6px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", whiteSpace: "nowrap" } },
+                        onlyUnlinked ? "✕ ดูทั้งหมด" : "⚠️ ยังไม่ได้ผูกคลัง (" + nUn + ")");
+                })(),
                 React.createElement(Btn, { v: "ghost", sz: "sm", onClick: exportParts }, "📊 Export"),
                 React.createElement(Btn, { v: "primary", sz: "sm", onClick: startAdd }, "➕ เพิ่ม Part No. ใหม่")),
             pick && React.createElement(Modal, { open: true, onClose: () => { setPick(null); setPickQ(""); }, icon: "🔀", width: 720, title: "เลือกวัตถุดิบในคลังให้ " + (pick.pn || ""), footer: React.createElement(React.Fragment, null,
@@ -4891,6 +4987,10 @@ function PartNoPage({ partDb, onSave, master, materials, toast, onAddMat, onLink
                             const cur = fastMats(pick);
                             const curIds = {};
                             cur.forEach(m => { curIds[m.id] = true; });
+                            // แยกให้ชัด: ผูกไว้เอง (แก้/ถอดได้) กับ ระบบเดาจาก Size (ยังไม่ได้ผูก)
+                            const _pn = _sq(pick.pn);
+                            const linkedIds = {};
+                            (materials || []).forEach(m => { if ((m.productPartNos || []).some(x => _sq(x) === _pn)) linkedIds[m.id] = true; });
                             const pql = _sq(pickQ);
                             // แนะนำตัวที่ตรงหมวด/ใกล้เคียงก่อน แล้วค่อยตัวอื่นๆ ทั้งหมด (ค้นหาได้)
                             const scored = _scoreMats(pick, (materials || []).filter(m => m.active !== false), curIds);
@@ -4898,15 +4998,24 @@ function PartNoPage({ partDb, onSave, master, materials, toast, onAddMat, onLink
                             if (!rows.length) return React.createElement("div", { style: { padding: 18, textAlign: "center", color: C.tx2, fontSize: 12 } }, "ไม่พบวัตถุดิบ");
                             return rows.slice(0, 200).map(m => {
                                 const isCur = !!curIds[m.id];
+                                const isLinked = !!linkedIds[m.id];
                                 return React.createElement("div", { key: m.id, style: { display: "flex", alignItems: "center", gap: 9, padding: "8px 11px", borderBottom: "1px solid " + C.brd2, background: isCur ? "rgba(63,185,80,.07)" : "transparent" } },
                                     React.createElement(Tag, { color: C.tx2 }, m.type),
                                     React.createElement("div", { style: { flex: 1, minWidth: 0 } },
                                         React.createElement("div", { style: { fontFamily: "monospace", fontSize: 12.5, fontWeight: 600 } }, (m.size || "").replace(/^size:/i, "")),
                                         React.createElement("div", { style: { fontSize: 11, color: C.tx2 } }, (m.name || "") + (m.temper && m.temper !== "-" ? " · " + m.temper : ""))),
                                     React.createElement(Tag, (() => { const mk = getMakerColor(null, m); return { color: mk.text, bg: mk.bg, brd: mk.border }; })(), m.maker),
-                                    isCur
-                                        ? React.createElement(Tag, { color: C.ok, bg: "rgba(63,185,80,.1)", brd: "rgba(63,185,80,.25)" }, "✅ ใช้อยู่")
-                                        : React.createElement(Btn, { v: "primary", sz: "xs", onClick: async () => { await onLinkMat(pick, m.id); setPick(null); setPickQ(""); } }, "เลือก"));
+                                    isLinked
+                                        ? React.createElement("div", { style: { display: "flex", gap: 5, alignItems: "center" } },
+                                            React.createElement(Tag, { color: C.ok, bg: "rgba(63,185,80,.1)", brd: "rgba(63,185,80,.25)" }, "🔗 ผูกไว้"),
+                                            onUnlinkMat && React.createElement("button", { onClick: async () => { if (!window.confirm("ถอด " + pick.pn + " ออกจาก " + m.maker + " " + (m.size || "").replace(/^size:/i, "") + " ?")) return; await onUnlinkMat(pick, m.id); },
+                                                title: "ถอดการผูกออกจากวัตถุดิบตัวนี้",
+                                                style: { background: "rgba(248,81,73,.12)", border: "1px solid rgba(248,81,73,.4)", borderRadius: 5, color: "#cf222e", cursor: "pointer", padding: "3px 9px", fontSize: 11, fontWeight: 700, fontFamily: "inherit", whiteSpace: "nowrap" } }, "✕ เอาออก"))
+                                        : isCur
+                                            ? React.createElement("div", { style: { display: "flex", gap: 5, alignItems: "center" } },
+                                                React.createElement(Tag, { color: C.tx3 }, "ระบบเดา"),
+                                                React.createElement(Btn, { v: "primary", sz: "xs", onClick: async () => { await onLinkMat(pick, m.id); setPick(null); setPickQ(""); } }, "ผูกจริง"))
+                                            : React.createElement(Btn, { v: "primary", sz: "xs", onClick: async () => { await onLinkMat(pick, m.id); setPick(null); setPickQ(""); } }, "เลือก"));
                             });
                         })())))
             ,
