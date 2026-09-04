@@ -2211,12 +2211,19 @@ function StoreFlow() {
                                 return;
                         }
                         // ลบประวัติ Lot ก่อน (ถ้ามี) ไม่งั้น FK จะบล็อกการลบ material
+                        // แล้วลบประวัติรับของ lot เหล่านั้นด้วย ไม่งั้นจะเหลือประวัติที่ชี้ไปหา material ที่ไม่มีแล้ว
                         if (hasTotalLots) {
+                            const lotNos = [...new Set((lots[m.id] || []).map(l => l.lotNo).filter(Boolean))];
                             const { error: le } = await sb.from('sf_lots').delete().eq('material_id', m.id);
                             if (le) {
                                 toast("❌ ลบประวัติ Lot ไม่สำเร็จ: " + le.message, "err");
                                 return;
                             }
+                            const matName = `${m.name} ${m.size}`;
+                            for (const ln of lotNos) {
+                                await sb.from('sf_recvhist').delete().eq('lot_no', ln).eq('material_name', matName);
+                            }
+                            setRecvHist(h => (h || []).filter(x => !(x.name === matName && lotNos.indexOf(x.lotNo) >= 0)));
                         }
                         const { error: me } = await sb.from('sf_materials').delete().eq('id', m.id);
                         if (me) {
@@ -4675,12 +4682,39 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
     // ดูเฉพาะรายการที่ยังไม่ได้ใส่เลขที่ Invoice (รับของด้วยใบส่งของชั่วคราวไปก่อน)
     const [onlyNoInv, setOnlyNoInv] = useState(false);
     const [filterMat, setFilterMat] = useState("");
+    // เลข Lot เดียวกันอาจอยู่ได้หลาย material (สโตร์ใส่เลขซ้ำ/ใส่วันที่เป็นเลข Lot)
+    // → เวลาแก้ไข/ลบ ต้องหา lot ที่อยู่ใต้ material ของแถวนั้นจริง ๆ ไม่ใช่ตัวแรกที่เจอ
+    const r_matchName = r => String(r && r.name != null ? r.name : "");
+    function findLotOf(matName, maker, lotNo) {
+        const ids = Object.keys(lots || {});
+        const same = ids.filter(mid => {
+            const m = (materials || []).find(x => x.id === mid);
+            if (!m) return false;
+            if ((m.name + " " + m.size) !== matName) return false;
+            return !maker || !m.maker || m.maker === maker;
+        });
+        for (const mid of same) {
+            const l = (lots[mid] || []).find(x => x.lotNo === lotNo);
+            if (l) return { matId: mid, lot: l };
+        }
+        // เผื่อชื่อไม่ตรงเป๊ะ (ข้อมูลเก่า) — ยอมถอยไปหาแบบเดิม แต่เฉพาะเมื่อเจอที่เดียว
+        const hits = [];
+        ids.forEach(mid => { (lots[mid] || []).forEach(l => { if (l.lotNo === lotNo) hits.push({ matId: mid, lot: l }); }); });
+        return hits.length === 1 ? hits[0] : { matId: null, lot: null };
+    }
     const [editRecvIdx, setEditRecvIdx] = useState(null); // index ใน recvHist ที่กำลังแก้ไข
     const [editRecvForm, setEditRecvForm] = useState({});
     function startEditRecv(globalIdx, r) {
         setEditRecvIdx(globalIdx);
-        setEditRecvForm({ date: r.date, po: r.po || "", inv: r.inv || "", name: r.name, maker: r.maker, lotNo: r.lotNo, pcs: r.pcs || "", m: r.m || "", coil: r.coil || "", kgs: r.kgs || "", rohs: r.rohs || "" });
+        // หา material ที่ lot นี้ผูกอยู่จริง เพื่อตั้งค่าเริ่มต้นให้ช่อง "ย้ายไป Material อื่น"
+        const curMat = findLotOf(r.name, r.maker, r.lotNo).matId || "";
+        setEditRecvForm({ date: r.date, po: r.po || "", inv: r.inv || "", name: r.name, maker: r.maker, lotNo: r.lotNo, pcs: r.pcs || "", m: r.m || "", coil: r.coil || "", kgs: r.kgs || "", rohs: r.rohs || "", matId: curMat, _fromMat: curMat });
     }
+    // ป้ายกำกับ material ในกล่องเลือก — ให้อ่านออกว่าเป็นตัวไหนแน่
+    const matLabel = m => [m.type, sizeTxt(m.size), m.maker, m.temper && m.temper !== "-" ? "(" + m.temper + ")" : ""]
+        .filter(Boolean).join("  ·  ");
+    const matOpts = (materials || []).filter(m => m.active !== false)
+        .slice().sort((a, b) => matLabel(a).localeCompare(matLabel(b), "th"));
     async function saveEditRecv(globalIdx) {
         const newPcs = parseFloat(editRecvForm.pcs) || null;
         const newCoil = parseFloat(editRecvForm.coil) || null;
@@ -4692,8 +4726,9 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
         const newLotNo = ((editRecvForm.lotNo || "").trim()) || oldLotNo;
         const newDate = editRecvForm.date || oldR.date;
         // 1) อัพเดท lot ในสต๊อกจริง (เลข lot + จำนวน) + บันทึกลง DB
-        let matchedMatId = null, targetLot = null;
-        Object.keys(lots || {}).forEach(mid => { (lots[mid] || []).forEach(l => { if (!targetLot && l.lotNo === oldLotNo) { matchedMatId = mid; targetLot = l; } }); });
+        // ⚠️ ต้องล็อกให้ตรง material ด้วย — เลข Lot เดียวกันใช้ซ้ำได้หลาย material (เช่น สโตร์ใส่วันที่เป็นเลข Lot)
+        const found = findLotOf(r_matchName(oldR), oldR.maker, oldLotNo);
+        let matchedMatId = found.matId, targetLot = found.lot;
         if (matchedMatId && targetLot) {
             const issuedKgs = (targetLot.kgs || 0) - (targetLot.rem_kgs || 0);
             const issuedPcs = (targetLot.pcs || 0) - (targetLot.rem_pcs || 0);
@@ -4707,9 +4742,30 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
             setLots(ls => ({ ...ls, [matchedMatId]: (ls[matchedMatId] || []).map(l => (l.lotNo === oldLotNo && l._dbId === targetLot._dbId) ? { ...l, ...upd } : l) }));
             if (targetLot._dbId) await updateLot(targetLot._dbId, { lot_no: upd.lotNo, lot_date: upd.date, po: upd.po, kgs: upd.kgs, pcs: upd.pcs, coil: upd.coil, rem_kgs: upd.rem_kgs, rem_pcs: upd.rem_pcs, rem_coil: upd.rem_coil, m: upd.m != null ? upd.m : null, rem_m: upd.rem_m != null ? upd.rem_m : null });
         }
+        // 1.5) ย้าย Material (กรณีรับเข้าผิด size/maker) — ต้องทำก่อนอัพเดทประวัติรับ เพราะชื่อจะเปลี่ยน
+        const toMatId = editRecvForm.matId || "";
+        const movedMat = (toMatId && targetLot && toMatId !== editRecvForm._fromMat) ? (materials || []).find(m => m.id === toMatId) : null;
+        let newName = oldR.name, newMaker = oldR.maker, newTemper = oldR.temper;
+        if (movedMat) {
+            newName = movedMat.name + " " + movedMat.size;
+            newMaker = movedMat.maker;
+            newTemper = movedMat.temper || null;
+            if (targetLot._dbId) {
+                const { error: mv } = await sb.from('sf_lots').update({ material_id: toMatId, maker: movedMat.maker }).eq('id', targetLot._dbId);
+                if (mv) { toast("❌ ย้าย Material ไม่สำเร็จ: " + mv.message, "err"); return; }
+            }
+            const fromId = editRecvForm._fromMat;
+            setLots(ls => {
+                const moving = (ls[fromId] || []).filter(l => l.lotNo === oldLotNo);
+                return { ...ls,
+                    [fromId]: (ls[fromId] || []).filter(l => l.lotNo !== oldLotNo),
+                    [toMatId]: [...(ls[toMatId] || []), ...moving.map(l => ({ ...l, maker: movedMat.maker }))] };
+            });
+            if (logAudit) logAudit("สต๊อก", "ย้าย Material ของใบรับ", `Lot ${newLotNo} : ${oldR.name} → ${newName}`);
+        }
         // 2) อัพเดทประวัติรับ local + DB
-        setRecvHist(h => h.map((x, i) => i === globalIdx ? { ...x, ...editRecvForm, lotNo: newLotNo, pcs: newPcs, coil: newCoil, kgs: newKgs, m: newM } : x));
-        await sb.from("sf_recvhist").update(Object.assign({ receive_date: newDate, po: editRecvForm.po || null, inv: editRecvForm.inv || null, lot_no: newLotNo, pcs: newPcs, coil: newCoil, kgs: newKgs, rohs: editRecvForm.rohs || oldR.rohs }, RECVHIST_HAS_M ? { m: newM } : {})).eq('lot_no', oldLotNo).eq('receive_date', oldR.date);
+        setRecvHist(h => h.map((x, i) => i === globalIdx ? { ...x, ...editRecvForm, name: newName, maker: newMaker, temper: newTemper, lotNo: newLotNo, pcs: newPcs, coil: newCoil, kgs: newKgs, m: newM } : x));
+        await sb.from("sf_recvhist").update(Object.assign({ receive_date: newDate, po: editRecvForm.po || null, inv: editRecvForm.inv || null, lot_no: newLotNo, pcs: newPcs, coil: newCoil, kgs: newKgs, rohs: editRecvForm.rohs || oldR.rohs, material_name: newName, maker: newMaker }, RECVHIST_HAS_M ? { m: newM } : {}, RECVHIST_HAS_TEMPER ? { temper: newTemper } : {})).eq('lot_no', oldLotNo).eq('receive_date', oldR.date).eq('material_name', oldR.name);
         // 3) ถ้าเลข lot เปลี่ยน → ซิงค์ไปประวัติเคลม NG + ประวัติเบิก
         if (newLotNo !== oldLotNo) {
             if (saveNgReturns && ngReturns) {
@@ -4729,31 +4785,38 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
         if (logAudit) logAudit("สต๊อก", "แก้ประวัติรับ/Lot", `${oldR.name || ""} · lot ${oldLotNo}${newLotNo !== oldLotNo ? " → " + newLotNo : ""} · จำนวน ${[newKgs ? newKgs + "K" : null, newCoil ? newCoil + "C" : null, newPcs ? newPcs + "PCS" : null].filter(Boolean).join("/") || "-"}`);
         if (toast) toast("💾 แก้ไขแล้ว — ซิงค์เลข Lot ให้ คลัง / เคลม NG / ประวัติ ตรงกันเรียบร้อย");
     }
-    function deleteRecv(globalIdx, r) {
-        // หา lot ที่ตรงกันใน stock — จับคู่ด้วย lotNo + name/size
-        const matchedMatId = r.matId || (() => {
-            if (!materials || !lots)
-                return null;
-            // หา material ที่มี lot ตรงกับ lotNo นี้
-            return Object.keys(lots).find(mid => (lots[mid] || []).some(l => l.lotNo === r.lotNo));
-        })();
-        const matchedLot = matchedMatId ? (lots[matchedMatId] || []).find(l => l.lotNo === r.lotNo) : null;
+    async function deleteRecv(globalIdx, r) {
+        // หา lot ที่ตรงกันใน stock — ต้องล็อกทั้ง material และ lotNo
+        // (เลข Lot เดียวกันอาจมีในหลาย material ถ้าจับแค่ lotNo จะลบผิดตัว)
+        const hit = findLotOf(r.name, r.maker, r.lotNo);
+        const matchedMatId = hit.matId, matchedLot = hit.lot;
         const hasBeenIssued = matchedLot && ((matchedLot.rem_kgs != null && matchedLot.rem_kgs < (matchedLot.kgs || 0)) || (matchedLot.rem_pcs != null && matchedLot.rem_pcs < (matchedLot.pcs || 0)) || (matchedLot.rem_coil != null && matchedLot.rem_coil < (matchedLot.coil || 0)));
-        const warnMsg = hasBeenIssued
-            ? `⚠️ Lot "${r.lotNo}" นี้ถูกเบิกจ่ายไปบางส่วนแล้ว!
-หากลบจะทำให้ยอด Stock ไม่ถูกต้อง
-
-ยืนยันลบทั้งประวัติรับ AND Lot ออกจาก Stock?`
-            : `ลบรายการรับ Lot "${r.lotNo}" (${r.name})?
-✅ จะลบออกจาก Stock โดยอัตโนมัติด้วย`;
-        if (!window.confirm(warnMsg))
+        // เบิกไปแล้วห้ามลบ — ประวัติการเบิกจะค้างชี้ไปหา Lot ที่ไม่มีอยู่ ยอดจะเพี้ยนถาวร
+        if (hasBeenIssued) {
+            window.alert(`⛔ ลบไม่ได้ — Lot "${r.lotNo}" ถูกเบิกจ่ายออกไปแล้วบางส่วน\n\n` +
+                `ถ้าลบ ประวัติการเบิกจะค้างอยู่โดยไม่มี Lot รองรับ ทำให้ยอดสต๊อกผิดถาวร\n\n` +
+                `ถ้ารับผิดจริง ให้กด ✏️ แก้ไข แทน (เปลี่ยน Material / จำนวน / Lot No. ได้)\n` +
+                `หรือถ้าต้องลบจริงๆ ให้ยกเลิกใบเบิกที่ใช้ Lot นี้ก่อน`);
             return;
-        // ลบ lot ออกจาก stock
-        if (matchedMatId && setLots) {
-            setLots(ls => ({ ...ls, [matchedMatId]: (ls[matchedMatId] || []).filter(l => l.lotNo !== r.lotNo) }));
         }
-        // ลบประวัติรับ
+        if (!window.confirm(`ลบรายการรับ Lot "${r.lotNo}" (${r.name})?\n✅ จะลบ Lot ออกจาก Stock ให้ด้วย`))
+            return;
+        // ลบ lot ออกจาก stock — ต้องลบใน DB ด้วย ไม่งั้นตัวรีเฟรชอัตโนมัติจะดึงกลับมา
+        if (matchedMatId && matchedLot && setLots) {
+            if (matchedLot._dbId) {
+                const { error } = await sb.from('sf_lots').delete().eq('id', matchedLot._dbId);
+                if (error) { toast("❌ ลบ Lot ไม่สำเร็จ: " + error.message, "err"); return; }
+            }
+            setLots(ls => ({ ...ls, [matchedMatId]: (ls[matchedMatId] || []).filter(l => !(l.lotNo === r.lotNo && l._dbId === matchedLot._dbId)) }));
+        }
+        // ลบประวัติรับ (DB ก่อน แล้วค่อยเอาออกจากหน้าจอ)
+        // ต้องระบุ material_name ด้วย ไม่งั้นจะลบแถวของ material อื่นที่บังเอิญใช้เลข Lot เดียวกันไปหมด
+        const { error: he } = await sb.from('sf_recvhist').delete()
+            .eq('lot_no', r.lotNo).eq('receive_date', r.date).eq('material_name', r.name);
+        if (he) { toast("❌ ลบประวัติรับไม่สำเร็จ: " + he.message, "err"); return; }
         setRecvHist(h => h.filter((_, i) => i !== globalIdx));
+        if (logAudit) logAudit("สต๊อก", "ลบรายการรับ", `${r.name} · Lot ${r.lotNo} · ${fmtDate(r.date)}`);
+        toast(`🗑️ ลบรายการรับ Lot "${r.lotNo}" แล้ว`, "warn");
     }
     // สร้าง month options จากข้อมูลจริง
     const allDates = [...issueHist, ...(recvHist || [])].map(r => r.date).filter(Boolean);
@@ -4924,6 +4987,15 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                                         React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: C.acc2, marginBottom: 8 } },
                                             "\u270F\uFE0F \u0E41\u0E01\u0E49\u0E44\u0E02\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E23\u0E31\u0E1A \u2014 Lot: ",
                                             r.lotNo),
+                                        // เลือก Material ใหม่ — ใช้ตอนรับเข้าแล้วเลือก size/maker ผิด
+                                        React.createElement("div", { style: { marginBottom: 10 } },
+                                            React.createElement("div", { style: { fontSize: 9, color: C.tx2, marginBottom: 2 } }, "Material (ถ้าเลือก Size / Maker ผิด เปลี่ยนตรงนี้)"),
+                                            React.createElement("select", { value: editRecvForm.matId || "", onChange: e => setEditRecvForm(f => ({ ...f, matId: e.target.value })),
+                                                style: { background: C.bg, border: "1px solid " + (editRecvForm.matId !== editRecvForm._fromMat ? C.warn : C.brd), borderRadius: 5, padding: "5px 8px", color: C.tx, fontFamily: "inherit", fontSize: 11, outline: "none", width: "100%", maxWidth: 620 } },
+                                                !editRecvForm._fromMat && React.createElement("option", { value: "" }, "— ไม่พบ Lot ในคลัง เปลี่ยน Material ไม่ได้ —"),
+                                                matOpts.map(m => React.createElement("option", { key: m.id, value: m.id }, matLabel(m)))),
+                                            editRecvForm.matId !== editRecvForm._fromMat && React.createElement("div", { style: { fontSize: 10, color: C.warn, fontWeight: 700, marginTop: 3 } },
+                                                "⚠️ จะย้าย Lot นี้ทั้งก้อนไปอยู่ใต้ Material ตัวใหม่ — ยอดจะหายจากตัวเดิมไปเพิ่มที่ตัวใหม่")),
                                         React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" } },
                                             [["วันที่", "date", "date", 80], ["PO No.", "po", "text", 90], ["Invoice", "inv", "text", 90], ["Lot No. *", "lotNo", "text", 120], ["PCS", "pcs", "number", 70], ["COIL", "coil", "number", 70], ["KGS", "kgs", "number", 80], ["M (เมตร)", "m", "number", 70]].map(([lbl, field, type, w]) => (React.createElement("div", { key: field },
                                                 React.createElement("div", { style: { fontSize: 9, color: C.tx2, marginBottom: 2 } }, lbl),
