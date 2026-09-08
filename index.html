@@ -933,6 +933,8 @@ function LotDetailModal({ open, onClose, mat, lots, setLots, master, onNG, logAu
                             ...uCols.map(c => "รับ " + c[1]), ...uCols.map(c => "คงเหลือ " + c[1]), "สถานะ", ...(setLots ? ["แก้ไข"] : [])].map(h => (React.createElement("th", { key: h, style: { padding: "9px 14px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "#57606a", textTransform: "uppercase", borderBottom: "1px solid #d0d7de", whiteSpace: "nowrap" } }, h))))),
                     React.createElement("tbody", null, ml.map((lot, i) => {
                         const empty = (lot.rem_kgs || 0) === 0 && (lot.rem_pcs || 0) === 0 && (lot.rem_coil || 0) === 0 && (lot.rem_m || 0) === 0;
+                        // "รับมา 0" ไม่เหมือน "ใช้หมด" — ตัวแรกคือปรับยอดเป็น 0 ไม่เคยมีของ ตัวหลังคือเบิกออกไปจนหมด
+                        const gotNothing = (lot.kgs || 0) === 0 && (lot.pcs || 0) === 0 && (lot.coil || 0) === 0 && (lot.m || 0) === 0;
                         const fi = ml.findIndex(l => (l.rem_kgs || 0) > 0 || (l.rem_pcs || 0) > 0 || (l.rem_coil || 0) > 0 || (l.rem_m || 0) > 0);
                         const isNext = !empty && i === fi;
                         return React.createElement(React.Fragment, { key: i }, React.createElement("tr", { style: { background: isNext ? "rgba(9,105,218,.06)" : "transparent", opacity: empty ? .3 : 1 } },
@@ -945,7 +947,14 @@ function LotDetailModal({ open, onClose, mat, lots, setLots, master, onNG, logAu
                             // Invoice ดึงจากประวัติการรับ (sf_lots ยังไม่มีช่อง inv) — Lot เดียวกันคนละใบจะได้แยกออก
                             (() => {
                                 const _k = v => String(v == null ? "" : v).trim().toLowerCase();
-                                const r = (recvHist || []).find(x => _k(x.lotNo) === _k(lot.lotNo) && _k(x.name) === _k(`${mat.name} ${mat.size}`)) || {};
+                                // Lot เลขเดียวกันอาจรับหลายใบ (คนละ PO/Invoice) → ต้องแยกด้วย PO และวันที่ด้วย
+                                // ไม่งั้นทุกแถวจะโชว์ Invoice ของใบแรกเหมือนกันหมด
+                                const cand = (recvHist || []).filter(x => _k(x.lotNo) === _k(lot.lotNo) && _k(x.name) === _k(`${mat.name} ${mat.size}`));
+                                const r = (cand.length > 1
+                                    ? (cand.find(x => _k(x.po) === _k(lot.po) && _k(x.date) === _k(lot.date))
+                                        || cand.find(x => _k(x.po) === _k(lot.po))
+                                        || cand.find(x => _k(x.date) === _k(lot.date)))
+                                    : cand[0]) || {};
                                 return React.createElement("td", { style: { padding: "11px 14px", fontFamily: "monospace", fontSize: 11, color: r.inv ? "#57606a" : "#8c959f", borderBottom: "1px solid rgba(208,215,222,.7)", whiteSpace: "nowrap" } }, r.inv || "-");
                             })(),
                             (() => { const lp = lotPriceOf(lotPriceMap, mat.id, lot.lotNo); return React.createElement("td", { style: { padding: "11px 14px", fontFamily: "monospace", fontSize: 12, fontWeight: lp ? 700 : 400, color: lp ? "#1a7f37" : "#8c959f", borderBottom: "1px solid rgba(208,215,222,.7)", whiteSpace: "nowrap" } }, lp ? "฿ " + fmtQty(lp.p) + (lp.u ? " /" + priceUnitLabel(lp.u) : "") : "-"); })(),
@@ -957,7 +966,7 @@ function LotDetailModal({ open, onClose, mat, lots, setLots, master, onNG, logAu
                                 const v = k === "kgs" ? lot.rem_kgs : k === "pcs" ? lot.rem_pcs : k === "coil" ? lot.rem_coil : lot.rem_m;
                                 return React.createElement("td", { key: "rem-" + k, style: { padding: "11px 14px", fontFamily: "monospace", fontWeight: isNext ? 800 : 600, color: isNext && (v || 0) > 0 ? "#0969da" : "#1f2328", borderBottom: "1px solid rgba(208,215,222,.7)" } }, v != null ? fmtQty(v, c[2]) : "-");
                             }),
-                            React.createElement("td", { style: { padding: "11px 14px", borderBottom: "1px solid rgba(208,215,222,.7)" } }, empty ? React.createElement(Tag, { color: "#8c959f" }, "\u0E43\u0E0A\u0E49\u0E2B\u0E21\u0E14") : isNext ? React.createElement(Tag, { color: "#1a7f37", bg: "rgba(63,185,80,.1)", brd: "rgba(63,185,80,.2)" }, "\u0E01\u0E33\u0E25\u0E31\u0E07\u0E43\u0E0A\u0E49") : React.createElement(Tag, { color: "#0969da", bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, "\u0E23\u0E2D\u0E04\u0E34\u0E27")),
+                            React.createElement("td", { style: { padding: "11px 14px", borderBottom: "1px solid rgba(208,215,222,.7)" } }, gotNothing ? React.createElement(Tag, { color: "#9a6700", bg: "rgba(210,153,34,.12)", brd: "rgba(210,153,34,.4)" }, "\u0E22\u0E01\u0E22\u0E2D\u0E14\u0E40\u0E1B\u0E47\u0E19 0") : empty ? React.createElement(Tag, { color: "#8c959f" }, "\u0E43\u0E0A\u0E49\u0E2B\u0E21\u0E14") : isNext ? React.createElement(Tag, { color: "#1a7f37", bg: "rgba(63,185,80,.1)", brd: "rgba(63,185,80,.2)" }, "\u0E01\u0E33\u0E25\u0E31\u0E07\u0E43\u0E0A\u0E49") : React.createElement(Tag, { color: "#0969da", bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, "\u0E23\u0E2D\u0E04\u0E34\u0E27")),
                             setLots && React.createElement("td", { style: { padding: "11px 14px", borderBottom: "1px solid rgba(208,215,222,.7)", whiteSpace: "nowrap" } },
                                 React.createElement("div", { style: { display: "flex", gap: 4 } },
                                     !empty && onNG && React.createElement("button", { onClick: () => onNG(mat, lot), title: "คืน/เคลม NG lot นี้", style: { background: "rgba(154,103,0,.12)", border: "1px solid rgba(154,103,0,.4)", borderRadius: 4, color: "#9a6700", cursor: "pointer", padding: "2px 8px", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" } }, "🔄 NG"),
@@ -1355,6 +1364,7 @@ function StoreFlow() {
                 RECVHIST_HAS_TEMPER = (recvData || []).some(h => Object.prototype.hasOwnProperty.call(h, 'temper'));
                 RECVHIST_HAS_M = (recvData || []).some(h => Object.prototype.hasOwnProperty.call(h, 'm'));
                 setRecvHist((recvData || []).map(h => ({
+                    _dbId: h.id,          // ยึด id จริงไว้ จะได้แก้/ลบถูกแถวแม้เลข Lot จะซ้ำกัน
                     date: h.receive_date,
                     po: h.po,
                     inv: h.inv,
@@ -1418,6 +1428,7 @@ function StoreFlow() {
     const [ngForm, setNgForm] = useState({});
     const [noStkItems, setNoStkItems] = useState([]);
     const [selectedLots, setSelectedLots] = useState({});
+    const issuingRef = React.useRef(false); // กันกดปุ่มจ่ายรัวจนตัดสต๊อกซ้ำ
     // เลข Lot จริงที่สโตร์จดมาจากของตอนหยิบ (ใช้ทับเลข Lot ในระบบตอนลงประวัติเบิก)
     const [realLots, setRealLots] = useState({});
     // ── Auto-refresh: ดึงสต๊อก/ใบเบิก/วัตถุดิบล่าสุดทุก 20 วิ ให้หลายคนเห็นตรงกัน
@@ -1647,6 +1658,27 @@ function StoreFlow() {
     const r = requests.find(x => x.id === id);
     if (!r) return;
 
+    // 0. กันจ่ายซ้ำใบเดิม — เช็กสถานะล่าสุดจาก DB ก่อนเสมอ
+    // (กดปุ่มรัว หรือสโตร์ 2 คนกดใบเดียวกันพร้อมกัน จะตัดสต๊อกซ้ำ 2 รอบ)
+    if (issuingRef.current) return;
+    issuingRef.current = true;
+    try {
+        const { data: fresh } = await sb.from('sf_requests').select('id,status,issued_by').eq('id', id);
+        const self = fresh && fresh[0];
+        if (self && self.status === "issued") {
+            setRequests(rs => rs.map(x => x.id === id ? { ...x, status: "issued", issuedBy: self.issued_by } : x));
+            toast(`⛔ ใบ ${id} ถูกจ่ายไปแล้ว${self.issued_by ? " โดย " + self.issued_by : ""} — จ่ายซ้ำไม่ได้`, "err");
+            setModal(null); setPendingIsId(null); issuingRef.current = false;
+            return;
+        }
+        if (self && (self.status === "revised" || self.status === "rejected" || self.status === "cancelled")) {
+            toast(`⛔ ใบ ${id} อยู่ในสถานะ ${self.status} — จ่ายไม่ได้`, "err");
+            setModal(null); setPendingIsId(null); issuingRef.current = false;
+            return;
+        }
+    } catch (e) { console.warn('issue precheck failed:', e); }
+    try {
+
     // 1. Check Stock First
     const noStk = r.items.filter(it => {
         const ml = lots[it.matId] || [];
@@ -1658,6 +1690,37 @@ function StoreFlow() {
         setNoStkItems(noStk);
         setModal("nostock");
         return;
+    }
+
+    // 1.5 ดึงสต๊อกล่าสุดจาก DB ก่อนตัด — กันกรณีสโตร์ 2 คนจ่ายพร้อมกัน
+    // (ตัวรีเฟรชอัตโนมัติหยุดทำงานระหว่างเปิดหน้าต่างจ่าย ข้อมูลบนจออาจเก่า)
+    let liveLots = lots;
+    try { const fresh = await loadLots(); if (fresh && Object.keys(fresh).length) { liveLots = fresh; setLots(fresh); } }
+    catch (e) { console.error("โหลดสต๊อกล่าสุดไม่สำเร็จ:", e); }
+
+    // 1.6 เช็คว่าของ "พอ" จริงไหม — ของเดิมเช็คแค่ว่ามีของอยู่บ้าง (>0) เท่านั้น
+    // ถ้าขอ 500 แต่มี 100 จะจ่าย 100 แล้วปิดใบเป็น "จ่ายแล้ว" เงียบ ๆ ยอดบนกระดาษกับระบบจะไม่ตรงกัน
+    const availOfLot = (l, u) => {
+        if (u === "M" || (l.rem_m != null && l.rem_pcs == null && l.rem_kgs == null && l.rem_coil == null)) return l.rem_m || 0;
+        if (u === "COIL" || (l.rem_coil != null && l.rem_pcs == null && l.rem_kgs == null)) return l.rem_coil || 0;
+        if (u === "KGS" && l.rem_kgs != null) return l.rem_kgs || 0;
+        return l.rem_pcs || 0;
+    };
+    const short = [];
+    r.items.forEach(it => {
+        const mi = materials.find(x => x.id === it.matId);
+        const u = it.unit || (mi && mi.unit) || "PCS";
+        const have = (liveLots[it.matId] || []).reduce((s, l) => s + availOfLot(l, u), 0);
+        const need = parseFloat(it.qty) || 0;
+        if (need - have > 0.001) short.push({ name: it.name, maker: it.maker, need, have, u });
+    });
+    if (short.length > 0) {
+        const txt = short.map(s => "  • " + s.name + " (" + s.maker + ")\n      ขอเบิก " + fmtQty(s.need, 2)
+            + " " + s.u + "  แต่มีอยู่ " + fmtQty(s.have, 2) + " " + s.u
+            + "  → ขาด " + fmtQty(s.need - s.have, 2) + " " + s.u).join("\n");
+        if (!window.confirm("⚠️ ของในคลังไม่พอตามใบเบิก\n\n" + txt
+            + "\n\nถ้ากด OK ระบบจะจ่ายเท่าที่มี แล้วปิดใบนี้เป็น \"จ่ายแล้ว\"\n"
+            + "(ยอดบนใบเบิกกับที่จ่ายจริงจะไม่เท่ากัน)\n\nถ้าจะแก้จำนวนหรือรอรับของก่อน กด Cancel")) return;
     }
 
     const today = new Date().toISOString().split("T")[0];
@@ -1681,7 +1744,7 @@ function StoreFlow() {
         const chosenLots = (selectedLots && selectedLots[selKey]) || [];
 
         // Logic for updating Lots: คำนวณยอดตัด แล้วบันทึกกลับเข้า DB (sf_lots)
-        const ml = [...(workingLots[item.matId] || lots[item.matId] || [])];
+        const ml = [...(workingLots[item.matId] || liveLots[item.matId] || lots[item.matId] || [])];
         const matInfo = materials.find(x => x.id === item.matId);
         const unit = item.unit || matInfo?.unit || "PCS";
         let rem = parseFloat(item.qty) || 0;
@@ -1810,6 +1873,7 @@ function StoreFlow() {
     setSelectedLots({});
     setRealLots({});
     setTimeout(() => toast("📧 ส่ง Email แจ้งฝ่ายผลิตแล้ว", "info"), 600);
+    } finally { issuingRef.current = false; }
 }
     // ── RECEIVE ──
     async function submitRecv() {
@@ -1877,7 +1941,10 @@ function StoreFlow() {
                 if (!ex) return;
                 const r = recvOf(l.lotNo);
                 const samePo = _lk(ex.po) === _lk(po);
-                const sameInv = _lk(r.inv) === _lk(inv);
+                // ถ้ายังไม่มี Invoice ทั้งสองใบ (รับด้วยใบส่งของชั่วคราว ค่อยคีย์ Invoice ทีหลัง)
+                // จะสรุปว่าซ้ำไม่ได้ ต้องให้ถามยืนยันแทนการบล็อก ไม่งั้นรับของใบที่ 2 ไม่ได้เลย
+                const bothNoInv = _lk(r.inv) === "" && _lk(inv) === "";
+                const sameInv = !bothNoInv && _lk(r.inv) === _lk(inv);
                 if (samePo && sameInv) hardDup.push(l.lotNo);
                 else softDup.push({ lotNo: l.lotNo, oldPo: ex.po || "-", oldInv: r.inv || "-" });
             });
@@ -1890,7 +1957,9 @@ function StoreFlow() {
                     + "\n      ครั้งนี้: PO " + (po || "-") + " / INV " + (inv || "-")).join("\n");
                 if (!window.confirm("Lot No. นี้มีอยู่ในคลังแล้ว แต่ PO/Invoice ไม่เหมือนกัน\n"
                     + (g.mat.size || "").replace(/^size:/i, "") + "\n\n" + txt
-                    + "\n\nถ้าเป็นของคนละชุดที่ maker ส่งมาด้วยเลข Lot เดิม กด OK เพื่อรับเข้าเพิ่ม\nถ้ากรอกผิด กด Cancel")) return;
+                    + "\n\nถ้าเป็นของคนละใบส่งของ (เช่นใส่วันที่รับเป็นเลข Lot แล้ววันนั้นรับหลายใบ) กด OK เพื่อรับเข้าเพิ่ม"
+                    + "\nอย่าลืมคีย์เลขที่ Invoice ย้อนหลังเมื่อได้รับเอกสาร จะได้แยกใบกันออก"
+                    + "\nถ้ากรอกผิด กด Cancel")) return;
             }
             // ซ้ำกันเองในใบรับใบนี้ (size เดียวกัน Lot No. เดียวกัน 2 บรรทัด)
             const seen = {};
@@ -4096,8 +4165,22 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
             const targetQty = parseFloat(it.qty) || 0;
             const isComplete = Math.abs(totalSel - targetQty) < 0.01;
             const isOver = totalSel > targetQty;
+            // ของในคลังพอตามที่ขอเบิกไหม — ต้องเห็นก่อนกดยืนยัน ไม่ใช่รู้ทีหลังตอนยอดไม่ตรง
+            const _u = it.unit || "PCS";
+            const _availOf = l => {
+                if (_u === "M" || (l.rem_m != null && l.rem_pcs == null && l.rem_kgs == null && l.rem_coil == null)) return l.rem_m || 0;
+                if (_u === "COIL" || (l.rem_coil != null && l.rem_pcs == null && l.rem_kgs == null)) return l.rem_coil || 0;
+                if (_u === "KGS" && l.rem_kgs != null) return l.rem_kgs || 0;
+                return l.rem_pcs || 0;
+            };
+            const haveTotal = avail.reduce((s, l) => s + _availOf(l), 0);
+            const lack = targetQty - haveTotal;
             const dateGroups = [...new Set(avail.map(l => l.date || "ไม่ระบุ"))];
-            return React.createElement("div", { key: i, style: { background: C.sur2, border: `1px solid ${C.brd}`, borderRadius: 8, padding: 12, marginBottom: 10 } },
+            return React.createElement("div", { key: i, style: { background: C.sur2, border: "1px solid " + (lack > 0.001 ? C.err : C.brd), borderRadius: 8, padding: 12, marginBottom: 10 } },
+                lack > 0.001 && React.createElement("div", { style: { background: "rgba(248,81,73,.1)", border: "1px solid rgba(248,81,73,.45)", borderRadius: 7, padding: "7px 11px", fontSize: 12, fontWeight: 700, color: C.err, marginBottom: 9 } },
+                    "⛔ ของไม่พอ — ขอเบิก " + fmtQty(targetQty, 2) + " " + _u
+                    + " แต่มีอยู่ " + fmtQty(haveTotal, 2) + " " + _u
+                    + " (ขาด " + fmtQty(lack, 2) + " " + _u + ")"),
                 React.createElement("div", { style: { fontWeight: 700, marginBottom: 4, fontSize: 14 } },
                     it.name,
                     " ",
@@ -4304,10 +4387,14 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                             React.createElement("td", { style: { padding: "5px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderBottom: C.brd2 } },
                                 React.createElement(Tag, { color: !ok ? C.err : low ? C.warn : C.ok, bg: !ok ? "rgba(248,81,73,.1)" : low ? "rgba(210,153,34,.1)" : "rgba(63,185,80,.1)", brd: !ok ? "rgba(248,81,73,.2)" : low ? "rgba(210,153,34,.2)" : "rgba(63,185,80,.2)" }, !ok ? "❌ หมด" : low ? "⚠️ ต่ำ" : "✅ ปกติ")),
                             React.createElement("td", { style: { padding: "5px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderBottom: C.brd2 } },
-                                React.createElement(Btn, { v: "accent", sz: "xs", onClick: () => onLotDetail(m), disabled: !(lots[m.id] || []).length },
-                                    "\uD83D\uDD22 ",
-                                    (lots[m.id] || []).length || 0,
-                                    " Lot")));
+                                (() => {
+                                    const ml = lots[m.id] || [];
+                                    // \u0E19\u0E31\u0E1A\u0E40\u0E09\u0E1E\u0E32\u0E30 lot \u0E17\u0E35\u0E48\u0E23\u0E31\u0E1A\u0E02\u0E2D\u0E07\u0E40\u0E02\u0E49\u0E32\u0E21\u0E32\u0E08\u0E23\u0E34\u0E07 \u2014 lot \u0E17\u0E35\u0E48\u0E1B\u0E23\u0E31\u0E1A\u0E22\u0E2D\u0E14\u0E40\u0E1B\u0E47\u0E19 0 \u0E44\u0E21\u0E48\u0E04\u0E27\u0E23\u0E17\u0E33\u0E43\u0E2B\u0E49\u0E40\u0E02\u0E49\u0E32\u0E43\u0E08\u0E1C\u0E34\u0E14\u0E27\u0E48\u0E32\u0E21\u0E35\u0E02\u0E2D\u0E07
+                                    const real = ml.filter(l => (l.kgs || 0) > 0 || (l.pcs || 0) > 0 || (l.coil || 0) > 0 || (l.m || 0) > 0).length;
+                                    const zeros = ml.length - real;
+                                    return React.createElement(Btn, { v: real ? "accent" : "ghost", sz: "xs", onClick: () => onLotDetail(m), disabled: !ml.length },
+                                        "\uD83D\uDD22 ", real, " Lot", (!real && zeros) ? " (\u0E22\u0E01\u0E22\u0E2D\u0E14 0)" : "");
+                                })()));
                     }))))));
 }
 // ════════════════════════════════════════════════════════════
@@ -4685,7 +4772,19 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
     // เลข Lot เดียวกันอาจอยู่ได้หลาย material (สโตร์ใส่เลขซ้ำ/ใส่วันที่เป็นเลข Lot)
     // → เวลาแก้ไข/ลบ ต้องหา lot ที่อยู่ใต้ material ของแถวนั้นจริง ๆ ไม่ใช่ตัวแรกที่เจอ
     const r_matchName = r => String(r && r.name != null ? r.name : "");
-    function findLotOf(matName, maker, lotNo) {
+    // r = แถวประวัติรับ ใช้ PO/วันที่ช่วยแยกเมื่อ material เดียวกันมี lot เลขซ้ำ (รับหลายใบวันเดียวกัน)
+    function findLotOf(matName, maker, lotNo, r) {
+        const _k = v => String(v == null ? "" : v).trim().toLowerCase();
+        const pick = arr => {
+            if (arr.length <= 1) return arr[0] || null;
+            if (r) {
+                return arr.find(x => _k(x.lot.po) === _k(r.po) && _k(x.lot.date) === _k(r.date))
+                    || arr.find(x => _k(x.lot.po) === _k(r.po))
+                    || arr.find(x => _k(x.lot.date) === _k(r.date))
+                    || arr[0];
+            }
+            return arr[0];
+        };
         const ids = Object.keys(lots || {});
         const same = ids.filter(mid => {
             const m = (materials || []).find(x => x.id === mid);
@@ -4693,11 +4792,10 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
             if ((m.name + " " + m.size) !== matName) return false;
             return !maker || !m.maker || m.maker === maker;
         });
-        for (const mid of same) {
-            const l = (lots[mid] || []).find(x => x.lotNo === lotNo);
-            if (l) return { matId: mid, lot: l };
-        }
-        // เผื่อชื่อไม่ตรงเป๊ะ (ข้อมูลเก่า) — ยอมถอยไปหาแบบเดิม แต่เฉพาะเมื่อเจอที่เดียว
+        const inMat = [];
+        same.forEach(mid => { (lots[mid] || []).forEach(l => { if (l.lotNo === lotNo) inMat.push({ matId: mid, lot: l }); }); });
+        if (inMat.length) return pick(inMat);
+        // เผื่อชื่อไม่ตรงเป๊ะ (ข้อมูลเก่า) — ถอยไปหาทั้งระบบ แต่ต้องแยกออกได้แน่ ๆ เท่านั้น
         const hits = [];
         ids.forEach(mid => { (lots[mid] || []).forEach(l => { if (l.lotNo === lotNo) hits.push({ matId: mid, lot: l }); }); });
         return hits.length === 1 ? hits[0] : { matId: null, lot: null };
@@ -4707,7 +4805,7 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
     function startEditRecv(globalIdx, r) {
         setEditRecvIdx(globalIdx);
         // หา material ที่ lot นี้ผูกอยู่จริง เพื่อตั้งค่าเริ่มต้นให้ช่อง "ย้ายไป Material อื่น"
-        const curMat = findLotOf(r.name, r.maker, r.lotNo).matId || "";
+        const curMat = findLotOf(r.name, r.maker, r.lotNo, r).matId || "";
         setEditRecvForm({ date: r.date, po: r.po || "", inv: r.inv || "", name: r.name, maker: r.maker, lotNo: r.lotNo, pcs: r.pcs || "", m: r.m || "", coil: r.coil || "", kgs: r.kgs || "", rohs: r.rohs || "", matId: curMat, _fromMat: curMat });
     }
     // ป้ายกำกับ material ในกล่องเลือก — ให้อ่านออกว่าเป็นตัวไหนแน่
@@ -4716,10 +4814,13 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
     const matOpts = (materials || []).filter(m => m.active !== false)
         .slice().sort((a, b) => matLabel(a).localeCompare(matLabel(b), "th"));
     async function saveEditRecv(globalIdx) {
-        const newPcs = parseFloat(editRecvForm.pcs) || null;
-        const newCoil = parseFloat(editRecvForm.coil) || null;
-        const newKgs = parseFloat(editRecvForm.kgs) || null;
-        const newM = parseFloat(editRecvForm.m) || null;
+        // ช่องว่าง = ตั้งใจล้างค่า ต้องล้างที่ Lot ด้วย ไม่ใช่เก็บค่าเดิมไว้
+        // (ของเดิมใช้ `parseFloat(x) || null` ทำให้ล้าง KGS ในใบรับแล้ว แต่คลังยังโชว์ KGS เดิมค้างอยู่)
+        const numOrNull = v => { const s = String(v == null ? "" : v).trim(); if (s === "") return null; const n = parseFloat(s); return isFinite(n) ? n : null; };
+        const newPcs = numOrNull(editRecvForm.pcs);
+        const newCoil = numOrNull(editRecvForm.coil);
+        const newKgs = numOrNull(editRecvForm.kgs);
+        const newM = numOrNull(editRecvForm.m);
         const oldR = (recvHist || [])[globalIdx];
         if (!oldR) return;
         const oldLotNo = oldR.lotNo;
@@ -4727,18 +4828,20 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
         const newDate = editRecvForm.date || oldR.date;
         // 1) อัพเดท lot ในสต๊อกจริง (เลข lot + จำนวน) + บันทึกลง DB
         // ⚠️ ต้องล็อกให้ตรง material ด้วย — เลข Lot เดียวกันใช้ซ้ำได้หลาย material (เช่น สโตร์ใส่วันที่เป็นเลข Lot)
-        const found = findLotOf(r_matchName(oldR), oldR.maker, oldLotNo);
+        const found = findLotOf(r_matchName(oldR), oldR.maker, oldLotNo, oldR);
         let matchedMatId = found.matId, targetLot = found.lot;
         if (matchedMatId && targetLot) {
             const issuedKgs = (targetLot.kgs || 0) - (targetLot.rem_kgs || 0);
             const issuedPcs = (targetLot.pcs || 0) - (targetLot.rem_pcs || 0);
             const issuedCoil = (targetLot.coil || 0) - (targetLot.rem_coil || 0);
             const issuedM = (targetLot.m || 0) - (targetLot.rem_m != null ? targetLot.rem_m : (targetLot.m || 0));
+            // ฟอร์มมีครบทั้ง 4 หน่วยเสมอ → ยึดค่าจากฟอร์มตรง ๆ ทั้งช่องที่กรอกและช่องที่ล้าง
             const upd = { lotNo: newLotNo, date: newDate, po: (editRecvForm.po != null ? editRecvForm.po : targetLot.po),
-                kgs: newKgs != null ? newKgs : targetLot.kgs, pcs: newPcs != null ? newPcs : targetLot.pcs, coil: newCoil != null ? newCoil : targetLot.coil, m: newM != null ? newM : targetLot.m,
-                rem_kgs: newKgs != null ? Math.max(0, newKgs - issuedKgs) : targetLot.rem_kgs,
-                rem_pcs: newPcs != null ? Math.max(0, newPcs - issuedPcs) : targetLot.rem_pcs,
-                rem_coil: newCoil != null ? Math.max(0, newCoil - issuedCoil) : targetLot.rem_coil , rem_m: newM != null ? Math.max(0, newM - issuedM) : targetLot.rem_m };
+                kgs: newKgs, pcs: newPcs, coil: newCoil, m: newM,
+                rem_kgs: newKgs == null ? null : Math.max(0, newKgs - issuedKgs),
+                rem_pcs: newPcs == null ? null : Math.max(0, newPcs - issuedPcs),
+                rem_coil: newCoil == null ? null : Math.max(0, newCoil - issuedCoil),
+                rem_m: newM == null ? null : Math.max(0, newM - issuedM) };
             setLots(ls => ({ ...ls, [matchedMatId]: (ls[matchedMatId] || []).map(l => (l.lotNo === oldLotNo && l._dbId === targetLot._dbId) ? { ...l, ...upd } : l) }));
             if (targetLot._dbId) await updateLot(targetLot._dbId, { lot_no: upd.lotNo, lot_date: upd.date, po: upd.po, kgs: upd.kgs, pcs: upd.pcs, coil: upd.coil, rem_kgs: upd.rem_kgs, rem_pcs: upd.rem_pcs, rem_coil: upd.rem_coil, m: upd.m != null ? upd.m : null, rem_m: upd.rem_m != null ? upd.rem_m : null });
         }
@@ -4765,7 +4868,10 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
         }
         // 2) อัพเดทประวัติรับ local + DB
         setRecvHist(h => h.map((x, i) => i === globalIdx ? { ...x, ...editRecvForm, name: newName, maker: newMaker, temper: newTemper, lotNo: newLotNo, pcs: newPcs, coil: newCoil, kgs: newKgs, m: newM } : x));
-        await sb.from("sf_recvhist").update(Object.assign({ receive_date: newDate, po: editRecvForm.po || null, inv: editRecvForm.inv || null, lot_no: newLotNo, pcs: newPcs, coil: newCoil, kgs: newKgs, rohs: editRecvForm.rohs || oldR.rohs, material_name: newName, maker: newMaker }, RECVHIST_HAS_M ? { m: newM } : {}, RECVHIST_HAS_TEMPER ? { temper: newTemper } : {})).eq('lot_no', oldLotNo).eq('receive_date', oldR.date).eq('material_name', oldR.name);
+        const recvPatch = Object.assign({ receive_date: newDate, po: editRecvForm.po || null, inv: editRecvForm.inv || null, lot_no: newLotNo, pcs: newPcs, coil: newCoil, kgs: newKgs, rohs: editRecvForm.rohs || oldR.rohs, material_name: newName, maker: newMaker }, RECVHIST_HAS_M ? { m: newM } : {}, RECVHIST_HAS_TEMPER ? { temper: newTemper } : {});
+        // ยึด id ของแถวถ้ามี — กันแก้โดนใบอื่นที่ใช้เลข Lot เดียวกัน (รับหลายใบวันเดียวกัน)
+        if (oldR._dbId) await sb.from("sf_recvhist").update(recvPatch).eq('id', oldR._dbId);
+        else await sb.from("sf_recvhist").update(recvPatch).eq('lot_no', oldLotNo).eq('receive_date', oldR.date).eq('material_name', oldR.name);
         // 3) ถ้าเลข lot เปลี่ยน → ซิงค์ไปประวัติเคลม NG + ประวัติเบิก
         if (newLotNo !== oldLotNo) {
             if (saveNgReturns && ngReturns) {
@@ -4788,7 +4894,7 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
     async function deleteRecv(globalIdx, r) {
         // หา lot ที่ตรงกันใน stock — ต้องล็อกทั้ง material และ lotNo
         // (เลข Lot เดียวกันอาจมีในหลาย material ถ้าจับแค่ lotNo จะลบผิดตัว)
-        const hit = findLotOf(r.name, r.maker, r.lotNo);
+        const hit = findLotOf(r.name, r.maker, r.lotNo, r);
         const matchedMatId = hit.matId, matchedLot = hit.lot;
         const hasBeenIssued = matchedLot && ((matchedLot.rem_kgs != null && matchedLot.rem_kgs < (matchedLot.kgs || 0)) || (matchedLot.rem_pcs != null && matchedLot.rem_pcs < (matchedLot.pcs || 0)) || (matchedLot.rem_coil != null && matchedLot.rem_coil < (matchedLot.coil || 0)));
         // เบิกไปแล้วห้ามลบ — ประวัติการเบิกจะค้างชี้ไปหา Lot ที่ไม่มีอยู่ ยอดจะเพี้ยนถาวร
@@ -4810,9 +4916,11 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
             setLots(ls => ({ ...ls, [matchedMatId]: (ls[matchedMatId] || []).filter(l => !(l.lotNo === r.lotNo && l._dbId === matchedLot._dbId)) }));
         }
         // ลบประวัติรับ (DB ก่อน แล้วค่อยเอาออกจากหน้าจอ)
-        // ต้องระบุ material_name ด้วย ไม่งั้นจะลบแถวของ material อื่นที่บังเอิญใช้เลข Lot เดียวกันไปหมด
-        const { error: he } = await sb.from('sf_recvhist').delete()
-            .eq('lot_no', r.lotNo).eq('receive_date', r.date).eq('material_name', r.name);
+        // ยึด id ของแถวถ้ามี — รับหลายใบวันเดียวกันด้วยเลข Lot เดียวกันได้ ต้องลบเฉพาะใบที่เลือก
+        const { error: he } = r._dbId
+            ? await sb.from('sf_recvhist').delete().eq('id', r._dbId)
+            : await sb.from('sf_recvhist').delete()
+                .eq('lot_no', r.lotNo).eq('receive_date', r.date).eq('material_name', r.name);
         if (he) { toast("❌ ลบประวัติรับไม่สำเร็จ: " + he.message, "err"); return; }
         setRecvHist(h => h.filter((_, i) => i !== globalIdx));
         if (logAudit) logAudit("สต๊อก", "ลบรายการรับ", `${r.name} · Lot ${r.lotNo} · ${fmtDate(r.date)}`);
