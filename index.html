@@ -1111,6 +1111,20 @@ function StoreFlow() {
         const { error } = await sb.from('sf_master').upsert({ id: 'lotprices', part_names: next });
         if (error) toast("❌ บันทึกราคาไม่สำเร็จ", "err");
     }
+    // ใส่ราคาหลาย lot พร้อมกัน — ต้องรวมเป็นรอบเดียว
+    // (ถ้าวน saveLotPrice ทีละตัว แต่ละรอบจะอ่าน lotPriceMap ตัวเก่าจาก closure แล้วเขียนทับกันเอง เหลือแค่ตัวสุดท้าย)
+    async function saveLotPricesBulk(list) {
+        const next = { ...lotPriceMap };
+        (list || []).forEach(x => {
+            const key = x.matId + "||" + x.lotNo;
+            if (x.price == null || x.price === "" || isNaN(parseFloat(x.price))) delete next[key];
+            else next[key] = { p: parseFloat(x.price), u: x.unit || null };
+        });
+        setLotPriceMap(next);
+        const { error } = await sb.from('sf_master').upsert({ id: 'lotprices', part_names: next });
+        if (error) { toast("❌ บันทึกราคาไม่สำเร็จ", "err"); return false; }
+        return true;
+    }
     // ── sync การแก้ Lot (หน้าคลัง) กลับไปที่ประวัติการรับ ให้ข้อมูลตรงกัน ──
     async function syncRecvFromLot(mat, oldLot, merged) {
         const nm = `${mat.name} ${mat.size}`;
@@ -2250,7 +2264,7 @@ function StoreFlow() {
                 page === "receive" && canEditStock && React.createElement(RecvPage, { form: rvForm, setForm: setRvForm, materials: materials, master: master, onSubmit: submitRecv, recvHist: recvHist, addMaker: (n, t) => addMaker(n, [t]), onAddLength: addLengthMat }),
                 page === "auditlog" && canEditSettings && React.createElement(AuditLogPage, { auditLog: auditLog }),
                 page === "ngreturn" && canEditStock && React.createElement(NgReturnPage, { ngReturns: ngReturns, onSave: saveNgReturns, currentUser: currentUser, toast: toast, onReceive: receiveReplacementStock, onEditRep: editReplacementStock, onRemoveRep: removeReplacementStock }),
-                page === "history" && React.createElement(HistPage, { issueHist: issueHist, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit }),
+                page === "history" && React.createElement(HistPage, { issueHist: issueHist, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null }),
                 page === "users" && canManageUsers && React.createElement(UsersPage, { users: users, setUsers: setUsers, currentUser: currentUser, toast: toast, materials: materials }),
                 page === "matmaster" && canEditSettings && React.createElement(MatPage, { materials: materials, setMaterials: setMaterials, filter: mmFilter, setFilter: setMmFilter, master: master, onAdd: () => { setMmForm(emptyMm()); setMmErrors({}); setMmFromPartNo(false); setModal("mat"); }, onEdit: m => { setMmErrors({}); setMmFromPartNo(false); setMmForm({ editId: m.id, type: m.type, name: m.name, partNo: m.partNo, size: m.size, temper: m.temper, maker: m.maker, makerNew: "", extraMakers: m.extraMakers || [], customers: m.customers || [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: m.remark || "", productPartNos: m.productPartNos || [] }); setModal("mat"); }, onAddSize: m => { setMmErrors({}); setMmFromPartNo(false); setMmForm({ editId: "", type: m.type, name: m.name, partNo: m.partNo, size: "", temper: m.temper, maker: m.maker, makerNew: "", customers: [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: "", productPartNos: [] }); setModal("mat"); toast(`ℹ️ เพิ่ม Size ใหม่สำหรับ ${m.name}`, "info"); }, onToggle: async id => {
                         const cur = materials.find(x => x.id === id);
@@ -4743,7 +4757,7 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
 // ════════════════════════════════════════════════════════════
 // HISTORY PAGE
 // ════════════════════════════════════════════════════════════
-function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, ngReturns, saveNgReturns, toast, logAudit }) {
+function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, ngReturns, saveNgReturns, toast, logAudit, lotPriceMap, onSaveLotPrice, onSaveLotPricesBulk }) {
     // แสดงเฉพาะคอลัมน์หน่วยที่มีข้อมูลจริงในรายการที่กำลังแสดง (ไม่มี COIL/M ก็ไม่ต้องโชว์ให้รก)
     const unitColsOf = rows => {
         const has = k => (rows || []).some(r => { const v = r[k]; return v != null && v !== "" && Number(v) > 0; });
@@ -4768,6 +4782,7 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
     const [filterMonth, setFilterMonth] = useState("");
     // ดูเฉพาะรายการที่ยังไม่ได้ใส่เลขที่ Invoice (รับของด้วยใบส่งของชั่วคราวไปก่อน)
     const [onlyNoInv, setOnlyNoInv] = useState(false);
+    const [recvSum, setRecvSum] = useState(false); // สรุปยอดรับรวมต่อวัน (ไว้จับคู่กับ Invoice ที่มาทีหลัง)
     const [filterMat, setFilterMat] = useState("");
     // เลข Lot เดียวกันอาจอยู่ได้หลาย material (สโตร์ใส่เลขซ้ำ/ใส่วันที่เป็นเลข Lot)
     // → เวลาแก้ไข/ลบ ต้องหา lot ที่อยู่ใต้ material ของแถวนั้นจริง ๆ ไม่ใช่ตัวแรกที่เจอ
@@ -4806,7 +4821,10 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
         setEditRecvIdx(globalIdx);
         // หา material ที่ lot นี้ผูกอยู่จริง เพื่อตั้งค่าเริ่มต้นให้ช่อง "ย้ายไป Material อื่น"
         const curMat = findLotOf(r.name, r.maker, r.lotNo, r).matId || "";
-        setEditRecvForm({ date: r.date, po: r.po || "", inv: r.inv || "", name: r.name, maker: r.maker, lotNo: r.lotNo, pcs: r.pcs || "", m: r.m || "", coil: r.coil || "", kgs: r.kgs || "", rohs: r.rohs || "", matId: curMat, _fromMat: curMat });
+        // ราคาผูกกับ Lot (matId||lotNo) — ดึงมาโชว์ให้แก้ได้จากหน้านี้เลย ไม่ต้องไปหน้าคลังอีกรอบ
+        const lp = curMat ? lotPriceOf(lotPriceMap, curMat, r.lotNo) : null;
+        setEditRecvForm({ date: r.date, po: r.po || "", inv: r.inv || "", name: r.name, maker: r.maker, lotNo: r.lotNo, pcs: r.pcs || "", m: r.m || "", coil: r.coil || "", kgs: r.kgs || "", rohs: r.rohs || "", matId: curMat, _fromMat: curMat,
+            price: lp ? lp.p : "", priceUnit: (lp && lp.u) || autoPriceUnit(r.kgs, r.pcs, r.coil, r.m) });
     }
     // ป้ายกำกับ material ในกล่องเลือก — ให้อ่านออกว่าเป็นตัวไหนแน่
     const matLabel = m => [m.type, sizeTxt(m.size), m.maker, m.temper && m.temper !== "-" ? "(" + m.temper + ")" : ""]
@@ -4866,6 +4884,18 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
             });
             if (logAudit) logAudit("สต๊อก", "ย้าย Material ของใบรับ", `Lot ${newLotNo} : ${oldR.name} → ${newName}`);
         }
+        // 1.7) ราคา/หน่วย — ผูกกับ (material + เลข Lot) ถ้าเปลี่ยนอย่างใดอย่างหนึ่ง ราคาต้องย้ายตามไปด้วย
+        // ไม่งั้นราคาจะค้างอยู่กับคีย์เก่าที่ไม่มีแล้ว = ราคาหาย (มูลค่าสต๊อกกลายเป็น 0)
+        if (onSaveLotPrice) {
+            const fromMat = editRecvForm._fromMat || matchedMatId;
+            const toMat = movedMat ? toMatId : fromMat;
+            const priceChanged = String(editRecvForm.price == null ? "" : editRecvForm.price).trim() !== ""
+                || (fromMat && lotPriceOf(lotPriceMap, fromMat, oldLotNo));
+            if (toMat && priceChanged) {
+                if (fromMat && fromMat !== toMat) await onSaveLotPrice(fromMat, oldLotNo, "", oldLotNo, null);
+                await onSaveLotPrice(toMat, newLotNo, editRecvForm.price, oldLotNo, editRecvForm.priceUnit);
+            }
+        }
         // 2) อัพเดทประวัติรับ local + DB
         setRecvHist(h => h.map((x, i) => i === globalIdx ? { ...x, ...editRecvForm, name: newName, maker: newMaker, temper: newTemper, lotNo: newLotNo, pcs: newPcs, coil: newCoil, kgs: newKgs, m: newM } : x));
         const recvPatch = Object.assign({ receive_date: newDate, po: editRecvForm.po || null, inv: editRecvForm.inv || null, lot_no: newLotNo, pcs: newPcs, coil: newCoil, kgs: newKgs, rohs: editRecvForm.rohs || oldR.rohs, material_name: newName, maker: newMaker }, RECVHIST_HAS_M ? { m: newM } : {}, RECVHIST_HAS_TEMPER ? { temper: newTemper } : {});
@@ -4890,6 +4920,72 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
         setEditRecvIdx(null);
         if (logAudit) logAudit("สต๊อก", "แก้ประวัติรับ/Lot", `${oldR.name || ""} · lot ${oldLotNo}${newLotNo !== oldLotNo ? " → " + newLotNo : ""} · จำนวน ${[newKgs ? newKgs + "K" : null, newCoil ? newCoil + "C" : null, newPcs ? newPcs + "PCS" : null].filter(Boolean).join("/") || "-"}`);
         if (toast) toast("💾 แก้ไขแล้ว — ซิงค์เลข Lot ให้ คลัง / เคลม NG / ประวัติ ตรงกันเรียบร้อย");
+    }
+    // ใส่ PO / Invoice ให้ทุก Lot ที่รับวันเดียวกันของวัตถุดิบเดียวกันพร้อมกัน
+    // (สโตร์รับของก่อนโดยยังไม่มีเอกสาร พอ Invoice มาทีหลังจะได้ไม่ต้องแก้ทีละ Lot)
+    async function fillGroupPoInv(gp) {
+        const curPo = gp.pos.size === 1 ? [...gp.pos][0] : "";
+        const curInv = gp.invs.size === 1 ? [...gp.invs][0] : "";
+        const head = fmtDate(gp.date) + " · " + sizeTxt(gp.name) + " · " + gp.maker
+            + "\nรวม " + (gp.kgs > 0 ? fmtQty(gp.kgs, 2) + " KGS " : "") + (gp.pcs > 0 ? fmtQty(gp.pcs) + " PCS " : "")
+            + (gp.m > 0 ? fmtQty(gp.m, 1) + " M " : "") + "· " + gp.rows.length + " Lot\n\n";
+        const po = window.prompt(head + "PO No. (เว้นว่าง = ไม่เปลี่ยน)", curPo);
+        if (po === null) return;
+        const inv = window.prompt(head + "เลขที่ Invoice (เว้นว่าง = ไม่เปลี่ยน)", curInv);
+        if (inv === null) return;
+        // ราคาต่อหน่วย — ปกติทั้งใบ Invoice ใช้ราคาเดียวกัน ใส่ทีเดียวลงครบทุก Lot
+        let newPrice = "", newPriceUnit = "";
+        if (onSaveLotPrice) {
+            const defU = gp.kgs > 0 ? "kgs" : gp.pcs > 0 ? "pcs" : gp.coil > 0 ? "coil" : "m";
+            const pr = window.prompt(head + "ราคา/หน่วย (฿) (เว้นว่าง = ไม่เปลี่ยน)", "");
+            if (pr === null) return;
+            newPrice = String(pr).trim();
+            if (newPrice) {
+                const u = window.prompt(head + "ราคานี้เป็นบาทต่อหน่วยไหน?\nพิมพ์: kgs / pcs / coil / m", defU);
+                if (u === null) return;
+                newPriceUnit = String(u).trim().toLowerCase();
+                if (PRICE_UNITS.every(x => x.v !== newPriceUnit)) { toast("หน่วยราคาไม่ถูกต้อง (kgs/pcs/coil/m)", "err"); return; }
+            }
+        }
+        const newPo = po.trim(), newInv = inv.trim();
+        if (!newPo && !newInv && !newPrice) { toast("ไม่ได้กรอกอะไร — ยกเลิก", "warn"); return; }
+        if (!window.confirm("จะใส่ให้ทุก Lot ในกลุ่มนี้ (" + gp.rows.length + " Lot)\n"
+            + (newPo ? "PO: " + newPo + "\n" : "") + (newInv ? "Invoice: " + newInv + "\n" : "")
+            + (newPrice ? "ราคา: ฿ " + newPrice + " /" + priceUnitLabel(newPriceUnit) : ""))) return;
+        let ok = 0;
+        const priceJobs = []; // ราคาต้องเขียนรวดเดียวตอนท้าย ไม่งั้นแต่ละรอบจะเขียนทับกัน
+        for (const r of gp.rows) {
+            const patch = {};
+            if (newPo) patch.po = newPo;
+            if (newInv) patch.inv = newInv;
+            const q = r._dbId
+                ? sb.from('sf_recvhist').update(patch).eq('id', r._dbId)
+                : sb.from('sf_recvhist').update(patch).eq('lot_no', r.lotNo).eq('receive_date', r.date).eq('material_name', r.name);
+            const { error } = await q;
+            if (error) { toast("❌ บันทึกไม่สำเร็จ: " + error.message, "err"); return; }
+            // sf_lots เก็บเฉพาะ PO (ไม่มีช่อง Invoice) ส่วนราคาเก็บแยกที่ lotprices
+            if (newPo || newPrice) {
+                const hit = findLotOf(r.name, r.maker, r.lotNo, r);
+                if (newPo && hit.lot && hit.lot._dbId) await updateLot(hit.lot._dbId, { po: newPo });
+                if (newPrice && hit.matId) priceJobs.push({ matId: hit.matId, lotNo: r.lotNo, price: newPrice, unit: newPriceUnit });
+            }
+            ok++;
+        }
+        if (priceJobs.length) {
+            if (onSaveLotPricesBulk) { if (!(await onSaveLotPricesBulk(priceJobs))) return; }
+            else if (onSaveLotPrice) { for (const j of priceJobs) await onSaveLotPrice(j.matId, j.lotNo, j.price, null, j.unit); }
+        }
+        setRecvHist(h => h.map(x => gp.rows.some(rr => (rr._dbId && rr._dbId === x._dbId)
+            || (!rr._dbId && rr.lotNo === x.lotNo && rr.date === x.date && rr.name === x.name))
+            ? { ...x, po: newPo || x.po, inv: newInv || x.inv } : x));
+        if (newPo) setLots(ls => { const n = { ...ls };
+            gp.rows.forEach(r => { const hit = findLotOf(r.name, r.maker, r.lotNo, r);
+                if (hit.matId) n[hit.matId] = (n[hit.matId] || []).map(l => l.lotNo === r.lotNo ? { ...l, po: newPo } : l); });
+            return n; });
+        if (logAudit) logAudit("สต๊อก", "ใส่ PO/Invoice/ราคา ทั้งกลุ่ม",
+            sizeTxt(gp.name) + " · " + fmtDate(gp.date) + " · " + ok + " Lot" + (newPo ? " · PO " + newPo : "")
+            + (newInv ? " · INV " + newInv : "") + (newPrice ? " · ฿" + newPrice + "/" + priceUnitLabel(newPriceUnit) : ""));
+        toast("✅ ใส่ให้ " + ok + " Lot แล้ว");
     }
     async function deleteRecv(globalIdx, r) {
         // หา lot ที่ตรงกันใน stock — ต้องล็อกทั้ง material และ lotNo
@@ -5028,6 +5124,13 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                                 padding: "6px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", whiteSpace: "nowrap" } },
                             onlyNoInv ? "✕ ดูทั้งหมด" : "⚠️ ยังไม่มี Invoice (" + _noInv + ")");
                     })(),
+                    tab === "recv" && React.createElement("button", { onClick: () => setRecvSum(v => !v),
+                        title: "รวมยอดรับของวันเดียวกัน — ใช้จับคู่กับยอดบน Invoice ที่มาทีหลัง",
+                        style: { background: recvSum ? C.acc : "rgba(9,105,218,.1)",
+                            border: "1px solid " + (recvSum ? C.acc : "rgba(9,105,218,.4)"),
+                            borderRadius: 7, color: recvSum ? "#fff" : C.acc, cursor: "pointer",
+                            padding: "6px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", whiteSpace: "nowrap" } },
+                        recvSum ? "✕ ดูรายตัว" : "📊 สรุปยอดต่อวัน"),
                     tab === "issue" && React.createElement("select", { value: filterMat, onChange: e => setFilterMat(e.target.value), style: { background: C.sur2, border: `1px solid ${C.brd}`, borderRadius: 7, padding: "5px 10px", color: C.tx, fontFamily: "inherit", fontSize: 11, outline: "none", maxWidth: 200 } },
                         React.createElement("option", { value: "" }, "\uD83D\uDCE6 \u0E17\u0E38\u0E01 Material"),
                         matNames.map(n => React.createElement("option", { key: n, value: n }, n))),
@@ -5064,7 +5167,58 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2 } }, r.requester),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, color: C.tx2 } }, r.approver || "-"),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, color: C.acc2 } }, r.issuedBy || "-"))))),
-                tab === "recv" && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11 } },
+                tab === "recv" && recvSum && (() => {
+                    // รวมยอดรับของ วันที่ + Maker + Material เข้าด้วยกัน
+                    // สโตร์รับเข้าทีละหลาย Lot แต่ Invoice ที่มาทีหลังบอกยอดรวมก้อนเดียว
+                    const g = {};
+                    filtered.forEach(r => {
+                        const k = [r.date, r.maker, r.name].join("|");
+                        if (!g[k]) g[k] = { date: r.date, maker: r.maker, name: r.name, rows: [],
+                            kgs: 0, pcs: 0, coil: 0, m: 0, pos: new Set(), invs: new Set() };
+                        const x = g[k];
+                        x.rows.push(r);
+                        x.kgs += Number(r.kgs) || 0; x.pcs += Number(r.pcs) || 0;
+                        x.coil += Number(r.coil) || 0; x.m += Number(r.m) || 0;
+                        if (String(r.po || "").trim()) x.pos.add(String(r.po).trim());
+                        if (String(r.inv || "").trim()) x.invs.add(String(r.inv).trim());
+                    });
+                    const groups = Object.values(g).sort((a, b) =>
+                        String(b.date).localeCompare(String(a.date)) || String(a.name).localeCompare(String(b.name)));
+                    const show = (v, d) => v > 0 ? fmtQty(v, d) : "-";
+                    return React.createElement("div", null,
+                        React.createElement("div", { style: { padding: "8px 12px", fontSize: 11.5, color: C.tx2, background: C.sur2, borderBottom: "1px solid " + C.brd } },
+                            "รวมยอดรับของวันเดียวกัน (วันที่ + Maker + วัตถุดิบ) — ใช้เทียบกับยอดบน Invoice ที่มาทีหลัง แล้วกด ✏️ ใส่ PO/Invoice ให้ทั้งกลุ่มทีเดียว"),
+                        React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11.5 } },
+                            React.createElement("thead", null,
+                                React.createElement("tr", { style: { background: C.sur2 } },
+                                    ["วันที่", "วัตถุดิบ", "Maker", "จำนวน Lot", "รวม KGS", "รวม PCS", "รวม COIL", "รวม M", "PO No.", "Invoice", ""].map(h =>
+                                        React.createElement("th", { key: h, style: { padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: "1px solid " + C.brd, whiteSpace: "nowrap" } }, h)))),
+                            React.createElement("tbody", null,
+                                groups.length === 0 && React.createElement("tr", null,
+                                    React.createElement("td", { colSpan: 11, style: { padding: 24, textAlign: "center", color: C.tx2 } }, "ไม่พบข้อมูล")),
+                                groups.map((x, gi) => {
+                                    const noInv = x.invs.size === 0;
+                                    return React.createElement("tr", { key: gi, style: { background: noInv ? "rgba(210,153,34,.06)" : "transparent" } },
+                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, whiteSpace: "nowrap", fontWeight: 700 } }, fmtDate(x.date)),
+                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontWeight: 600 } }, sizeTxt(x.name)),
+                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2 } },
+                                            React.createElement(Tag, { color: C.acc2, bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, x.maker)),
+                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", textAlign: "center" } }, x.rows.length),
+                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontWeight: 800, color: C.acc } }, show(x.kgs, 2)),
+                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontWeight: 700 } }, show(x.pcs, 0)),
+                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace" } }, show(x.coil, 0)),
+                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace" } }, show(x.m, 1)),
+                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10.5 } }, x.pos.size ? [...x.pos].join(", ") : "-"),
+                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10.5 } },
+                                            noInv ? React.createElement("span", { style: { color: "#9a6700", fontWeight: 700 } }, "⏳ รอ Invoice") : [...x.invs].join(", ")),
+                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2 } },
+                                            setRecvHist && React.createElement("button", { onClick: () => fillGroupPoInv(x),
+                                                title: "ใส่ PO / Invoice ให้ทุก Lot ในกลุ่มนี้พร้อมกัน",
+                                                style: { background: "rgba(9,105,218,.12)", border: "1px solid rgba(9,105,218,.35)", borderRadius: 5, color: C.acc, cursor: "pointer", padding: "3px 9px", fontSize: 11, fontWeight: 700, fontFamily: "inherit", whiteSpace: "nowrap" } },
+                                                "✏️ ใส่ PO/Invoice")));
+                                }))));
+                })(),
+                tab === "recv" && !recvSum && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11 } },
                     React.createElement("thead", null,
                         React.createElement("tr", { style: { background: C.sur2 } }, ["วันที่", "PO No.", "Invoice", "วัตถุดิบ", "Maker", "Lot No.", ...rU.map(c => c[1]), "ROHS", ""].map(h => React.createElement("th", { key: h, style: { padding: "5px 7px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, h)))),
                     React.createElement("tbody", null,
@@ -5113,6 +5267,17 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                                                 React.createElement("select", { value: editRecvForm.rohs || "ROHS", onChange: e => setEditRecvForm(f => ({ ...f, rohs: e.target.value })), style: { background: C.bg, border: `1px solid ${C.brd}`, borderRadius: 5, padding: "4px 8px", color: C.tx, fontFamily: "inherit", fontSize: 11, outline: "none" } },
                                                     React.createElement("option", null, "ROHS"),
                                                     React.createElement("option", null, "NON ROHS"))),
+                                            // ราคา — ใส่จากหน้านี้ได้เลย ไม่ต้องไปหน้าคลังอีกรอบ (เก็บที่เดียวกัน)
+                                            onSaveLotPrice && React.createElement("div", null,
+                                                React.createElement("div", { style: { fontSize: 9, color: C.tx2, marginBottom: 2 } }, "ราคา/หน่วย (฿)"),
+                                                React.createElement("input", { type: "number", step: "0.01", value: editRecvForm.price == null ? "" : editRecvForm.price,
+                                                    onChange: e => setEditRecvForm(f => ({ ...f, price: e.target.value })),
+                                                    placeholder: "เว้นว่าง = ไม่มีราคา",
+                                                    style: { background: C.bg, border: `1px solid ${C.brd}`, borderRadius: 5, padding: "4px 8px", color: C.tx, fontFamily: "monospace", fontSize: 11, width: 110, outline: "none" } })),
+                                            onSaveLotPrice && React.createElement("div", null,
+                                                React.createElement("div", { style: { fontSize: 9, color: C.tx2, marginBottom: 2 } }, "หน่วยราคา"),
+                                                React.createElement("select", { value: editRecvForm.priceUnit || "kgs", onChange: e => setEditRecvForm(f => ({ ...f, priceUnit: e.target.value })), style: { background: C.bg, border: `1px solid ${C.brd}`, borderRadius: 5, padding: "4px 8px", color: C.tx, fontFamily: "inherit", fontSize: 11, outline: "none" } },
+                                                    PRICE_UNITS.map(u => React.createElement("option", { key: u.v, value: u.v }, u.l)))),
                                             React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 12 } },
                                                 React.createElement("button", { onClick: () => saveEditRecv(gi), style: { background: "#1a7f37", border: "none", borderRadius: 5, color: "#fff", cursor: "pointer", padding: "5px 14px", fontSize: 11, fontWeight: 700 } }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01"),
                                                 React.createElement("button", { onClick: () => setEditRecvIdx(null), style: { background: "transparent", border: `1px solid ${C.brd}`, borderRadius: 5, color: C.tx2, cursor: "pointer", padding: "5px 10px", fontSize: 11 } }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"))),
