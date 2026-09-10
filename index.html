@@ -1111,6 +1111,25 @@ function StoreFlow() {
         const { error } = await sb.from('sf_master').upsert({ id: 'lotprices', part_names: next });
         if (error) toast("❌ บันทึกราคาไม่สำเร็จ", "err");
     }
+    // ── เลขที่ DN / ใบส่งของชั่วคราว ──
+    // sf_recvhist ไม่มีคอลัมน์ DN และเพิ่มคอลัมน์เองไม่ได้จากตรงนี้
+    // จึงเก็บใน sf_master id='recvdn' แบบเดียวกับราคา (map: "ชื่อ material||lotNo||วันที่" -> DN)
+    // ใช้คีย์ธรรมชาติ ไม่ใช่ id เพราะตอนรับของยังไม่รู้ id ของแถว
+    const [dnMap, setDnMap] = useState({});
+    const dnKey = (name, lotNo, date) => [name, lotNo, date].join("||");
+    const dnOf = (name, lotNo, date) => (dnMap || {})[dnKey(name, lotNo, date)] || "";
+    async function saveDnBulk(list) {
+        const next = { ...dnMap };
+        (list || []).forEach(x => {
+            const k = dnKey(x.name, x.lotNo, x.date);
+            const v = String(x.dn == null ? "" : x.dn).trim();
+            if (!v) delete next[k]; else next[k] = v;
+        });
+        setDnMap(next);
+        const { error } = await sb.from('sf_master').upsert({ id: 'recvdn', part_names: next });
+        if (error) { toast("❌ บันทึกเลข DN ไม่สำเร็จ", "err"); return false; }
+        return true;
+    }
     // ใส่ราคาหลาย lot พร้อมกัน — ต้องรวมเป็นรอบเดียว
     // (ถ้าวน saveLotPrice ทีละตัว แต่ละรอบจะอ่าน lotPriceMap ตัวเก่าจาก closure แล้วเขียนทับกันเอง เหลือแค่ตัวสุดท้าย)
     async function saveLotPricesBulk(list) {
@@ -1306,6 +1325,9 @@ function StoreFlow() {
                 sb.from('sf_master').select('part_names').eq('id', 'ngreturns').limit(1).then(({ data: ngRows }) => {
                     if (ngRows && ngRows.length && Array.isArray(ngRows[0].part_names)) { setNgReturns(ngRows[0].part_names); }
                 });
+                sb.from('sf_master').select('part_names').eq('id', 'recvdn').limit(1).then(({ data: dnRows }) => {
+                    if (dnRows && dnRows.length && dnRows[0].part_names) { setDnMap(dnRows[0].part_names); }
+                });
                 sb.from('sf_master').select('part_names').eq('id', 'auditlog').limit(1).then(({ data: alRows }) => {
                     if (alRows && alRows.length && Array.isArray(alRows[0].part_names)) { setAuditLog(alRows[0].part_names); }
                 });
@@ -1473,7 +1495,7 @@ function StoreFlow() {
         items: [{ type: "", maker: "", matId: "", qty: "", unit: "PCS", kgs: "", coil: "", customer: "" }] });
     const [rqForm, setRqForm] = useState(emptyRq());
     const [rqErrors, setRqErrors] = useState({});
-    const emptyRv = () => ({ date: new Date().toISOString().split("T")[0], po: "", inv: "", type: "", matId: "", maker: "", rohs: "ROHS",
+    const emptyRv = () => ({ date: new Date().toISOString().split("T")[0], po: "", inv: "", dn: "", type: "", matId: "", maker: "", rohs: "ROHS",
         lots: [{ lotNo: "", pcs: "", coil: "", kgs: "", m: "", price: "", priceUnit: "" }] });
     const [rvForm, setRvForm] = useState(emptyRv());
     const emptyMm = () => ({ editId: "", type: "", name: "", partNo: "", size: "", temper: "", maker: "", makerNew: "", extraMakers: [], customers: [], unit: "KGS", kpp: "", minStock: "100", remark: "", productPartNos: [] });
@@ -1891,7 +1913,7 @@ function StoreFlow() {
 }
     // ── RECEIVE ──
     async function submitRecv() {
-        const { date, po, inv, type, matId, maker, rohs, lots: rvLots } = rvForm;
+        const { date, po, inv, dn, type, matId, maker, rohs, lots: rvLots } = rvForm;
         if (!matId) {
             toast("กรุณาเลือกวัตถุดิบ", "err");
             return;
@@ -1984,6 +2006,7 @@ function StoreFlow() {
         }
         if (newMats.length) setMaterials(ms => [...ms, ...newMats]);
         const priceUpd = {};
+        const dnUpd = [];   // เลข DN ของ lot ที่รับรอบนี้ เก็บรวมแล้วบันทึกทีเดียวตอนท้าย
         for (const g of groups) {
             const m = g.mat;
             const realMatId = g.realMatId;
@@ -2017,6 +2040,7 @@ function StoreFlow() {
                 if (RECVHIST_HAS_M) recvPayload.m = histRecord.m || null;
                 await sb.from('sf_recvhist').insert(recvPayload);
                 setRecvHist(h => [histRecord, ...h]);
+                if (String(dn || "").trim()) dnUpd.push({ name: histRecord.name, lotNo: histRecord.lotNo, date: histRecord.date, dn: dn });
             }
             // บันทึกราคา/หน่วย ต่อ lot ที่กรอกตอนรับ
             g.lots.forEach(l => { const p = parseFloat(l.price); if (!isNaN(p) && p > 0) priceUpd[realMatId + "||" + l.lotNo] = { p: p, u: l.priceUnit || autoPriceUnit(l.kgs, l.pcs, l.coil, l.m) }; });
@@ -2026,6 +2050,7 @@ function StoreFlow() {
             setLotPriceMap(next);
             await sb.from('sf_master').upsert({ id: 'lotprices', part_names: next });
         }
+        if (dnUpd.length) await saveDnBulk(dnUpd);
         const g0 = groups[0];
         toast(groups.length > 1
             ? `✅ รับ ${g0.mat.name} (${maker}) ${groups.length} size / ${validLots.length} Lot สำเร็จ`
@@ -2264,7 +2289,7 @@ function StoreFlow() {
                 page === "receive" && canEditStock && React.createElement(RecvPage, { form: rvForm, setForm: setRvForm, materials: materials, master: master, onSubmit: submitRecv, recvHist: recvHist, addMaker: (n, t) => addMaker(n, [t]), onAddLength: addLengthMat }),
                 page === "auditlog" && canEditSettings && React.createElement(AuditLogPage, { auditLog: auditLog }),
                 page === "ngreturn" && canEditStock && React.createElement(NgReturnPage, { ngReturns: ngReturns, onSave: saveNgReturns, currentUser: currentUser, toast: toast, onReceive: receiveReplacementStock, onEditRep: editReplacementStock, onRemoveRep: removeReplacementStock }),
-                page === "history" && React.createElement(HistPage, { issueHist: issueHist, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null }),
+                page === "history" && React.createElement(HistPage, { issueHist: issueHist, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null }),
                 page === "users" && canManageUsers && React.createElement(UsersPage, { users: users, setUsers: setUsers, currentUser: currentUser, toast: toast, materials: materials }),
                 page === "matmaster" && canEditSettings && React.createElement(MatPage, { materials: materials, setMaterials: setMaterials, filter: mmFilter, setFilter: setMmFilter, master: master, onAdd: () => { setMmForm(emptyMm()); setMmErrors({}); setMmFromPartNo(false); setModal("mat"); }, onEdit: m => { setMmErrors({}); setMmFromPartNo(false); setMmForm({ editId: m.id, type: m.type, name: m.name, partNo: m.partNo, size: m.size, temper: m.temper, maker: m.maker, makerNew: "", extraMakers: m.extraMakers || [], customers: m.customers || [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: m.remark || "", productPartNos: m.productPartNos || [] }); setModal("mat"); }, onAddSize: m => { setMmErrors({}); setMmFromPartNo(false); setMmForm({ editId: "", type: m.type, name: m.name, partNo: m.partNo, size: "", temper: m.temper, maker: m.maker, makerNew: "", customers: [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: "", productPartNos: [] }); setModal("mat"); toast(`ℹ️ เพิ่ม Size ใหม่สำหรับ ${m.name}`, "info"); }, onToggle: async id => {
                         const cur = materials.find(x => x.id === id);
@@ -4557,8 +4582,10 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
                         React.createElement(Inp, { type: "date", value: form.date, onChange: v => setForm(f => ({ ...f, date: v })) })),
                     React.createElement(FG, { label: "PO No." },
                         React.createElement(Inp, { value: form.po, onChange: v => setForm(f => ({ ...f, po: v })), placeholder: "25-1234" })),
+                    React.createElement(FG, { label: "DN / ใบส่งของ" },
+                        React.createElement(Inp, { value: form.dn || "", onChange: v => setForm(f => ({ ...f, dn: v })), placeholder: "ใส่ตอนรับของ" })),
                     React.createElement(FG, { label: "Invoice No." },
-                        React.createElement(Inp, { value: form.inv, onChange: v => setForm(f => ({ ...f, inv: v })), placeholder: "IV01234/25" })),
+                        React.createElement(Inp, { value: form.inv, onChange: v => setForm(f => ({ ...f, inv: v })), placeholder: "ว่างไว้ได้ ใส่ทีหลัง" })),
                     React.createElement(FG, { label: "\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A" },
                         React.createElement(Sel, { value: form.type, onChange: v => setForm(f => ({ ...f, type: v, matId: "", maker: "", _sizeTxt: null })), options: [{ v: "", l: "-- เลือกประเภท --" }, ...master.matTypes.map(t => ({ v: t.code, l: `${t.label} (${t.code})` }))], placeholder: "-- \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17 --" })),
                     React.createElement(FG, { label: "\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A / Size" },
@@ -4757,7 +4784,7 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
 // ════════════════════════════════════════════════════════════
 // HISTORY PAGE
 // ════════════════════════════════════════════════════════════
-function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, ngReturns, saveNgReturns, toast, logAudit, lotPriceMap, onSaveLotPrice, onSaveLotPricesBulk }) {
+function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, ngReturns, saveNgReturns, toast, logAudit, lotPriceMap, onSaveLotPrice, onSaveLotPricesBulk, dnMap, onSaveDnBulk }) {
     // แสดงเฉพาะคอลัมน์หน่วยที่มีข้อมูลจริงในรายการที่กำลังแสดง (ไม่มี COIL/M ก็ไม่ต้องโชว์ให้รก)
     const unitColsOf = rows => {
         const has = k => (rows || []).some(r => { const v = r[k]; return v != null && v !== "" && Number(v) > 0; });
@@ -4783,10 +4810,19 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
     // ดูเฉพาะรายการที่ยังไม่ได้ใส่เลขที่ Invoice (รับของด้วยใบส่งของชั่วคราวไปก่อน)
     const [onlyNoInv, setOnlyNoInv] = useState(false);
     const [recvSum, setRecvSum] = useState(false); // สรุปยอดรับรวมต่อวัน (ไว้จับคู่กับ Invoice ที่มาทีหลัง)
+    const [sumBy, setSumBy] = useState("date");    // จัดกลุ่มตาม "date" หรือ "po" (Invoice อ้างอิง PO)
+    const [findQty, setFindQty] = useState("");    // ยอดบน Invoice — ไว้ไฮไลต์กลุ่มที่ตรง
+    // โหมดติ๊กเลือกทีละ Lot — ใช้ตอน PO เดียวมี Invoice หลายใบ และเอกสารไม่บอกว่าใบไหนคุม Lot ไหน
+    const [pickMode, setPickMode] = useState(false);
+    const [picked, setPicked] = useState({});      // key = _dbId หรือ ชื่อ||lot||วันที่
     const [filterMat, setFilterMat] = useState("");
     // เลข Lot เดียวกันอาจอยู่ได้หลาย material (สโตร์ใส่เลขซ้ำ/ใส่วันที่เป็นเลข Lot)
     // → เวลาแก้ไข/ลบ ต้องหา lot ที่อยู่ใต้ material ของแถวนั้นจริง ๆ ไม่ใช่ตัวแรกที่เจอ
     const r_matchName = r => String(r && r.name != null ? r.name : "");
+    // เลข DN เก็บแยกจาก sf_recvhist (คีย์ = ชื่อ material||lotNo||วันที่)
+    const dnOfRow = r => (dnMap || {})[[r.name, r.lotNo, r.date].join("||")] || "";
+    const pickKey = r => String(r._dbId != null ? "id" + r._dbId : [r.name, r.lotNo, r.date].join("||"));
+    const togglePick = r => setPicked(s => { const k = pickKey(r); const n = { ...s }; if (n[k]) delete n[k]; else n[k] = r; return n; });
     // r = แถวประวัติรับ ใช้ PO/วันที่ช่วยแยกเมื่อ material เดียวกันมี lot เลขซ้ำ (รับหลายใบวันเดียวกัน)
     function findLotOf(matName, maker, lotNo, r) {
         const _k = v => String(v == null ? "" : v).trim().toLowerCase();
@@ -4824,7 +4860,8 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
         // ราคาผูกกับ Lot (matId||lotNo) — ดึงมาโชว์ให้แก้ได้จากหน้านี้เลย ไม่ต้องไปหน้าคลังอีกรอบ
         const lp = curMat ? lotPriceOf(lotPriceMap, curMat, r.lotNo) : null;
         setEditRecvForm({ date: r.date, po: r.po || "", inv: r.inv || "", name: r.name, maker: r.maker, lotNo: r.lotNo, pcs: r.pcs || "", m: r.m || "", coil: r.coil || "", kgs: r.kgs || "", rohs: r.rohs || "", matId: curMat, _fromMat: curMat,
-            price: lp ? lp.p : "", priceUnit: (lp && lp.u) || autoPriceUnit(r.kgs, r.pcs, r.coil, r.m) });
+            price: lp ? lp.p : "", priceUnit: (lp && lp.u) || autoPriceUnit(r.kgs, r.pcs, r.coil, r.m),
+            dn: dnOfRow(r) });
     }
     // ป้ายกำกับ material ในกล่องเลือก — ให้อ่านออกว่าเป็นตัวไหนแน่
     const matLabel = m => [m.type, sizeTxt(m.size), m.maker, m.temper && m.temper !== "-" ? "(" + m.temper + ")" : ""]
@@ -4896,6 +4933,17 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                 await onSaveLotPrice(toMat, newLotNo, editRecvForm.price, oldLotNo, editRecvForm.priceUnit);
             }
         }
+        // 1.8) เลข DN — เก็บแยก ต้องย้ายคีย์ตามเมื่อชื่อ material / เลข Lot / วันที่ เปลี่ยน
+        if (onSaveDnBulk) {
+            const oldDn = dnOfRow(oldR), newDn = String(editRecvForm.dn == null ? "" : editRecvForm.dn).trim();
+            const keyChanged = newName !== oldR.name || newLotNo !== oldLotNo || newDate !== oldR.date;
+            if (newDn !== oldDn || keyChanged) {
+                const jobs = [];
+                if (keyChanged) jobs.push({ name: oldR.name, lotNo: oldLotNo, date: oldR.date, dn: "" });
+                jobs.push({ name: newName, lotNo: newLotNo, date: newDate, dn: newDn });
+                await onSaveDnBulk(jobs);
+            }
+        }
         // 2) อัพเดทประวัติรับ local + DB
         setRecvHist(h => h.map((x, i) => i === globalIdx ? { ...x, ...editRecvForm, name: newName, maker: newMaker, temper: newTemper, lotNo: newLotNo, pcs: newPcs, coil: newCoil, kgs: newKgs, m: newM } : x));
         const recvPatch = Object.assign({ receive_date: newDate, po: editRecvForm.po || null, inv: editRecvForm.inv || null, lot_no: newLotNo, pcs: newPcs, coil: newCoil, kgs: newKgs, rohs: editRecvForm.rohs || oldR.rohs, material_name: newName, maker: newMaker }, RECVHIST_HAS_M ? { m: newM } : {}, RECVHIST_HAS_TEMPER ? { temper: newTemper } : {});
@@ -4923,6 +4971,21 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
     }
     // ใส่ PO / Invoice ให้ทุก Lot ที่รับวันเดียวกันของวัตถุดิบเดียวกันพร้อมกัน
     // (สโตร์รับของก่อนโดยยังไม่มีเอกสาร พอ Invoice มาทีหลังจะได้ไม่ต้องแก้ทีละ Lot)
+    // ใส่ข้อมูลให้เฉพาะ Lot ที่ติ๊กเลือก — ใช้ตอน Invoice หลายใบใน PO เดียว เอกสารไม่บอกว่าใบไหนคุม Lot ไหน
+    async function fillPickedPoInv(rows) {
+        const t = { kgs: 0, pcs: 0, coil: 0, m: 0 };
+        rows.forEach(r => { t.kgs += Number(r.kgs) || 0; t.pcs += Number(r.pcs) || 0; t.coil += Number(r.coil) || 0; t.m += Number(r.m) || 0; });
+        const names = [...new Set(rows.map(r => r.name))];
+        const gp = { rows: rows, name: names.length === 1 ? names[0] : names.length + " วัตถุดิบ",
+            maker: [...new Set(rows.map(r => r.maker))].join(", "),
+            date: rows.map(r => r.date).sort()[0],
+            kgs: t.kgs, pcs: t.pcs, coil: t.coil, m: t.m,
+            pos: new Set(rows.map(r => String(r.po || "").trim()).filter(Boolean)),
+            invs: new Set(rows.map(r => String(r.inv || "").trim()).filter(Boolean)),
+            dns: new Set(rows.map(r => dnOfRow(r)).filter(Boolean)) };
+        await fillGroupPoInv(gp);
+        setPicked({});
+    }
     async function fillGroupPoInv(gp) {
         const curPo = gp.pos.size === 1 ? [...gp.pos][0] : "";
         const curInv = gp.invs.size === 1 ? [...gp.invs][0] : "";
@@ -4947,10 +5010,18 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                 if (PRICE_UNITS.every(x => x.v !== newPriceUnit)) { toast("หน่วยราคาไม่ถูกต้อง (kgs/pcs/coil/m)", "err"); return; }
             }
         }
+        let newDn = "";
+        if (onSaveDnBulk) {
+            const curDn = gp.dns && gp.dns.size === 1 ? [...gp.dns][0] : "";
+            const d = window.prompt(head + "DN / เลขที่ใบส่งของ (เว้นว่าง = ไม่เปลี่ยน)", curDn);
+            if (d === null) return;
+            newDn = String(d).trim();
+        }
         const newPo = po.trim(), newInv = inv.trim();
-        if (!newPo && !newInv && !newPrice) { toast("ไม่ได้กรอกอะไร — ยกเลิก", "warn"); return; }
+        if (!newPo && !newInv && !newPrice && !newDn) { toast("ไม่ได้กรอกอะไร — ยกเลิก", "warn"); return; }
         if (!window.confirm("จะใส่ให้ทุก Lot ในกลุ่มนี้ (" + gp.rows.length + " Lot)\n"
-            + (newPo ? "PO: " + newPo + "\n" : "") + (newInv ? "Invoice: " + newInv + "\n" : "")
+            + (newPo ? "PO: " + newPo + "\n" : "") + (newDn ? "DN: " + newDn + "\n" : "")
+            + (newInv ? "Invoice: " + newInv + "\n" : "")
             + (newPrice ? "ราคา: ฿ " + newPrice + " /" + priceUnitLabel(newPriceUnit) : ""))) return;
         let ok = 0;
         const priceJobs = []; // ราคาต้องเขียนรวดเดียวตอนท้าย ไม่งั้นแต่ละรอบจะเขียนทับกัน
@@ -4974,6 +5045,9 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
         if (priceJobs.length) {
             if (onSaveLotPricesBulk) { if (!(await onSaveLotPricesBulk(priceJobs))) return; }
             else if (onSaveLotPrice) { for (const j of priceJobs) await onSaveLotPrice(j.matId, j.lotNo, j.price, null, j.unit); }
+        }
+        if (newDn && onSaveDnBulk) {
+            if (!(await onSaveDnBulk(gp.rows.map(r => ({ name: r.name, lotNo: r.lotNo, date: r.date, dn: newDn }))))) return;
         }
         setRecvHist(h => h.map(x => gp.rows.some(rr => (rr._dbId && rr._dbId === x._dbId)
             || (!rr._dbId && rr.lotNo === x.lotNo && rr.date === x.date && rr.name === x.name))
@@ -5093,7 +5167,7 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
         const q = search.toLowerCase();
         if (!q)
             return true;
-        return (r.name || "").toLowerCase().includes(q) || (r.maker || "").toLowerCase().includes(q) || (r.lotNo || "").toLowerCase().includes(q) || (r.dept || "").toLowerCase().includes(q) || (r.reqId || "").toLowerCase().includes(q) || (r.po || "").toLowerCase().includes(q);
+        return (r.name || "").toLowerCase().includes(q) || (r.maker || "").toLowerCase().includes(q) || (r.lotNo || "").toLowerCase().includes(q) || (r.dept || "").toLowerCase().includes(q) || (r.reqId || "").toLowerCase().includes(q) || (r.po || "").toLowerCase().includes(q) || (r.inv || "").toLowerCase().includes(q) || dnOfRow(r).toLowerCase().includes(q);
     });
     const rU = unitColsOf(filtered);
     return React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "calc(100vh - 80px)" } },
@@ -5124,6 +5198,13 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                                 padding: "6px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", whiteSpace: "nowrap" } },
                             onlyNoInv ? "✕ ดูทั้งหมด" : "⚠️ ยังไม่มี Invoice (" + _noInv + ")");
                     })(),
+                    tab === "recv" && !recvSum && React.createElement("button", { onClick: () => { setPickMode(v => !v); setPicked({}); },
+                        title: "ติ๊กเลือก Lot ทีละใบ แล้วดูยอดรวม — ใช้ตอน Invoice หลายใบใน PO เดียวกัน",
+                        style: { background: pickMode ? "#1a7f37" : "rgba(26,127,55,.1)",
+                            border: "1px solid " + (pickMode ? "#1a7f37" : "rgba(26,127,55,.4)"),
+                            borderRadius: 7, color: pickMode ? "#fff" : "#1a7f37", cursor: "pointer",
+                            padding: "6px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", whiteSpace: "nowrap" } },
+                        pickMode ? "✕ ปิดโหมดเลือก" : "☑️ เลือกทีละ Lot"),
                     tab === "recv" && React.createElement("button", { onClick: () => setRecvSum(v => !v),
                         title: "รวมยอดรับของวันเดียวกัน — ใช้จับคู่กับยอดบน Invoice ที่มาทีหลัง",
                         style: { background: recvSum ? C.acc : "rgba(9,105,218,.1)",
@@ -5172,34 +5253,65 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                     // สโตร์รับเข้าทีละหลาย Lot แต่ Invoice ที่มาทีหลังบอกยอดรวมก้อนเดียว
                     const g = {};
                     filtered.forEach(r => {
-                        const k = [r.date, r.maker, r.name].join("|");
-                        if (!g[k]) g[k] = { date: r.date, maker: r.maker, name: r.name, rows: [],
-                            kgs: 0, pcs: 0, coil: 0, m: 0, pos: new Set(), invs: new Set() };
+                        // Invoice อ้างอิง PO + size → จัดกลุ่มตาม PO ได้ด้วย ไม่ใช่แค่วันที่
+                        const k = sumBy === "po" ? [String(r.po || "").trim(), r.maker, r.name].join("|")
+                                : sumBy === "dn" ? [dnOfRow(r), r.maker, r.name].join("|")
+                                : [r.date, r.maker, r.name].join("|");
+                        if (!g[k]) g[k] = { date: r.date, maker: r.maker, name: r.name, rows: [], dates: new Set(),
+                            kgs: 0, pcs: 0, coil: 0, m: 0, pos: new Set(), invs: new Set(), dns: new Set() };
                         const x = g[k];
                         x.rows.push(r);
+                        x.dates.add(r.date);
+                        if (String(r.date) < String(x.date)) x.date = r.date;
                         x.kgs += Number(r.kgs) || 0; x.pcs += Number(r.pcs) || 0;
                         x.coil += Number(r.coil) || 0; x.m += Number(r.m) || 0;
                         if (String(r.po || "").trim()) x.pos.add(String(r.po).trim());
                         if (String(r.inv || "").trim()) x.invs.add(String(r.inv).trim());
+                        if (dnOfRow(r)) x.dns.add(dnOfRow(r));
                     });
                     const groups = Object.values(g).sort((a, b) =>
                         String(b.date).localeCompare(String(a.date)) || String(a.name).localeCompare(String(b.name)));
                     const show = (v, d) => v > 0 ? fmtQty(v, d) : "-";
+                    // หายอดที่ตรงกับ Invoice — เทียบกับ KGS/PCS/M ทีละหน่วย เผื่อ 0.01
+                    const fq = parseFloat(String(findQty).replace(/,/g, ""));
+                    const isHit = x => !isNaN(fq) && fq > 0 &&
+                        (Math.abs(x.kgs - fq) < 0.011 || Math.abs(x.pcs - fq) < 0.011 || Math.abs(x.m - fq) < 0.011);
+                    const nHit = !isNaN(fq) && fq > 0 ? groups.filter(isHit).length : -1;
                     return React.createElement("div", null,
-                        React.createElement("div", { style: { padding: "8px 12px", fontSize: 11.5, color: C.tx2, background: C.sur2, borderBottom: "1px solid " + C.brd } },
-                            "รวมยอดรับของวันเดียวกัน (วันที่ + Maker + วัตถุดิบ) — ใช้เทียบกับยอดบน Invoice ที่มาทีหลัง แล้วกด ✏️ ใส่ PO/Invoice ให้ทั้งกลุ่มทีเดียว"),
+                        React.createElement("div", { style: { padding: "8px 12px", background: C.sur2, borderBottom: "1px solid " + C.brd, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" } },
+                            React.createElement("span", { style: { fontSize: 11.5, color: C.tx2, fontWeight: 700 } }, "รวมยอดตาม:"),
+                            [["date", "📅 วันที่รับ"], ["po", "📄 PO No."], ["dn", "📦 DN / ใบส่งของ"]].map(op => React.createElement("button", { key: op[0], onClick: () => setSumBy(op[0]),
+                                style: { padding: "4px 12px", borderRadius: 20, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                                    border: "1px solid " + (sumBy === op[0] ? C.acc : C.brd), background: sumBy === op[0] ? C.acc : "transparent", color: sumBy === op[0] ? "#fff" : C.tx2 } }, op[1])),
+                            React.createElement("span", { style: { marginLeft: 10, fontSize: 11.5, color: C.tx2, fontWeight: 700 } }, "🔎 ยอดบน Invoice:"),
+                            React.createElement("input", { value: findQty, onChange: e => setFindQty(e.target.value),
+                                placeholder: "เช่น 506.50", inputMode: "decimal",
+                                style: { width: 130, padding: "5px 10px", borderRadius: 7, border: "1px solid " + C.brd, background: C.sur, color: C.tx, fontFamily: "monospace", fontSize: 12, outline: "none" } }),
+                            findQty && React.createElement("button", { onClick: () => setFindQty(""), style: { padding: "4px 9px", borderRadius: 7, fontSize: 11, cursor: "pointer", fontFamily: "inherit", border: "1px solid " + C.brd, background: "transparent", color: C.tx2 } }, "✕"),
+                            nHit >= 0 && React.createElement("span", { style: { fontSize: 12, fontWeight: 800, color: nHit ? "#1a7f37" : C.err } },
+                                nHit ? "🎯 ตรง " + nHit + " กลุ่ม" : "ไม่เจอยอดที่ตรง")),
+                        React.createElement("div", { style: { padding: "6px 12px", fontSize: 11, color: C.tx2, background: C.sur2, borderBottom: "1px solid " + C.brd } },
+                            sumBy === "po"
+                                ? "รวมทุก Lot ที่อยู่ PO เดียวกัน + วัตถุดิบเดียวกัน (แม้รับคนละวัน) — ตรงกับที่ Invoice อ้างอิง"
+                                : sumBy === "dn"
+                                ? "รวมทุก Lot ที่มาใบส่งของ (DN) เดียวกัน — ถ้า PO เดียวมี Invoice หลายใบ ให้เทียบยอดกับ DN แต่ละใบ"
+                                : "รวมทุก Lot ที่รับวันเดียวกัน + วัตถุดิบเดียวกัน"),
                         React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11.5 } },
                             React.createElement("thead", null,
                                 React.createElement("tr", { style: { background: C.sur2 } },
-                                    ["วันที่", "วัตถุดิบ", "Maker", "จำนวน Lot", "รวม KGS", "รวม PCS", "รวม COIL", "รวม M", "PO No.", "Invoice", ""].map(h =>
+                                    ["วันที่", "วัตถุดิบ", "Maker", "จำนวน Lot", "รวม KGS", "รวม PCS", "รวม COIL", "รวม M", "PO No.", "DN", "Invoice", ""].map(h =>
                                         React.createElement("th", { key: h, style: { padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: "1px solid " + C.brd, whiteSpace: "nowrap" } }, h)))),
                             React.createElement("tbody", null,
                                 groups.length === 0 && React.createElement("tr", null,
-                                    React.createElement("td", { colSpan: 11, style: { padding: 24, textAlign: "center", color: C.tx2 } }, "ไม่พบข้อมูล")),
+                                    React.createElement("td", { colSpan: 12, style: { padding: 24, textAlign: "center", color: C.tx2 } }, "ไม่พบข้อมูล")),
                                 groups.map((x, gi) => {
                                     const noInv = x.invs.size === 0;
-                                    return React.createElement("tr", { key: gi, style: { background: noInv ? "rgba(210,153,34,.06)" : "transparent" } },
-                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, whiteSpace: "nowrap", fontWeight: 700 } }, fmtDate(x.date)),
+                                    const hit = isHit(x);
+                                    return React.createElement("tr", { key: gi, style: { background: hit ? "rgba(63,185,80,.16)" : noInv ? "rgba(210,153,34,.06)" : "transparent",
+                                        outline: hit ? "2px solid #1a7f37" : "none" } },
+                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, whiteSpace: "nowrap", fontWeight: 700 } },
+                                            hit ? "🎯 " : "", fmtDate(x.date),
+                                            x.dates.size > 1 ? React.createElement("span", { style: { color: C.tx2, fontWeight: 400, fontSize: 10 } }, " +" + (x.dates.size - 1) + " วัน") : null),
                                         React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontWeight: 600 } }, sizeTxt(x.name)),
                                         React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2 } },
                                             React.createElement(Tag, { color: C.acc2, bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, x.maker)),
@@ -5209,6 +5321,7 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                                         React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace" } }, show(x.coil, 0)),
                                         React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace" } }, show(x.m, 1)),
                                         React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10.5 } }, x.pos.size ? [...x.pos].join(", ") : "-"),
+                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10.5, color: C.tx2 } }, x.dns.size ? [...x.dns].join(", ") : "-"),
                                         React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10.5 } },
                                             noInv ? React.createElement("span", { style: { color: "#9a6700", fontWeight: 700 } }, "⏳ รอ Invoice") : [...x.invs].join(", ")),
                                         React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2 } },
@@ -5218,19 +5331,47 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                                                 "✏️ ใส่ PO/Invoice")));
                                 }))));
                 })(),
+                tab === "recv" && !recvSum && pickMode && (() => {
+                    const sel = Object.values(picked);
+                    const t = { kgs: 0, pcs: 0, coil: 0, m: 0 };
+                    sel.forEach(r => { t.kgs += Number(r.kgs) || 0; t.pcs += Number(r.pcs) || 0; t.coil += Number(r.coil) || 0; t.m += Number(r.m) || 0; });
+                    const fq = parseFloat(String(findQty).replace(/,/g, ""));
+                    const match = !isNaN(fq) && fq > 0 &&
+                        (Math.abs(t.kgs - fq) < 0.011 || Math.abs(t.pcs - fq) < 0.011 || Math.abs(t.m - fq) < 0.011);
+                    const diff = !isNaN(fq) && fq > 0 ? (t.kgs > 0 ? t.kgs - fq : t.pcs > 0 ? t.pcs - fq : t.m - fq) : null;
+                    return React.createElement("div", { style: { position: "sticky", top: 0, zIndex: 5, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center",
+                        padding: "9px 12px", background: match ? "rgba(63,185,80,.15)" : C.sur2, borderBottom: "2px solid " + (match ? "#1a7f37" : C.brd) } },
+                        React.createElement("span", { style: { fontSize: 12, fontWeight: 800, color: C.tx } }, "เลือกไว้ " + sel.length + " Lot"),
+                        React.createElement("span", { style: { fontSize: 13, fontWeight: 800, fontFamily: "monospace", color: C.acc } },
+                            [t.kgs > 0 ? fmtQty(t.kgs, 2) + " KGS" : "", t.pcs > 0 ? fmtQty(t.pcs) + " PCS" : "",
+                             t.coil > 0 ? fmtQty(t.coil) + " COIL" : "", t.m > 0 ? fmtQty(t.m, 1) + " M" : ""].filter(Boolean).join("  ·  ") || "—"),
+                        React.createElement("span", { style: { fontSize: 11.5, color: C.tx2, fontWeight: 700 } }, "🔎 ยอดบน Invoice:"),
+                        React.createElement("input", { value: findQty, onChange: e => setFindQty(e.target.value), placeholder: "เช่น 506.50", inputMode: "decimal",
+                            style: { width: 120, padding: "5px 10px", borderRadius: 7, border: "1px solid " + C.brd, background: C.sur, color: C.tx, fontFamily: "monospace", fontSize: 12, outline: "none" } }),
+                        diff != null && React.createElement("span", { style: { fontSize: 12.5, fontWeight: 800, color: match ? "#1a7f37" : C.err } },
+                            match ? "🎯 ยอดตรงแล้ว" : (diff > 0 ? "เกิน " + fmtQty(diff, 2) : "ยังขาด " + fmtQty(-diff, 2))),
+                        sel.length > 0 && setRecvHist && React.createElement("button", { onClick: () => fillPickedPoInv(sel),
+                            style: { marginLeft: "auto", background: "#1a7f37", border: "none", borderRadius: 6, color: "#fff", cursor: "pointer", padding: "6px 14px", fontSize: 12, fontWeight: 700, fontFamily: "inherit" } },
+                            "✏️ ใส่ PO/Invoice/ราคา ให้ " + sel.length + " Lot ที่เลือก"),
+                        sel.length > 0 && React.createElement("button", { onClick: () => setPicked({}),
+                            style: { background: "transparent", border: "1px solid " + C.brd, borderRadius: 6, color: C.tx2, cursor: "pointer", padding: "6px 10px", fontSize: 11.5, fontFamily: "inherit" } }, "ล้างที่เลือก"));
+                })(),
                 tab === "recv" && !recvSum && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11 } },
                     React.createElement("thead", null,
-                        React.createElement("tr", { style: { background: C.sur2 } }, ["วันที่", "PO No.", "Invoice", "วัตถุดิบ", "Maker", "Lot No.", ...rU.map(c => c[1]), "ROHS", ""].map(h => React.createElement("th", { key: h, style: { padding: "5px 7px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, h)))),
+                        React.createElement("tr", { style: { background: C.sur2 } }, [...(pickMode ? ["☑"] : []), "วันที่", "PO No.", "DN", "Invoice", "วัตถุดิบ", "Maker", "Lot No.", ...rU.map(c => c[1]), "ROHS", ""].map(h => React.createElement("th", { key: h, style: { padding: "5px 7px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, h)))),
                     React.createElement("tbody", null,
                         filtered.length === 0 && React.createElement("tr", null,
-                            React.createElement("td", { colSpan: 7 + rU.length, style: { padding: 24, textAlign: "center", color: C.tx2 } }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25")),
+                            React.createElement("td", { colSpan: 8 + rU.length + (pickMode ? 1 : 0), style: { padding: 24, textAlign: "center", color: C.tx2 } }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25")),
                         filtered.map((r, fi) => {
                             const gi = r._gi;
                             const isEditing = editRecvIdx === gi;
                             return React.createElement(React.Fragment, { key: fi },
                                 React.createElement("tr", { style: { background: isEditing ? "rgba(88,166,255,.06)" : "transparent" } },
+                                    pickMode && React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, textAlign: "center" } },
+                                        React.createElement("input", { type: "checkbox", checked: !!picked[pickKey(r)], onChange: () => togglePick(r), style: { cursor: "pointer", width: 15, height: 15 } })),
                                     React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, whiteSpace: "nowrap" } }, fmtDate(r.date)),
                                     React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10 } }, r.po || "-"),
+                                    React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10, color: C.tx2 } }, dnOfRow(r) || "-"),
                                     React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10 } }, r.inv ? r.inv : React.createElement("span", { title: "ยังไม่ได้ใส่เลขที่ Invoice", style: { color: "#9a6700", fontWeight: 700 } }, "⏳ รอ Invoice")),
                                     React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontWeight: 600 } },
                                         (r.name || "").replace(/size:/i, ""),
@@ -5245,7 +5386,7 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                                         React.createElement("button", { onClick: () => isEditing ? setEditRecvIdx(null) : startEditRecv(gi, r), style: { background: isEditing ? "rgba(210,153,34,.2)" : "rgba(88,166,255,.15)", border: `1px solid ${isEditing ? "rgba(210,153,34,.4)" : "rgba(88,166,255,.3)"}`, borderRadius: 4, color: isEditing ? C.warn : "#0969da", cursor: "pointer", padding: "3px 8px", fontSize: 11 } }, isEditing ? "✕ ปิด" : "✏️"),
                                         React.createElement("button", { onClick: () => deleteRecv(gi, r), style: { background: "rgba(248,81,73,.15)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 4, color: "#cf222e", cursor: "pointer", padding: "3px 8px", fontSize: 11 } }, "\uD83D\uDDD1\uFE0F")))),
                                 isEditing && React.createElement("tr", null,
-                                    React.createElement("td", { colSpan: 11, style: { padding: "12px 14px", borderBottom: `1px solid ${C.brd}`, background: "rgba(88,166,255,.04)" } },
+                                    React.createElement("td", { colSpan: 13, style: { padding: "12px 14px", borderBottom: `1px solid ${C.brd}`, background: "rgba(88,166,255,.04)" } },
                                         React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: C.acc2, marginBottom: 8 } },
                                             "\u270F\uFE0F \u0E41\u0E01\u0E49\u0E44\u0E02\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E23\u0E31\u0E1A \u2014 Lot: ",
                                             r.lotNo),
@@ -5259,7 +5400,7 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                                             editRecvForm.matId !== editRecvForm._fromMat && React.createElement("div", { style: { fontSize: 10, color: C.warn, fontWeight: 700, marginTop: 3 } },
                                                 "⚠️ จะย้าย Lot นี้ทั้งก้อนไปอยู่ใต้ Material ตัวใหม่ — ยอดจะหายจากตัวเดิมไปเพิ่มที่ตัวใหม่")),
                                         React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" } },
-                                            [["วันที่", "date", "date", 80], ["PO No.", "po", "text", 90], ["Invoice", "inv", "text", 90], ["Lot No. *", "lotNo", "text", 120], ["PCS", "pcs", "number", 70], ["COIL", "coil", "number", 70], ["KGS", "kgs", "number", 80], ["M (เมตร)", "m", "number", 70]].map(([lbl, field, type, w]) => (React.createElement("div", { key: field },
+                                            [["วันที่", "date", "date", 80], ["PO No.", "po", "text", 90], ["DN / ใบส่งของ", "dn", "text", 100], ["Invoice", "inv", "text", 90], ["Lot No. *", "lotNo", "text", 120], ["PCS", "pcs", "number", 70], ["COIL", "coil", "number", 70], ["KGS", "kgs", "number", 80], ["M (เมตร)", "m", "number", 70]].map(([lbl, field, type, w]) => (React.createElement("div", { key: field },
                                                 React.createElement("div", { style: { fontSize: 9, color: C.tx2, marginBottom: 2 } }, lbl),
                                                 React.createElement("input", { type: type, value: editRecvForm[field] || "", onChange: e => setEditRecvForm(f => ({ ...f, [field]: e.target.value })), style: { background: C.bg, border: `1px solid ${C.brd}`, borderRadius: 5, padding: "4px 8px", color: C.tx, fontFamily: field === "lotNo" || field === "pcs" || field === "coil" || field === "kgs" ? "monospace" : "inherit", fontSize: 11, width: w, outline: "none" } })))),
                                             React.createElement("div", null,
