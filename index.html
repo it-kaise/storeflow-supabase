@@ -5225,7 +5225,7 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
             React.createElement("div", { style: { overflow: "auto", flex: 1, minHeight: 240 } },
                 tab === "issue" && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11 } },
                     React.createElement("thead", { style: { position: "sticky", top: 0, zIndex: 3 } },
-                        React.createElement("tr", { style: { background: C.sur2 } }, ["วันที่", "เลขที่ใบเบิก", "วัตถุดิบ", "Maker", "Lot No.", "QTY", "Unit", "KGS", "M", "Forecast/PO", "แผนก", "ผู้เบิก", "ผู้อนุมัติ", "ผู้จ่าย"].map(h => React.createElement("th", { key: h, style: { padding: "5px 7px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, h)))),
+                        React.createElement("tr", { style: { background: C.sur2 } }, ["วันที่", "เลขที่ใบเบิก", "วัตถุดิบ", "Maker", "Lot No.", "QTY", "Unit", "KGS", "M", "Forecast/PO", "แผนก", "ผู้เบิก", "ผู้อนุมัติ", "ผู้จ่าย"].map(h => React.createElement("th", { key: h, style: { padding: "5px 7px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap", background: C.sur2 } }, h)))),
                     React.createElement("tbody", null,
                         filtered.length === 0 && React.createElement("tr", null,
                             React.createElement("td", { colSpan: 13, style: { padding: 24, textAlign: "center", color: C.tx2 } }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25")),
@@ -5297,10 +5297,10 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                                 ? "รวมทุก Lot ที่มาใบส่งของ (DN) เดียวกัน — ถ้า PO เดียวมี Invoice หลายใบ ให้เทียบยอดกับ DN แต่ละใบ"
                                 : "รวมทุก Lot ที่รับวันเดียวกัน + วัตถุดิบเดียวกัน"),
                         React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11.5 } },
-                            React.createElement("thead", null,
+                            React.createElement("thead", { style: { position: "sticky", top: 0, zIndex: 4 } },
                                 React.createElement("tr", { style: { background: C.sur2 } },
                                     ["วันที่", "วัตถุดิบ", "Maker", "จำนวน Lot", "รวม KGS", "รวม PCS", "รวม COIL", "รวม M", "PO No.", "DN", "Invoice", ""].map(h =>
-                                        React.createElement("th", { key: h, style: { padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: "1px solid " + C.brd, whiteSpace: "nowrap" } }, h)))),
+                                        React.createElement("th", { key: h, style: { padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: "1px solid " + C.brd, whiteSpace: "nowrap", background: C.sur2 } }, h)))),
                             React.createElement("tbody", null,
                                 groups.length === 0 && React.createElement("tr", null,
                                     React.createElement("td", { colSpan: 12, style: { padding: 24, textAlign: "center", color: C.tx2 } }, "ไม่พบข้อมูล")),
@@ -5331,7 +5331,9 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                                                 "✏️ ใส่ PO/Invoice")));
                                 }))));
                 })(),
-                tab === "recv" && !recvSum && pickMode && (() => {
+                tab === "recv" && !recvSum && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11 } },
+                    React.createElement("thead", { style: { position: "sticky", top: 0, zIndex: 4 } },
+                        pickMode && React.createElement("tr", null, React.createElement("th", { colSpan: 30, style: { padding: 0, textAlign: "left", fontWeight: 400 } }, (() => {
                     const sel = Object.values(picked);
                     const t = { kgs: 0, pcs: 0, coil: 0, m: 0 };
                     sel.forEach(r => { t.kgs += Number(r.kgs) || 0; t.pcs += Number(r.pcs) || 0; t.coil += Number(r.coil) || 0; t.m += Number(r.m) || 0; });
@@ -5339,8 +5341,8 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                     const match = !isNaN(fq) && fq > 0 &&
                         (Math.abs(t.kgs - fq) < 0.011 || Math.abs(t.pcs - fq) < 0.011 || Math.abs(t.m - fq) < 0.011);
                     const diff = !isNaN(fq) && fq > 0 ? (t.kgs > 0 ? t.kgs - fq : t.pcs > 0 ? t.pcs - fq : t.m - fq) : null;
-                    return React.createElement("div", { style: { position: "sticky", top: 0, zIndex: 5, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center",
-                        padding: "9px 12px", background: match ? "rgba(63,185,80,.15)" : C.sur2, borderBottom: "2px solid " + (match ? "#1a7f37" : C.brd) } },
+                    return React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center",
+                        padding: "9px 12px", background: match ? "#dafbe1" : C.sur2, borderBottom: "2px solid " + (match ? "#1a7f37" : C.brd) } },
                         React.createElement("span", { style: { fontSize: 12, fontWeight: 800, color: C.tx } }, "เลือกไว้ " + sel.length + " Lot"),
                         React.createElement("span", { style: { fontSize: 13, fontWeight: 800, fontFamily: "monospace", color: C.acc } },
                             [t.kgs > 0 ? fmtQty(t.kgs, 2) + " KGS" : "", t.pcs > 0 ? fmtQty(t.pcs) + " PCS" : "",
@@ -5355,10 +5357,8 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                             "✏️ ใส่ PO/Invoice/ราคา ให้ " + sel.length + " Lot ที่เลือก"),
                         sel.length > 0 && React.createElement("button", { onClick: () => setPicked({}),
                             style: { background: "transparent", border: "1px solid " + C.brd, borderRadius: 6, color: C.tx2, cursor: "pointer", padding: "6px 10px", fontSize: 11.5, fontFamily: "inherit" } }, "ล้างที่เลือก"));
-                })(),
-                tab === "recv" && !recvSum && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11 } },
-                    React.createElement("thead", null,
-                        React.createElement("tr", { style: { background: C.sur2 } }, [...(pickMode ? ["☑"] : []), "วันที่", "PO No.", "DN", "Invoice", "วัตถุดิบ", "Maker", "Lot No.", ...rU.map(c => c[1]), "ROHS", ""].map(h => React.createElement("th", { key: h, style: { padding: "5px 7px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, h)))),
+                        })())),
+                        React.createElement("tr", { style: { background: C.sur2 } }, [...(pickMode ? ["☑"] : []), "วันที่", "PO No.", "DN", "Invoice", "วัตถุดิบ", "Maker", "Lot No.", ...rU.map(c => c[1]), "ROHS", ""].map(h => React.createElement("th", { key: h, style: { padding: "5px 7px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap", background: C.sur2 } }, h)))),
                     React.createElement("tbody", null,
                         filtered.length === 0 && React.createElement("tr", null,
                             React.createElement("td", { colSpan: 8 + rU.length + (pickMode ? 1 : 0), style: { padding: 24, textAlign: "center", color: C.tx2 } }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25")),
