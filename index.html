@@ -823,7 +823,8 @@ function Inp({ value, onChange, placeholder, type = "text", style = {} }) {
 // (textarea ที่ใช้ ...inputStyle จะมี minHeight ทับอยู่แล้ว จึงไม่กระทบ)
 const inputStyle = { width: "100%", height: 38, padding: "8px 10px", background: C.sur2, border: `1px solid ${C.brd}`, borderRadius: 7, color: C.tx, fontFamily: "inherit", fontSize: 13, outline: "none", boxSizing: "border-box" };
 // กล่องแสดงผลอย่างเดียว (อ่านไม่แก้) — ขนาด/ระนาบเท่ากับช่องกรอกทุกประการ
-const roBoxStyle = { ...inputStyle, background: C.bg, display: "flex", alignItems: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+// ข้อความยาว (Part No. / ชื่อ Material) ให้ขยายกล่องลงมาแทนการตัดหางทิ้ง จะได้อ่านครบทุกตัว
+const roBoxStyle = { ...inputStyle, background: C.bg, display: "flex", alignItems: "center", height: "auto", minHeight: 38, whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.3 };
 function Card({ children, style = {}, grow }) { return React.createElement("div", { style: { background: C.sur, border: `1px solid ${C.brd}`, borderRadius: 10, overflow: "hidden", marginBottom: 14, ...(grow ? { flex: 1, display: "flex", flexDirection: "column", minHeight: 0 } : {}), ...style } }, children); }
 function CHd({ title, right }) { return React.createElement("div", { style: { padding: "11px 16px", borderBottom: `1px solid ${C.brd}`, display: "flex", alignItems: "center" } },
     React.createElement("span", { style: { fontSize: 13, fontWeight: 700, flex: 1 } }, title),
@@ -837,7 +838,8 @@ function FG({ label, children, span = false, note = "" }) {
             note && React.createElement("span", { style: { color: C.acc3, fontWeight: 400, fontSize: 10, textAlign: "right", flexShrink: 0, maxWidth: "58%" } }, note)),
         React.createElement("div", null, children));
 }
-function FGrid({ children, cols = 3 }) { return React.createElement("div", { style: { display: "grid", gridTemplateColumns: `repeat(${cols},1fr)`, gap: 12, marginBottom: 12 } }, children); }
+// tpl = กำหนดความกว้างแต่ละช่องเองได้ (ช่องที่ข้อความยาวอย่าง Size ควรกว้างกว่าช่องอื่น)
+function FGrid({ children, cols = 3, tpl }) { return React.createElement("div", { style: { display: "grid", gridTemplateColumns: tpl || `repeat(${cols},1fr)`, gap: 12, marginBottom: 12 } }, children); }
 function SecTitle({ children }) { return React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: C.tx2, textTransform: "uppercase", letterSpacing: .5, margin: "14px 0 8px", display: "flex", alignItems: "center", gap: 8 } },
     children,
     React.createElement("div", { style: { flex: 1, height: 1, background: C.brd } })); }
@@ -1467,6 +1469,8 @@ function StoreFlow() {
     const issuingRef = React.useRef(false); // กันกดปุ่มจ่ายรัวจนตัดสต๊อกซ้ำ
     // เลข Lot จริงที่สโตร์จดมาจากของตอนหยิบ (ใช้ทับเลข Lot ในระบบตอนลงประวัติเบิก)
     const [realLots, setRealLots] = useState({});
+    // น้ำหนักจริงที่ชั่งได้ตอนจ่าย (KGS) — ใส่หรือไม่ใส่ก็ได้ ถ้าใส่จะตัดกิโลตามนี้แทนการคำนวณจากสัดส่วนของ lot
+    const [realKgs, setRealKgs] = useState({});
     // ── Auto-refresh: ดึงสต๊อก/ใบเบิก/วัตถุดิบล่าสุดทุก 20 วิ ให้หลายคนเห็นตรงกัน
     //    (หยุดชั่วคราวขณะเปิด Modal/ฟอร์ม เพื่อไม่ให้ข้อมูลที่กำลังกรอกถูกเขียนทับ) ──
     useEffect(() => {
@@ -1738,7 +1742,7 @@ function StoreFlow() {
     // ถ้าขอ 500 แต่มี 100 จะจ่าย 100 แล้วปิดใบเป็น "จ่ายแล้ว" เงียบ ๆ ยอดบนกระดาษกับระบบจะไม่ตรงกัน
     const availOfLot = (l, u) => {
         if (u === "M" || (l.rem_m != null && l.rem_pcs == null && l.rem_kgs == null && l.rem_coil == null)) return l.rem_m || 0;
-        if (u === "COIL" || (l.rem_coil != null && l.rem_pcs == null && l.rem_kgs == null)) return l.rem_coil || 0;
+        if (u === "COIL" || u === "COIL+KGS" || (l.rem_coil != null && l.rem_pcs == null && l.rem_kgs == null)) return l.rem_coil || 0;
         if (u === "KGS" && l.rem_kgs != null) return l.rem_kgs || 0;
         return l.rem_pcs || 0;
     };
@@ -1777,6 +1781,9 @@ function StoreFlow() {
         const selKey = `${r.items.indexOf(item)}_${item.matId}`;
         // เลข Lot จริงที่สโตร์จดมา — ถ้ามี ให้ลงประวัติเบิกด้วยเลขนี้
         const realLotNo = String((realLots && realLots[selKey]) || "").trim();
+        // น้ำหนักจริงที่สโตร์ชั่งตอนจ่าย (ถ้าใส่มา) — ใช้แทนการคำนวณกิโลจากสัดส่วนของ lot
+        // เกลี่ยตามจำนวนที่ตัดจริงของแต่ละ lot แล้วไม่ให้เกินกิโลคงเหลือของ lot นั้น
+        const realKgTotal = parseFloat((realKgs && realKgs[selKey]) || "") || 0;
         const chosenLots = (selectedLots && selectedLots[selKey]) || [];
 
         // Logic for updating Lots: คำนวณยอดตัด แล้วบันทึกกลับเข้า DB (sf_lots)
@@ -1815,14 +1822,21 @@ function StoreFlow() {
                     ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - cutCoil) };
                 cuts.push({ lotNo, coil: cutCoil != null ? Math.round(cutCoil * 100) / 100 : null, kgs: null, pcs: null, m: take });
                 rem -= take;
-            } else if (unit === "COIL" || (ml[i].rem_coil != null && ml[i].rem_pcs == null && ml[i].rem_kgs == null)) {
+            } else if (unit === "COIL" || unit === "COIL+KGS" || (ml[i].rem_coil != null && ml[i].rem_pcs == null && ml[i].rem_kgs == null)) {
                 const take = Math.min(takeAmt, ml[i].rem_coil || 0);
                 if (take <= 0) continue;
-                const kgsPerCoil = (ml[i].coil && ml[i].kgs) ? (ml[i].kgs / ml[i].coil) : 0;
-                const cutKgs = ml[i].rem_kgs != null ? take * kgsPerCoil : null;
+                // ทองแดงรับเป็นกิโล ส่งมาเป็น coil และแต่ละ coil หนักไม่เท่ากัน (1 lot = 1 coil)
+                // ตัดกิโลตามน้ำหนักจริงของ coil ที่หยิบก่อนเสมอ — แม่นกว่าน้ำหนักที่เขียนมาในใบเบิก
+                // ถ้า lot ไม่มีน้ำหนักบันทึกไว้ ค่อยใช้น้ำหนักที่ใบเบิกระบุ (เช่น 1 coil + 141.20 kg)
+                const reqCoil = parseFloat(item.qty) || 0;
+                const reqKgs = parseFloat(item.kgs) || 0;
+                const kgsPerCoil = (realKgTotal > 0 && reqCoil > 0) ? (realKgTotal / reqCoil)
+                    : (ml[i].coil && ml[i].kgs) ? (ml[i].kgs / ml[i].coil)
+                    : (reqKgs > 0 && reqCoil > 0) ? (reqKgs / reqCoil) : 0;
+                const cutKgs = ml[i].rem_kgs != null ? Math.min(ml[i].rem_kgs || 0, take * kgsPerCoil) : null;
                 const mPerCoil2 = (ml[i].coil && ml[i].m) ? (ml[i].m / ml[i].coil) : 0;
                 const cutM = (ml[i].rem_m != null && mPerCoil2 > 0) ? Math.min(ml[i].rem_m, take * mPerCoil2) : null;
-                ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (take * kgsPerCoil)) : ml[i].rem_kgs };
+                ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (cutKgs || 0)) : ml[i].rem_kgs };
                 ml[i] = cutM != null ? { ...ml[i], rem_m: Math.max(0, (ml[i].rem_m || 0) - cutM) } : ml[i];
                 cuts.push({ lotNo, coil: take, kgs: cutKgs, pcs: null, m: cutM != null ? Math.round(cutM * 100) / 100 : null });
                 rem -= take;
@@ -1842,8 +1856,10 @@ function StoreFlow() {
             } else {
                 const take = Math.min(takeAmt, ml[i].rem_pcs || 0);
                 if (take <= 0) continue;
-                // แปลง PCS -> KGS ด้วยสัดส่วนจริงของ lot ก่อน ถ้าไม่มีค่อยใช้ kpp ของ material
-                const kgsPerPcs = (ml[i].kgs && ml[i].pcs) ? (ml[i].kgs / ml[i].pcs) : ((matInfo && matInfo.kpp) ? matInfo.kpp : 0);
+                // แปลง PCS -> KGS ด้วยน้ำหนักจริงที่ชั่งมา (ถ้าใส่) ก่อน แล้วค่อยใช้สัดส่วนของ lot / kpp ของ material
+                const totalPcsReq = parseFloat(item.qty) || 0;
+                const kgsPerPcs = (realKgTotal > 0 && totalPcsReq > 0) ? (realKgTotal / totalPcsReq)
+                    : (ml[i].kgs && ml[i].pcs) ? (ml[i].kgs / ml[i].pcs) : ((matInfo && matInfo.kpp) ? matInfo.kpp : 0);
                 const cutKgs = (ml[i].rem_kgs != null && kgsPerPcs > 0) ? Math.min(ml[i].rem_kgs, take * kgsPerPcs) : null;
                 ml[i] = { ...ml[i], rem_pcs: Math.max(0, (ml[i].rem_pcs || 0) - take) };
                 if (cutKgs != null)
@@ -1908,6 +1924,7 @@ function StoreFlow() {
     setModal(null);
     setSelectedLots({});
     setRealLots({});
+    setRealKgs({});
     setTimeout(() => toast("📧 ส่ง Email แจ้งฝ่ายผลิตแล้ว", "info"), 600);
     } finally { issuingRef.current = false; }
 }
@@ -2427,7 +2444,7 @@ function StoreFlow() {
                     }
                     else {
                         issueReq(pendingIsId);
-                    } } }, currentUser ? "✅ ยืนยันการจ่าย + ตัดสต๊อก" : "🔐 Login + จ่าย")) }, pendingIsId && React.createElement(IsBody, { req: requests.find(r => r.id === pendingIsId), lots: lots, selectedLots: selectedLots, setSelectedLots: setSelectedLots, realLots: realLots, setRealLots: setRealLots })),
+                    } } }, currentUser ? "✅ ยืนยันการจ่าย + ตัดสต๊อก" : "🔐 Login + จ่าย")) }, pendingIsId && React.createElement(IsBody, { req: requests.find(r => r.id === pendingIsId), lots: lots, selectedLots: selectedLots, setSelectedLots: setSelectedLots, realLots: realLots, setRealLots: setRealLots, realKgs: realKgs, setRealKgs: setRealKgs })),
         React.createElement(Modal, { open: modal === "mat", onClose: () => { setModal(null); setMmFromPartNo(false); }, title: mmForm.editId ? "แก้ไข Material" : (mmFromPartNo ? "เพิ่ม Material ใหม่ (ยังไม่บันทึก)" : "เพิ่ม Material ใหม่"), icon: "\u2699\uFE0F", width: 720, footer: React.createElement(React.Fragment, null,
                 React.createElement(Btn, { v: "ghost", onClick: () => { setModal(null); setMmFromPartNo(false); } }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"),
                 React.createElement(Btn, { v: mmFromPartNo ? "success" : "primary", sz: mmFromPartNo ? "md" : "sm", onClick: saveMat }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01" + (mmFromPartNo ? " \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E40\u0E02\u0E49\u0E32\u0E04\u0E25\u0E31\u0E07" : ""))) },
@@ -3456,9 +3473,10 @@ function ReqPage({ requests, materials, filter, setFilter, role, setHistoryModal
     const [q, setQ] = useState("");
     const [month, setMonth] = useState("");
     const [dept, setDept] = useState("");
-    // เก็บ "ใบที่กางอยู่" — ค่าเริ่มต้นยุบทั้งหมด เพราะ 40+ ใบกางเต็มทำให้ต้องเลื่อนยาวมาก
+    // เก็บ "ใบที่กางอยู่" — ค่าเริ่มต้นกางทุกใบ ผู้ใช้เห็นรายละเอียดทันทีโดยไม่ต้องคลิก
+    // ถ้าอยากให้สั้นลงค่อยกดยุบเอง (ทีละใบ หรือกด "ยุบทั้งหมด")
     const [openIds, setOpenIds] = useState({});
-    const [allOpen, setAllOpen] = useState(false);
+    const [allOpen, setAllOpen] = useState(true);
     const toggleOpen = id => setOpenIds(o => ({ ...o, [id]: !isOpen(id) }));
 
     // ค้นหาได้ทั้งเลขที่ใบเบิก / ผู้เบิก / แผนก / WO / Part No. / วัตถุดิบ / Maker / Lot
@@ -3528,7 +3546,7 @@ function ReqPage({ requests, materials, filter, setFilter, role, setHistoryModal
             + ".st{display:inline-block;margin-top:4px;border:1.5px solid #111;border-radius:3px;padding:1px 9px;font-size:11px;font-weight:700}"
             + ".gr{display:grid;grid-template-columns:repeat(3,1fr);gap:5px 16px;border:1px solid #999;padding:8px 10px;margin-bottom:10px}"
             + ".f{display:flex;gap:6px;font-size:11.5px;min-width:0}"
-            + ".fl{color:#555;font-weight:700;white-space:nowrap}.fv{font-weight:700;overflow:hidden;text-overflow:ellipsis}"
+            + ".fl{color:#555;font-weight:700;white-space:nowrap}.fv{font-weight:700;white-space:normal;word-break:break-word}"
             + "table{width:100%;border-collapse:collapse;font-size:11.5px}"
             + "th{background:#e9edf2;border:1px solid #999;padding:5px 6px;text-align:left;font-size:10.5px;font-weight:800;letter-spacing:.3px}"
             + "td{border:1px solid #999;padding:5px 6px;vertical-align:top}"
@@ -3648,7 +3666,7 @@ function ReqPage({ requests, materials, filter, setFilter, role, setHistoryModal
                 ["W/O No.", r.jo || ""], ["Forecast/PO", r.forecast || ""], ["ลูกค้า", r.customer || ""]].filter(x => x[1]);
             const field = (lb, val, fi) => React.createElement("div", { key: lb, style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0, padding: "1px 14px", borderLeft: fi === 0 ? "none" : "1px solid #6e7781", flex: "0 1 auto" } },
                 React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: C.tx3, letterSpacing: 0.5, textTransform: "uppercase" } }, lb),
-                React.createElement("span", { style: { fontSize: 13, fontWeight: 400, color: "#111418", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, val));
+                React.createElement("span", { style: { fontSize: 13, fontWeight: 400, color: "#111418", whiteSpace: "normal", wordBreak: "break-word" } }, val));
             return React.createElement("div", { key: r.id, style: { background: C.sur, border: "1px solid #1b1f24", borderRadius: 8, marginBottom: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(27,31,36,.10)" } },
                 React.createElement("div", { onClick: () => toggleOpen(r.id), style: { cursor: "pointer", padding: "13px 18px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", borderBottom: "1px solid #1b1f24", background: "linear-gradient(180deg, rgba(9,105,218,.035), transparent)" } },
                     React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
@@ -3911,7 +3929,7 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                         "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E17\u0E35\u0E48 ",
                         idx + 1),
                     idx > 0 && React.createElement(Btn, { v: "ghost", sz: "xs", onClick: () => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) })) }, "\uD83D\uDDD1\uFE0F \u0E25\u0E1A")),
-                React.createElement(FGrid, { cols: 4 },
+                React.createElement(FGrid, { cols: 4, tpl: "0.85fr 1.05fr 1.55fr 0.85fr" },
                     React.createElement(FG, { label: "\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17" },
                         React.createElement(Sel, { value: it.type, onChange: v => updateItem(idx, "type", v), options: [{ v: "", l: "-- เลือกประเภท --" }, ...master.matTypes.map(t => ({ v: t.code, l: `${t.label} (${t.code})` }))], placeholder: "-- \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17 --" })),
                     React.createElement(FG, { label: "Part No. \u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32", note: "autofill Size+Maker" },
@@ -3998,6 +4016,14 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                                     filtMats.map(m => React.createElement("option", { key: m.id, value: lbl(m) }))),
                                 (it._sizeTxt && !it.matId) ? React.createElement("div", { style: { fontSize: 10.5, color: "#9a6700", marginTop: 3, fontWeight: 600 } },
                                     "⚠️ ยังไม่ตรงกับ Size ใด — พิมพ์ต่อ หรือเลือกจากรายการ") : null,
+                                // ชื่อ/Size ที่ยาว (เช่น NQ31D005H01 HOLDER RUBBER) จะอ่านไม่ครบในช่องพิมพ์
+                                // เลือกแล้วจึงโชว์เต็ม ๆ ใต้ช่อง ตัดขึ้นบรรทัดใหม่ได้ ผู้เบิกเช็คได้ว่าเลือกถูกตัว
+                                cur ? React.createElement("div", { style: { marginTop: 5, padding: "6px 10px", background: "rgba(63,185,80,.08)", border: "1px solid rgba(63,185,80,.35)", borderRadius: 7, fontSize: 12.5, fontWeight: 700, color: C.tx, whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.35 } },
+                                    "✅ " + String(cur.size || "").replace(/^size:/i, ""),
+                                    React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: C.tx2, marginTop: 2 } },
+                                        (cur.name ? cur.name + " · " : "")
+                                        + (cur.temper && cur.temper !== "-" ? "Temper " + cur.temper + " · " : "")
+                                        + cur.maker + " · " + stockSummary(cur.id).text)) : null,
                                 // Size เดียวกันมีหลาย Maker (เช่น Ø7.0x0.41xLWC-RB มี 3 เจ้า) → กดเลือกได้เลย ไม่ต้องไปเปิด dropdown Maker
                                 (() => {
                                     const key = cur ? _normSizeKey(cur.size)
@@ -4087,11 +4113,12 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                     return React.createElement("div", { style: { background: "rgba(63,185,80,.09)", border: "1px solid rgba(63,185,80,.35)", borderRadius: 7, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "#1a7f37", fontWeight: 600 } },
                         "✅ สต๊อกพร้อมจ่าย — " + st.text);
                 })(),
-                (it.unit === "COIL" || it.unit === "COIL+KGS") && React.createElement(FGrid, { cols: 2 },
-                    React.createElement(FG, { label: "\u0E08\u0E33\u0E19\u0E27\u0E19 COIL" },
-                        React.createElement(Inp, { type: "number", value: it.coil, onChange: v => updateItem(idx, "coil", v), placeholder: "0" })),
-                    React.createElement(FG, { label: "\u0E19\u0E49\u0E33\u0E2B\u0E19\u0E31\u0E01\u0E23\u0E27\u0E21 KGS" },
-                        React.createElement(Inp, { type: "number", value: it.kgs, onChange: v => updateItem(idx, "kgs", v), placeholder: "0.00" }))));
+                (it.unit === "COIL" || it.unit === "COIL+KGS") && React.createElement("div", null,
+                    React.createElement(FGrid, { cols: 2 },
+                        React.createElement(FG, { label: "\u0E19\u0E49\u0E33\u0E2B\u0E19\u0E31\u0E01\u0E23\u0E27\u0E21 KGS (\u0E43\u0E2A\u0E48\u0E44\u0E14\u0E49\u0E16\u0E49\u0E32\u0E17\u0E23\u0E32\u0E1A)" },
+                            React.createElement(Inp, { type: "number", value: it.kgs, onChange: v => updateItem(idx, "kgs", v), placeholder: "0.00" }))),
+                    React.createElement("div", { style: { fontSize: 11, color: C.tx2, marginTop: -6, marginBottom: 10 } },
+                        "\u0E0A\u0E48\u0E2D\u0E07 \"\u0E08\u0E33\u0E19\u0E27\u0E19\" \u0E14\u0E49\u0E32\u0E19\u0E1A\u0E19 = \u0E08\u0E33\u0E19\u0E27\u0E19\u0E21\u0E49\u0E27\u0E19 (COIL) \u2014 \u0E43\u0E2A\u0E48 KGS \u0E44\u0E27\u0E49\u0E40\u0E1B\u0E47\u0E19\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2D\u0E49\u0E32\u0E07\u0E2D\u0E34\u0E07 \u0E40\u0E27\u0E25\u0E32\u0E08\u0E48\u0E32\u0E22\u0E23\u0E30\u0E1A\u0E1A\u0E08\u0E30\u0E15\u0E31\u0E14\u0E19\u0E49\u0E33\u0E2B\u0E19\u0E31\u0E01\u0E08\u0E23\u0E34\u0E07\u0E02\u0E2D\u0E07 coil \u0E17\u0E35\u0E48\u0E2A\u0E42\u0E15\u0E23\u0E4C\u0E2B\u0E22\u0E34\u0E1A")));
         }),
         React.createElement(Btn, { v: "ghost", sz: "sm", onClick: () => setForm(f => ({ ...f, items: [...f.items, { type: "", maker: "", matId: "", qty: "", unit: "PCS", kgs: "", coil: "", customer: "" }] })) }, "\u2795 \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A"),
         React.createElement(SecTitle, null, "\uD83D\uDCDD \u0E2B\u0E21\u0E32\u0E22\u0E40\u0E2B\u0E15\u0E38"),
@@ -4151,7 +4178,14 @@ function ApBody({ req }) {
                 " | Lot: ",
                 React.createElement("span", { style: { color: C.acc, fontFamily: "monospace" } }, it.lotNo)))));
 }
-function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLots }) {
+function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLots, realKgs, setRealKgs }) {
+    // ช่องพิมพ์ค้นหา Lot แยกตามรายการ — สโตร์พิมพ์เลข Lot ได้เลย ไม่ต้องเลื่อนหาในลิสต์ยาว ๆ
+    const [lotQuery, setLotQuery] = useState({});
+    // ตัวเลขใหญ่ ๆ ให้เห็นชัดว่าขอเท่าไร เลือกไปแล้วเท่าไร ยังขาดอีกเท่าไร
+    const numBox = (label, val, unit, col) => React.createElement("div", { style: { textAlign: "center", minWidth: 92 } },
+        React.createElement("div", { style: { fontSize: 10, color: C.tx2, fontWeight: 700 } }, label),
+        React.createElement("div", { style: { fontSize: 22, fontWeight: 800, fontFamily: "monospace", color: col, lineHeight: 1.15 } }, val),
+        React.createElement("div", { style: { fontSize: 9, color: C.tx3 } }, unit));
     if (!req)
         return null;
     // selectedLots = {selKey: [{lotNo, qty}]}
@@ -4208,13 +4242,20 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
             const _u = it.unit || "PCS";
             const _availOf = l => {
                 if (_u === "M" || (l.rem_m != null && l.rem_pcs == null && l.rem_kgs == null && l.rem_coil == null)) return l.rem_m || 0;
-                if (_u === "COIL" || (l.rem_coil != null && l.rem_pcs == null && l.rem_kgs == null)) return l.rem_coil || 0;
+                // COIL+KGS = เบิกเป็นม้วน แต่ระบุน้ำหนักมาด้วย → นับของตามจำนวนม้วนเหมือน COIL
+                if (_u === "COIL" || _u === "COIL+KGS" || (l.rem_coil != null && l.rem_pcs == null && l.rem_kgs == null)) return l.rem_coil || 0;
                 if (_u === "KGS" && l.rem_kgs != null) return l.rem_kgs || 0;
                 return l.rem_pcs || 0;
             };
             const haveTotal = avail.reduce((s, l) => s + _availOf(l), 0);
             const lack = targetQty - haveTotal;
             const dateGroups = [...new Set(avail.map(l => l.date || "ไม่ระบุ"))];
+            // ลิสต์ที่แสดงจริง = กรองด้วยคำที่สโตร์พิมพ์ (เลข Lot / PO / วันที่) — Lot ที่เลือกไว้แล้วต้องไม่หายไปจากจอ
+            const _q = String(lotQuery[selKey] || "").trim().toLowerCase();
+            const shown = _q
+                ? avail.filter(l => (String(l.lotNo || "") + " " + (l.po || "") + " " + (l.date || "")).toLowerCase().includes(_q)
+                    || selList.some(x => x.lotNo === l.lotNo))
+                : avail;
             return React.createElement("div", { key: i, style: { background: C.sur2, border: "1px solid " + (lack > 0.001 ? C.err : C.brd), borderRadius: 8, padding: 12, marginBottom: 10 } },
                 lack > 0.001 && React.createElement("div", { style: { background: "rgba(248,81,73,.1)", border: "1px solid rgba(248,81,73,.45)", borderRadius: 7, padding: "7px 11px", fontSize: 12, fontWeight: 700, color: C.err, marginBottom: 9 } },
                     "⛔ ของไม่พอ — ขอเบิก " + fmtQty(targetQty, 2) + " " + _u
@@ -4232,14 +4273,23 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
                     "\uD83D\uDD16 ",
                     it.model,
                     it.customer && ` → 🏢 ${it.customer}`),
-                React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 10, marginTop: 4 } },
-                    React.createElement("div", { style: { fontSize: 12 } },
+                React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10, marginTop: 6, padding: "9px 13px", borderRadius: 8,
+                        background: isComplete ? "rgba(63,185,80,.10)" : isOver ? "rgba(248,81,73,.10)" : "rgba(210,153,34,.10)",
+                        border: "1px solid " + (isComplete ? "rgba(63,185,80,.45)" : isOver ? "rgba(248,81,73,.45)" : "rgba(210,153,34,.45)") } },
+                    React.createElement("div", { style: { display: "none" } },
                         "\u0E40\u0E1A\u0E34\u0E01: ",
                         React.createElement("strong", { style: { color: C.acc } },
                             it.qty,
                             " ",
                             it.unit)),
-                    React.createElement("div", { style: { fontSize: 11, color: isOver ? C.err : isComplete ? C.ok : C.warn, fontWeight: 600 } }, isComplete ? "✅ ครบ" : isOver ? `⚠️ เกิน ${(totalSel - targetQty).toFixed(2)}` : `เลือกแล้ว: ${totalSel} / ${targetQty} ${it.unit}`)),
+                    React.createElement("div", { style: { fontSize: 15, fontWeight: 800, color: isComplete ? C.ok : isOver ? C.err : C.warn } },
+                        isComplete ? "✅ ครบแล้ว" : isOver ? "⚠️ เลือกเกิน" : "⏳ ยังไม่ครบ"),
+                    numBox("ขอเบิก", fmtQty(targetQty, 2), it.unit, C.acc),
+                    numBox("เลือกแล้ว", fmtQty(totalSel, 2), it.unit, isOver ? C.err : C.tx),
+                    numBox(isOver ? "เกิน" : "ยังขาด", fmtQty(Math.abs(targetQty - totalSel), 2), it.unit, isComplete ? C.ok : isOver ? C.err : C.warn),
+                    it.kgs ? React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.acc2 } },
+                        "⚖️ น้ำหนักตามใบเบิก " + fmtQty(it.kgs, 2) + " KGS") : null,
+                    React.createElement("div", { style: { display: "none" } }, isComplete ? "✅ ครบ" : isOver ? `⚠️ เกิน ${(totalSel - targetQty).toFixed(2)}` : `เลือกแล้ว: ${totalSel} / ${targetQty} ${it.unit}`)),
                 // เลข Lot จริงที่จดมาจากของตอนหยิบ — สโตร์จ่ายตาม FIFO จากแท็กสี ซึ่งแม่นกว่าที่ระบบเดา
                 // ใส่แล้วประวัติการเบิกจะบันทึกเลขนี้แทนเลข Lot ในระบบ (ยอดสต๊อกยังตัดตามปกติ)
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, margin: "2px 0 10px", padding: "7px 10px", background: "rgba(9,105,218,.05)", border: "1px solid rgba(9,105,218,.2)", borderRadius: 7, flexWrap: "wrap" } },
@@ -4249,6 +4299,16 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
                         placeholder: "จดจากของจริง เช่น 613324570 (ไม่ใส่ก็ได้)",
                         style: { flex: 1, minWidth: 190, background: C.sur, border: "1px solid " + C.brd, borderRadius: 6, padding: "5px 10px", color: C.tx, fontFamily: "monospace", fontSize: 12, outline: "none" } }),
                     React.createElement("span", { style: { fontSize: 10, color: C.tx3 } }, "ใส่แล้วประวัติเบิกจะบันทึกเลขนี้")),
+                // น้ำหนักจริงที่ชั่งได้ตอนจ่าย — ของเส้น/ม้วนน้ำหนักไม่เท่ากันทุกเส้น ถ้าชั่งแล้วใส่ตัวเลขจริงได้ ยอดกิโลจะแม่นกว่า
+                // ไม่ใส่ก็ได้ ระบบจะคำนวณจากสัดส่วนของ lot เหมือนเดิม
+                (avail.some(l => l.rem_kgs != null) && _u !== "KGS") ? React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, margin: "0 0 10px", padding: "7px 10px", background: "rgba(130,80,223,.05)", border: "1px solid rgba(130,80,223,.25)", borderRadius: 7, flexWrap: "wrap" } },
+                    React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: "#8250df" } }, "⚖️ น้ำหนักจริงที่ชั่งได้ (KGS)"),
+                    React.createElement("input", { type: "number", min: "0", step: "0.01",
+                        value: (realKgs && realKgs[selKey]) || "",
+                        onChange: e => setRealKgs && setRealKgs(s => ({ ...s, [selKey]: e.target.value })),
+                        placeholder: "ไม่ใส่ก็ได้ — ระบบจะคำนวณให้เอง",
+                        style: { width: 130, background: C.sur, border: "1px solid " + C.brd, borderRadius: 6, padding: "5px 10px", color: C.tx, fontFamily: "monospace", fontSize: 12, outline: "none", textAlign: "right" } }),
+                    React.createElement("span", { style: { fontSize: 10, color: C.tx3 } }, "ใส่แล้วตัดกิโลตามนี้ และประวัติเบิกจะบันทึกน้ำหนักนี้")) : null,
                 avail.length === 0
                     ? React.createElement("div", { style: { color: C.err, fontSize: 12, padding: "8px 0" } }, "\u26A0\uFE0F \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2A\u0E15\u0E4A\u0E2D\u0E01")
                     : React.createElement("div", null,
@@ -4258,10 +4318,30 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
                             " Lot, ",
                             dateGroups.length,
                             " \u0E27\u0E31\u0E19) \u2014 \u0E04\u0E25\u0E34\u0E01\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E40\u0E25\u0E37\u0E2D\u0E01/\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01:"),
-                        React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 260, overflowY: "auto" } }, avail.map((lot, j) => {
+                        // \u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E40\u0E25\u0E02 Lot \u0E44\u0E14\u0E49\u0E40\u0E25\u0E22 \u2014 \u0E01\u0E23\u0E2D\u0E07\u0E25\u0E34\u0E2A\u0E15\u0E4C\u0E43\u0E2B\u0E49\u0E17\u0E31\u0E19\u0E17\u0E35 \u0E01\u0E14 Enter = \u0E40\u0E25\u0E37\u0E2D\u0E01 Lot \u0E19\u0E31\u0E49\u0E19\u0E1E\u0E23\u0E49\u0E2D\u0E21\u0E43\u0E2A\u0E48\u0E08\u0E33\u0E19\u0E27\u0E19\u0E17\u0E35\u0E48\u0E22\u0E31\u0E07\u0E02\u0E32\u0E14\u0E43\u0E2B\u0E49
+                        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 7, marginBottom: 7 } },
+                            React.createElement("span", { style: { fontSize: 13 } }, "\uD83D\uDD0D"),
+                            React.createElement("input", { value: lotQuery[selKey] || "",
+                                onChange: e => setLotQuery(s => ({ ...s, [selKey]: e.target.value })),
+                                onKeyDown: e => {
+                                    if (e.key !== "Enter") return;
+                                    e.preventDefault();
+                                    const q = String(lotQuery[selKey] || "").trim().toLowerCase();
+                                    if (!q) return;
+                                    const hit = shown.find(l => String(l.lotNo).toLowerCase() === q) || (shown.length === 1 ? shown[0] : null);
+                                    if (!hit) return; // \u0E22\u0E31\u0E07\u0E40\u0E08\u0E2D\u0E2B\u0E25\u0E32\u0E22 Lot \u2014 \u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E15\u0E48\u0E2D\u0E43\u0E2B\u0E49\u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E15\u0E31\u0E27\u0E40\u0E14\u0E35\u0E22\u0E27 (\u0E15\u0E31\u0E27\u0E40\u0E25\u0E02\u0E02\u0E49\u0E32\u0E07\u0E0A\u0E48\u0E2D\u0E07\u0E1A\u0E2D\u0E01\u0E27\u0E48\u0E32\u0E40\u0E08\u0E2D\u0E01\u0E35\u0E48 Lot)
+                                    if (!selList.find(x => x.lotNo === hit.lotNo)) toggleLot(selKey, hit, targetQty);
+                                    setLotQuery(s => ({ ...s, [selKey]: "" }));
+                                },
+                                placeholder: "\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E40\u0E25\u0E02 Lot / PO / \u0E27\u0E31\u0E19\u0E17\u0E35\u0E48 \u2014 Enter = \u0E40\u0E25\u0E37\u0E2D\u0E01 Lot \u0E19\u0E31\u0E49\u0E19",
+                                style: { flex: 1, minWidth: 180, background: C.sur, border: "1px solid " + C.brd, borderRadius: 6, padding: "6px 10px", color: C.tx, fontFamily: "monospace", fontSize: 12, outline: "none" } }),
+                            (lotQuery[selKey] || "") ? React.createElement("button", { onClick: () => setLotQuery(s => ({ ...s, [selKey]: "" })),
+                                style: { background: "transparent", border: "1px solid " + C.brd, borderRadius: 6, color: C.tx2, fontSize: 11, padding: "5px 9px", cursor: "pointer" } }, "\u2715 \u0E25\u0E49\u0E32\u0E07") : null,
+                            React.createElement("span", { style: { fontSize: 10, color: C.tx3 } }, "\u0E41\u0E2A\u0E14\u0E07 " + shown.length + "/" + avail.length + " Lot")),
+                        React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 260, overflowY: "auto" } }, shown.map((lot, j) => {
                             const isSel = !!selList.find(x => x.lotNo === lot.lotNo);
                             const selEntry = selList.find(x => x.lotNo === lot.lotNo);
-                            const prevDate = j > 0 ? avail[j - 1].date : null;
+                            const prevDate = j > 0 ? shown[j - 1].date : null;
                             const newDate = lot.date !== prevDate;
                             const lotMax = lot.rem_m != null ? lot.rem_m : lot.rem_coil != null ? lot.rem_coil : lot.rem_pcs != null ? lot.rem_pcs : lot.rem_kgs || 0;
                             return React.createElement("div", { key: j },
@@ -4293,7 +4373,12 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
                                     isSel && React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4 } },
                                         React.createElement("span", { style: { fontSize: 10, color: C.tx2 } }, "\u0E15\u0E31\u0E14:"),
                                         React.createElement("input", { type: "number", min: "0", max: lotMax, step: "0.1", value: (selEntry === null || selEntry === void 0 ? void 0 : selEntry.qty) || "", onChange: e => updateQty(selKey, lot.lotNo, e.target.value), onClick: e => e.stopPropagation(), style: { width: 60, background: C.bg, border: `1px solid ${C.acc}`, borderRadius: 5, padding: "3px 6px", color: C.tx, fontFamily: "monospace", fontSize: 11, outline: "none", textAlign: "right" } }),
-                                        React.createElement("span", { style: { fontSize: 10, color: C.tx2 } }, it.unit))));
+                                        React.createElement("span", { style: { fontSize: 10, color: C.tx2 } }, it.unit),
+                                        // เบิกเป็น coil — บอกให้เห็นเลยว่า coil นี้จะตัดกิโลออกเท่าไร (แต่ละ coil หนักไม่เท่ากัน)
+                                        (_u === "COIL" || _u === "COIL+KGS") && lot.rem_kgs != null && (lot.coil || 0) > 0
+                                            ? React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: C.acc2, whiteSpace: "nowrap" } },
+                                                "= " + fmtQty(Math.min(lot.rem_kgs || 0, ((selEntry && selEntry.qty) || 0) * ((lot.kgs || 0) / lot.coil)), 2) + " KGS")
+                                            : null)));
                         })),
                         selList.length > 0 && React.createElement("div", { style: { marginTop: 8, fontSize: 11, padding: "6px 10px", background: isComplete ? "rgba(63,185,80,.08)" : isOver ? "rgba(248,81,73,.08)" : "rgba(210,153,34,.08)", border: `1px solid ${isComplete ? "rgba(63,185,80,.25)" : isOver ? "rgba(248,81,73,.3)" : "rgba(210,153,34,.25)"}`, borderRadius: 5 } },
                             isComplete ? React.createElement("span", { style: { color: C.ok } }, "\u2705 \u0E04\u0E23\u0E1A\u0E41\u0E25\u0E49\u0E27: ") : isOver ? React.createElement("span", { style: { color: C.err } }, "\u26A0\uFE0F \u0E40\u0E01\u0E34\u0E19\u0E08\u0E33\u0E19\u0E27\u0E19: ") : React.createElement("span", { style: { color: C.warn } }, "\uD83D\uDCE6 \u0E23\u0E27\u0E21\u0E17\u0E35\u0E48\u0E40\u0E25\u0E37\u0E2D\u0E01: "),
@@ -4405,7 +4490,8 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                                 React.createElement(Tag, { color: mc.color || C.tx2, bg: mc.bg || "rgba(255,255,255,.06)", brd: `${mc.color || C.brd}44` }, m.type)),
                             React.createElement("td", { title: m.maker || "", style: { padding: "5px 6px", maxWidth: 118, overflow: "hidden", borderBottom: C.brd2 } },
                                 React.createElement(Tag, (() => { const mk = getMakerColor(null, m); return { color: mk.text, bg: mk.bg, brd: mk.border }; })(), m.maker)),
-                            React.createElement("td", { style: { padding: "5px 7px", fontWeight: 700, borderBottom: C.brd2, fontSize: 13, whiteSpace: "nowrap", verticalAlign: "middle" , maxWidth: 190, overflow: "hidden", textOverflow: "ellipsis" } }, React.createElement("span", { title: m.name }, m.name)),
+                            // ชื่อ Material ยาว (เช่น NQ31D005H01 HOLDER RUBBER) ให้ตัดขึ้นบรรทัดใหม่ อ่านได้ครบ ไม่ใช่ตัดหางทิ้ง
+                            React.createElement("td", { style: { padding: "5px 7px", fontWeight: 700, borderBottom: C.brd2, fontSize: 13, whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.3, verticalAlign: "middle", maxWidth: 210 } }, React.createElement("span", { title: m.name }, m.name)),
                             // Size ของ PART ASSY ยาวมาก (บางตัว 50+ ตัวอักษร) ให้ตัดบรรทัดแทนตัดหาง จะได้อ่านครบ
                             React.createElement("td", { title: sizeTxt(m.size), style: { padding: "5px 7px", fontFamily: "monospace", fontSize: 12.5, borderBottom: C.brd2, whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.3, fontWeight: 700, color: C.tx } }, sizeTxt(m.size)),
                             (() => { const tc = getTemperColor(materials, m); const diff = tc.border !== 'transparent'; return React.createElement("td", { style: { padding: "5px 6px", maxWidth: 92, overflow: "hidden", fontSize: 11, borderBottom: C.brd2 } }, diff ? React.createElement(Tag, { color: tc.text, bg: tc.bg, brd: tc.border }, m.temper || "-") : React.createElement("span", { style: { color: C.tx2 } }, m.temper || "-")); })(),
@@ -4463,7 +4549,7 @@ function LotPage({ materials, lots, master, onLotDetail }) {
                 React.createElement("div", { style: { padding: "9px 12px", borderBottom: `1px solid ${C.brd}`, display: "flex", alignItems: "center", gap: 7 } },
                     React.createElement(Tag, { color: mc.color, bg: mc.bg, brd: `${mc.color}44` }, m.type),
                     React.createElement("div", { style: { flex: 1, minWidth: 0 } },
-                        React.createElement("div", { style: { fontWeight: 700, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.name),
+                        React.createElement("div", { style: { fontWeight: 700, fontSize: 12, whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.3 } }, m.name),
                         React.createElement("div", { style: { fontSize: 13, color: C.tx, fontFamily: "monospace", fontWeight: 700 } }, m.size),
                         React.createElement("div", { style: { fontSize: 11, color: getMakerColor(null, m).text, fontWeight: 700, marginTop: 1 } },
                             "\uD83C\uDFED ",
@@ -4810,6 +4896,8 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
     // ดูเฉพาะรายการที่ยังไม่ได้ใส่เลขที่ Invoice (รับของด้วยใบส่งของชั่วคราวไปก่อน)
     const [onlyNoInv, setOnlyNoInv] = useState(false);
     const [recvSum, setRecvSum] = useState(false); // สรุปยอดรับรวมต่อวัน (ไว้จับคู่กับ Invoice ที่มาทีหลัง)
+    const [issueSum, setIssueSum] = useState(false);   // สรุปยอดเบิก-จ่ายรวมต่อวัน
+    const [isumBy, setIsumBy] = useState("date");      // รวมตาม "date" (วันที่+วัตถุดิบ) / "dept" (วันที่+แผนก) / "req" (ใบเบิก)
     const [sumBy, setSumBy] = useState("date");    // จัดกลุ่มตาม "date" หรือ "po" (Invoice อ้างอิง PO)
     const [findQty, setFindQty] = useState("");    // ยอดบน Invoice — ไว้ไฮไลต์กลุ่มที่ตรง
     // โหมดติ๊กเลือกทีละ Lot — ใช้ตอน PO เดียวมี Invoice หลายใบ และเอกสารไม่บอกว่าใบไหนคุม Lot ไหน
@@ -5212,6 +5300,13 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                             borderRadius: 7, color: recvSum ? "#fff" : C.acc, cursor: "pointer",
                             padding: "6px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", whiteSpace: "nowrap" } },
                         recvSum ? "✕ ดูรายตัว" : "📊 สรุปยอดต่อวัน"),
+                    tab === "issue" && React.createElement("button", { onClick: () => setIssueSum(v => !v),
+                        title: "รวมยอดที่จ่ายออกของวันเดียวกัน — ดูยอดรวมรายวันได้โดยไม่ต้องไล่บวกเอง",
+                        style: { background: issueSum ? C.acc : "rgba(9,105,218,.1)",
+                            border: "1px solid " + (issueSum ? C.acc : "rgba(9,105,218,.4)"),
+                            borderRadius: 7, color: issueSum ? "#fff" : C.acc, cursor: "pointer",
+                            padding: "6px 12px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit", whiteSpace: "nowrap" } },
+                        issueSum ? "✕ ดูรายตัว" : "📊 สรุปยอดต่อวัน"),
                     tab === "issue" && React.createElement("select", { value: filterMat, onChange: e => setFilterMat(e.target.value), style: { background: C.sur2, border: `1px solid ${C.brd}`, borderRadius: 7, padding: "5px 10px", color: C.tx, fontFamily: "inherit", fontSize: 11, outline: "none", maxWidth: 200 } },
                         React.createElement("option", { value: "" }, "\uD83D\uDCE6 \u0E17\u0E38\u0E01 Material"),
                         matNames.map(n => React.createElement("option", { key: n, value: n }, n))),
@@ -5223,7 +5318,70 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                         filtered.length,
                         " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"))),
             React.createElement("div", { style: { overflow: "auto", flex: 1, minHeight: 240 } },
-                tab === "issue" && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11 } },
+                tab === "issue" && issueSum && (() => {
+                    // สรุปยอดจ่ายออก — รวมได้ 3 แบบ: วันที่+วัตถุดิบ / วันที่+แผนก / ต่อใบเบิก
+                    const g = {};
+                    filtered.forEach(r => {
+                        const k = isumBy === "dept" ? [r.date, r.dept || "-"].join("|")
+                                : isumBy === "req" ? [r.reqId || "-"].join("|")
+                                : [r.date, r.maker, r.name].join("|");
+                        if (!g[k]) g[k] = { date: r.date, maker: r.maker, name: r.name, dept: r.dept, rows: [],
+                            kgs: 0, pcs: 0, coil: 0, m: 0, reqs: new Set(), depts: new Set(), names: new Set(), people: new Set() };
+                        const x = g[k];
+                        x.rows.push(r);
+                        if (String(r.date) < String(x.date)) x.date = r.date;
+                        x.kgs += Number(r.kgs) || 0; x.pcs += Number(r.pcs) || 0;
+                        x.coil += Number(r.coil) || 0; x.m += Number(r.m) || 0;
+                        if (r.reqId) x.reqs.add(r.reqId);
+                        if (r.dept) x.depts.add(r.dept);
+                        if (r.name) x.names.add(sizeTxt(r.name));
+                        if (r.requester) x.people.add(r.requester);
+                    });
+                    const groups = Object.values(g).sort((a, b) =>
+                        String(b.date).localeCompare(String(a.date)) || String(a.name || "").localeCompare(String(b.name || "")));
+                    const show = (v, d) => v > 0 ? fmtQty(v, d) : "-";
+                    const tot = groups.reduce((s, x) => ({ kgs: s.kgs + x.kgs, pcs: s.pcs + x.pcs, coil: s.coil + x.coil, m: s.m + x.m, n: s.n + x.rows.length }), { kgs: 0, pcs: 0, coil: 0, m: 0, n: 0 });
+                    const hd = isumBy === "dept" ? ["วันที่", "แผนก", "รายการ", "จำนวนรายการ", "รวม PCS", "รวม KGS", "รวม COIL", "รวม M", "ใบเบิก"]
+                        : isumBy === "req" ? ["วันที่", "เลขที่ใบเบิก", "แผนก / ผู้เบิก", "จำนวนรายการ", "รวม PCS", "รวม KGS", "รวม COIL", "รวม M", "วัตถุดิบ"]
+                        : ["วันที่", "วัตถุดิบ", "Maker", "จำนวนรายการ", "รวม PCS", "รวม KGS", "รวม COIL", "รวม M", "แผนก / ใบเบิก"];
+                    const tdS = { padding: "6px 8px", borderBottom: C.brd2 };
+                    return React.createElement("div", null,
+                        React.createElement("div", { style: { padding: "8px 12px", background: C.sur2, borderBottom: "1px solid " + C.brd, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" } },
+                            React.createElement("span", { style: { fontSize: 11.5, color: C.tx2, fontWeight: 700 } }, "รวมยอดตาม:"),
+                            [["date", "📅 วันที่ + วัตถุดิบ"], ["dept", "🏭 วันที่ + แผนก"], ["req", "📋 ต่อใบเบิก"]].map(op =>
+                                React.createElement("button", { key: op[0], onClick: () => setIsumBy(op[0]),
+                                    style: { padding: "4px 12px", borderRadius: 20, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                                        border: "1px solid " + (isumBy === op[0] ? C.acc : C.brd), background: isumBy === op[0] ? C.acc : "transparent", color: isumBy === op[0] ? "#fff" : C.tx2 } }, op[1])),
+                            React.createElement("span", { style: { marginLeft: "auto", fontSize: 11.5, color: C.tx2, fontWeight: 700 } },
+                                groups.length + " กลุ่ม · รวมทั้งหมด " + fmtQty(tot.pcs, 0) + " PCS · " + fmtQty(tot.kgs, 2) + " KGS")),
+                        React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11.5 } },
+                            React.createElement("thead", { style: { position: "sticky", top: 0, zIndex: 4 } },
+                                React.createElement("tr", { style: { background: C.sur2 } }, hd.map(h =>
+                                    React.createElement("th", { key: h, style: { padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: "1px solid " + C.brd, whiteSpace: "nowrap", background: C.sur2 } }, h)))),
+                            React.createElement("tbody", null,
+                                groups.length === 0 && React.createElement("tr", null,
+                                    React.createElement("td", { colSpan: 9, style: { padding: 24, textAlign: "center", color: C.tx2 } }, "ไม่พบข้อมูล")),
+                                groups.map((x, gi) => React.createElement("tr", { key: gi },
+                                    React.createElement("td", { style: { ...tdS, whiteSpace: "nowrap", fontWeight: 700 } }, fmtDate(x.date)),
+                                    isumBy === "date"
+                                        ? React.createElement("td", { style: { ...tdS, fontWeight: 600 } }, sizeTxt(x.name))
+                                        : isumBy === "dept"
+                                        ? React.createElement("td", { style: { ...tdS, fontWeight: 700 } }, x.dept || "-")
+                                        : React.createElement("td", { style: { ...tdS, fontFamily: "monospace", color: C.acc, fontWeight: 700 } }, [...x.reqs].join(", ") || "-"),
+                                    isumBy === "date"
+                                        ? React.createElement("td", tdS, React.createElement(Tag, { color: C.acc2, bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, x.maker))
+                                        : React.createElement("td", { style: { ...tdS, fontSize: 11 } }, isumBy === "dept" ? [...x.names].slice(0, 3).join(" · ") + (x.names.size > 3 ? " +" + (x.names.size - 3) : "") : ([...x.depts].join(", ") + " / " + [...x.people].join(", "))),
+                                    React.createElement("td", { style: { ...tdS, fontFamily: "monospace", textAlign: "center" } }, x.rows.length),
+                                    React.createElement("td", { style: { ...tdS, fontFamily: "monospace", fontWeight: 800, color: C.acc } }, show(x.pcs, 0)),
+                                    React.createElement("td", { style: { ...tdS, fontFamily: "monospace", fontWeight: 700 } }, show(x.kgs, 2)),
+                                    React.createElement("td", { style: { ...tdS, fontFamily: "monospace" } }, show(x.coil, 0)),
+                                    React.createElement("td", { style: { ...tdS, fontFamily: "monospace" } }, show(x.m, 1)),
+                                    React.createElement("td", { style: { ...tdS, fontSize: 10.5, color: C.tx2 } },
+                                        isumBy === "date" ? ([...x.depts].join(", ") + " · " + [...x.reqs].join(", "))
+                                        : isumBy === "dept" ? [...x.reqs].join(", ")
+                                        : [...x.names].slice(0, 3).join(" · ") + (x.names.size > 3 ? " +" + (x.names.size - 3) : "")))))));
+                })(),
+                tab === "issue" && !issueSum && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11 } },
                     React.createElement("thead", { style: { position: "sticky", top: 0, zIndex: 3 } },
                         React.createElement("tr", { style: { background: C.sur2 } }, ["วันที่", "เลขที่ใบเบิก", "วัตถุดิบ", "Maker", "Lot No.", "QTY", "Unit", "KGS", "M", "Forecast/PO", "แผนก", "ผู้เบิก", "ผู้อนุมัติ", "ผู้จ่าย"].map(h => React.createElement("th", { key: h, style: { padding: "5px 7px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap", background: C.sur2 } }, h)))),
                     React.createElement("tbody", null,
