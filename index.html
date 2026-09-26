@@ -1377,6 +1377,7 @@ function StoreFlow() {
                 ISSUEHIST_HAS_TEMPER = (issueData || []).some(h => Object.prototype.hasOwnProperty.call(h, 'temper'));
                 ISSUEHIST_HAS_M = (issueData || []).some(h => Object.prototype.hasOwnProperty.call(h, 'm'));
                 setIssueHist((issueData || []).map(h => ({
+                    _dbId: h.id,
                     date: h.issue_date,
                     reqId: h.req_id,
                     name: h.material_name,
@@ -1599,6 +1600,12 @@ function StoreFlow() {
     }
     // ── REQUEST actions ──
     async function submitReq() {
+        // กันส่งใบโดยไม่ล็อกอิน และล็อกชื่อผู้เบิกให้เป็นคนที่ล็อกอินเสมอ
+        if (!currentUser) {
+            setPinModal({ mode: "login", title: "เข้าสู่ระบบก่อนส่งใบเบิก", onSuccess: (u) => { setCurrentUser(u); setRqForm(f => ({ ...f, requester: u.name || f.requester })); setPinModal(null); } });
+            return;
+        }
+        if (currentUser.name && rqForm.requester !== currentUser.name) rqForm.requester = currentUser.name;
         const errs = {};
         if (!rqForm.dept)
             errs.dept = "กรุณาเลือกแผนก";
@@ -2282,12 +2289,25 @@ function StoreFlow() {
                         ["master", "materials", "lots", "requests", "issueHist", "recvHist"].forEach(k => localStorage.removeItem("sf_" + k));
                         window.location.reload();
                     } }, style: { background: "rgba(248,81,73,.12)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 6, color: "#cf222e", cursor: "pointer", padding: "4px 10px", fontSize: 10, fontFamily: "inherit" } }, "\uD83D\uDDD1\uFE0F \u0E25\u0E49\u0E32\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25"),
-                React.createElement(Btn, { v: "primary", sz: "md", onClick: () => { setRqForm(emptyRq()); setRqErrors({}); setModal("req"); } }, "\u2795 \u0E2A\u0E23\u0E49\u0E32\u0E07\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01")),
+                React.createElement(Btn, { v: "primary", sz: "md", onClick: () => {
+                        const openReqForm = (u) => { setRqForm({ ...emptyRq(), requester: (u && u.name) || "" }); setRqErrors({}); setModal("req"); };
+                        if (!currentUser) { setPinModal({ mode: "login", title: "\u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A\u0E01\u0E48\u0E2D\u0E19\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01", onSuccess: (u) => { setCurrentUser(u); setPinModal(null); openReqForm(u); } }); return; }
+                        openReqForm(currentUser);
+                    } }, "\u2795 \u0E2A\u0E23\u0E49\u0E32\u0E07\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01")),
             React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: "16px 12px" } },
                 page === "quickcheck" && React.createElement(QuickCheckPage, { materials: materials, lots: lots, toast: toast }),
                 page === "dashboard" && React.createElement(DashPage, { requests: requests, materials: materials, lots: lots, role: role, master: master, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, goto: setPage, issueHist: issueHist, recvHist: recvHist, priceMap: priceMap, onSavePrice: canEditStock ? savePrice : null, lotPriceMap: lotPriceMap, only: "main" }),
                 page === "deadstock" && React.createElement(DashPage, { requests: requests, materials: materials, lots: lots, role: role, master: master, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, goto: setPage, issueHist: issueHist, recvHist: recvHist, priceMap: priceMap, onSavePrice: canEditStock ? savePrice : null, lotPriceMap: lotPriceMap, only: "aged" }),
-                page === "request" && React.createElement(ReqPage, { requests: requests, materials: materials, filter: reqFilter, setFilter: setReqFilter, role: role, setHistoryModal: setHistoryModal, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, onNew: () => { setRqForm(emptyRq()); setRqErrors({}); setModal("req"); }, onEdit: r => {
+                page === "request" && React.createElement(ReqPage, { requests: requests, materials: materials, filter: reqFilter, setFilter: setReqFilter, role: role, setHistoryModal: setHistoryModal, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, onNew: () => {
+                        // ต้องล็อกอินก่อนเขียนใบเบิก แล้วเติมชื่อผู้เบิกจากคนที่ล็อกอินให้เลย
+                        // (เดิมใครเปิดลิงก์ก็ส่งใบได้ และพิมพ์ชื่อใครก็ได้ ตามกลับไม่ได้ว่าใครส่งจริง)
+                        const openReqForm = (u) => { setRqForm({ ...emptyRq(), requester: (u && u.name) || "" }); setRqErrors({}); setModal("req"); };
+                        if (!currentUser) {
+                            setPinModal({ mode: "login", title: "เข้าสู่ระบบก่อนสร้างใบเบิก", onSuccess: (u) => { setCurrentUser(u); setPinModal(null); openReqForm(u); } });
+                            return;
+                        }
+                        openReqForm(currentUser);
+                    }, onEdit: r => {
                         if (!window.confirm(`แก้ไขใบเบิก ${r.id}?\n\nระบบจะ:\n1. เปลี่ยนสถานะใบ ${r.id} เป็น "แก้ไขแล้ว"\n2. สร้างใบใหม่เป็น ${r.id}-R01 (Revised)\n\nประวัติใบเดิมยังเก็บไว้ดูได้ครับ`))
                             return;
                         // หมายเหตุ: ใบเดิมจะถูกเปลี่ยนเป็น "แก้ไขแล้ว" และบันทึกลง DB ตอนกดส่งใบ Revised สำเร็จ
@@ -2306,7 +2326,7 @@ function StoreFlow() {
                 page === "receive" && canEditStock && React.createElement(RecvPage, { form: rvForm, setForm: setRvForm, materials: materials, master: master, onSubmit: submitRecv, recvHist: recvHist, addMaker: (n, t) => addMaker(n, [t]), onAddLength: addLengthMat }),
                 page === "auditlog" && canEditSettings && React.createElement(AuditLogPage, { auditLog: auditLog }),
                 page === "ngreturn" && canEditStock && React.createElement(NgReturnPage, { ngReturns: ngReturns, onSave: saveNgReturns, currentUser: currentUser, toast: toast, onReceive: receiveReplacementStock, onEditRep: editReplacementStock, onRemoveRep: removeReplacementStock }),
-                page === "history" && React.createElement(HistPage, { issueHist: issueHist, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null }),
+                page === "history" && React.createElement(HistPage, { issueHist: issueHist, setIssueHist: canEditStock ? setIssueHist : null, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null }),
                 page === "users" && canManageUsers && React.createElement(UsersPage, { users: users, setUsers: setUsers, currentUser: currentUser, toast: toast, materials: materials }),
                 page === "matmaster" && canEditSettings && React.createElement(MatPage, { materials: materials, setMaterials: setMaterials, filter: mmFilter, setFilter: setMmFilter, master: master, onAdd: () => { setMmForm(emptyMm()); setMmErrors({}); setMmFromPartNo(false); setModal("mat"); }, onEdit: m => { setMmErrors({}); setMmFromPartNo(false); setMmForm({ editId: m.id, type: m.type, name: m.name, partNo: m.partNo, size: m.size, temper: m.temper, maker: m.maker, makerNew: "", extraMakers: m.extraMakers || [], customers: m.customers || [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: m.remark || "", productPartNos: m.productPartNos || [] }); setModal("mat"); }, onAddSize: m => { setMmErrors({}); setMmFromPartNo(false); setMmForm({ editId: "", type: m.type, name: m.name, partNo: m.partNo, size: "", temper: m.temper, maker: m.maker, makerNew: "", customers: [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: "", productPartNos: [] }); setModal("mat"); toast(`ℹ️ เพิ่ม Size ใหม่สำหรับ ${m.name}`, "info"); }, onToggle: async id => {
                         const cur = materials.find(x => x.id === id);
@@ -2432,7 +2452,7 @@ function StoreFlow() {
         React.createElement(Modal, { open: modal === "req", onClose: () => setModal(null), title: "\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A", sub: "\u0E01\u0E23\u0E2D\u0E01\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E2B\u0E49\u0E04\u0E23\u0E1A\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34", width: 760, footer: React.createElement(React.Fragment, null,
                 React.createElement(Btn, { v: "ghost", onClick: () => setModal(null) }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"),
                 React.createElement(Btn, { v: "primary", onClick: submitReq }, "\uD83D\uDCE4 \u0E2A\u0E48\u0E07\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01")) },
-            React.createElement(ReqForm, { form: rqForm, setForm: setRqForm, errors: rqErrors, clearErr: (k) => setRqErrors(e => ({ ...e, [k]: undefined })), lots: lots, materials: materials, lots: lots, master: master, addCustomer: addCustomer, addDept: addDept })),
+            React.createElement(ReqForm, { form: rqForm, setForm: setRqForm, errors: rqErrors, clearErr: (k) => setRqErrors(e => ({ ...e, [k]: undefined })), lots: lots, materials: materials, lots: lots, master: master, addCustomer: addCustomer, addDept: addDept, lockedRequester: !!currentUser })),
         React.createElement(Modal, { open: modal === "approve", onClose: () => setModal(null), title: "\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01", icon: "\uD83D\uDC68\u200D\uD83D\uDCBC", width: 560, footer: React.createElement(React.Fragment, null,
                 React.createElement(Btn, { v: "ghost", onClick: () => setModal(null) }, "\u0E1B\u0E34\u0E14"),
                 React.createElement(Btn, { v: "danger", sz: "sm", onClick: () => rejectReq(pendingApId) }, "\u274C \u0E44\u0E21\u0E48\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34"),
@@ -3740,7 +3760,7 @@ function ReqPage({ requests, materials, filter, setFilter, role, setHistoryModal
 // ════════════════════════════════════════════════════════════
 // REQUEST FORM — ฟอร์มใบเบิกพร้อม Dropdown ขยายได้
 // ════════════════════════════════════════════════════════════
-function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept, errors = {}, clearErr }) {
+function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept, errors = {}, clearErr, lockedRequester }) {
     function hasStock(matId) { const ml = lots[matId] || []; return ml.reduce((s, l) => s + (l.rem_kgs || 0) + (l.rem_pcs || 0) + (l.rem_coil || 0) + (l.rem_m || 0), 0) > 0; }
     // สรุปคงเหลือของ material — ใช้โชว์ให้ผู้เบิกเห็นตั้งแต่ตอนกรอก จะได้ไม่ส่งใบที่ของไม่พอไปให้หัวหน้าอนุมัติเสียเวลา
     function stockSummary(matId) {
@@ -3900,8 +3920,11 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                 React.createElement("div", { style: eb("dept") },
                     React.createElement(SmartSelect, { value: form.dept, onChange: v => { setForm(f => ({ ...f, dept: v })); clearErr && clearErr("dept"); }, options: master.departments, onAddNew: v => { addDept(v); setForm(f => ({ ...f, dept: v })); clearErr && clearErr("dept"); }, addLabel: "\u2795 \u0E41\u0E1C\u0E19\u0E01\u0E43\u0E2B\u0E21\u0E48" })),
                 ef("dept")),
-            React.createElement(FG, { label: "\u0E0A\u0E37\u0E48\u0E2D\u0E1C\u0E39\u0E49\u0E40\u0E1A\u0E34\u0E01 *" },
-                React.createElement(Inp, { value: form.requester, onChange: v => { setForm(f => ({ ...f, requester: v })); clearErr && clearErr("requester"); }, placeholder: "\u0E0A\u0E37\u0E48\u0E2D-\u0E2A\u0E01\u0E38\u0E25", style: eb("requester") }),
+            // \u0E0A\u0E37\u0E48\u0E2D\u0E1C\u0E39\u0E49\u0E40\u0E1A\u0E34\u0E01\u0E21\u0E32\u0E08\u0E32\u0E01\u0E04\u0E19\u0E17\u0E35\u0E48\u0E25\u0E47\u0E2D\u0E01\u0E2D\u0E34\u0E19 \u0E41\u0E01\u0E49\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49 \u2014 \u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01\u0E08\u0E30\u0E44\u0E14\u0E49\u0E15\u0E23\u0E07\u0E01\u0E31\u0E1A\u0E04\u0E19\u0E17\u0E35\u0E48\u0E01\u0E14\u0E2A\u0E48\u0E07\u0E08\u0E23\u0E34\u0E07\u0E40\u0E2A\u0E21\u0E2D
+            React.createElement(FG, { label: "\u0E0A\u0E37\u0E48\u0E2D\u0E1C\u0E39\u0E49\u0E40\u0E1A\u0E34\u0E01 *", note: lockedRequester ? "\u0E08\u0E32\u0E01\u0E1C\u0E39\u0E49\u0E17\u0E35\u0E48\u0E25\u0E47\u0E2D\u0E01\u0E2D\u0E34\u0E19" : "" },
+                lockedRequester
+                    ? React.createElement("div", { style: { ...roBoxStyle, fontWeight: 700, color: C.tx } }, form.requester || "-")
+                    : React.createElement(Inp, { value: form.requester, onChange: v => { setForm(f => ({ ...f, requester: v })); clearErr && clearErr("requester"); }, placeholder: "\u0E0A\u0E37\u0E48\u0E2D-\u0E2A\u0E01\u0E38\u0E25", style: eb("requester") }),
                 ef("requester"))),
         React.createElement(SecTitle, null, "\uD83D\uDCE6 \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A\u0E17\u0E35\u0E48\u0E40\u0E1A\u0E34\u0E01 *"),
         errors.items && React.createElement("div", { style: { background: "rgba(248,81,73,.08)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 6, padding: "7px 12px", marginBottom: 10, fontSize: 11, color: "#cf222e" } },
@@ -4870,7 +4893,7 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
 // ════════════════════════════════════════════════════════════
 // HISTORY PAGE
 // ════════════════════════════════════════════════════════════
-function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, ngReturns, saveNgReturns, toast, logAudit, lotPriceMap, onSaveLotPrice, onSaveLotPricesBulk, dnMap, onSaveDnBulk }) {
+function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLots, materials, ngReturns, saveNgReturns, toast, logAudit, lotPriceMap, onSaveLotPrice, onSaveLotPricesBulk, dnMap, onSaveDnBulk }) {
     // แสดงเฉพาะคอลัมน์หน่วยที่มีข้อมูลจริงในรายการที่กำลังแสดง (ไม่มี COIL/M ก็ไม่ต้องโชว์ให้รก)
     const unitColsOf = rows => {
         const has = k => (rows || []).some(r => { const v = r[k]; return v != null && v !== "" && Number(v) > 0; });
@@ -4938,6 +4961,70 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
         const hits = [];
         ids.forEach(mid => { (lots[mid] || []).forEach(l => { if (l.lotNo === lotNo) hits.push({ matId: mid, lot: l }); }); });
         return hits.length === 1 ? hits[0] : { matId: null, lot: null };
+    }
+    // ── แก้ไขประวัติการจ่าย — แก้ได้ทั้ง "จำนวน" "น้ำหนัก KGS" และ "เลข Lot" ──
+    // ทุกการแก้จะปรับยอดคงเหลือใน lot ตามให้อัตโนมัติ (แก้ประวัติอย่างเดียวยอดคลังจะเพี้ยน)
+    const [editIsIdx, setEditIsIdx] = useState(null);
+    const [editIsForm, setEditIsForm] = useState({});
+    function startEditIssue(gi, r) {
+        setEditIsIdx(gi);
+        setEditIsForm({ qty: r.pcs != null ? r.pcs : (r.coil != null ? r.coil : ""), kgs: r.kgs != null ? r.kgs : "", lotNo: r.lotNo || "" });
+    }
+    // บวกยอดกลับเข้า lot (ค่าบวก = คืนของเข้าคลัง, ค่าลบ = ตัดออกเพิ่ม)
+    async function _bumpLot(matId, lot, d) {
+        const nk = lot.rem_kgs != null ? Math.max(0, Math.round(((lot.rem_kgs || 0) + (d.kgs || 0)) * 1000) / 1000) : lot.rem_kgs;
+        const np = lot.rem_pcs != null ? Math.max(0, (lot.rem_pcs || 0) + (d.pcs || 0)) : lot.rem_pcs;
+        const nc = lot.rem_coil != null ? Math.max(0, (lot.rem_coil || 0) + (d.coil || 0)) : lot.rem_coil;
+        const nm = lot.rem_m != null ? Math.max(0, (lot.rem_m || 0) + (d.m || 0)) : lot.rem_m;
+        setLots(ls => ({ ...ls, [matId]: (ls[matId] || []).map(l => l._dbId === lot._dbId ? { ...l, rem_kgs: nk, rem_pcs: np, rem_coil: nc, rem_m: nm } : l) }));
+        if (lot._dbId) await updateLot(lot._dbId, { rem_kgs: nk, rem_pcs: np, rem_coil: nc, rem_m: nm });
+    }
+    async function saveIssueEdit(gi) {
+        const r = (issueHist || [])[gi];
+        if (!r) return;
+        const numOrNull = v => { const s = String(v == null ? "" : v).trim(); if (s === "") return null; const n = parseFloat(s); return isFinite(n) ? n : null; };
+        const newKgs = numOrNull(editIsForm.kgs);
+        const newLotNo = String(editIsForm.lotNo || "").trim() || r.lotNo;
+        const oldKgs = r.kgs != null ? Number(r.kgs) : null;
+        // ช่อง "จำนวน" ผูกกับหน่วยที่แถวนั้นใช้จริง — เส้น (pcs) หรือม้วน (coil)
+        const qf = r.pcs != null ? "pcs" : (r.coil != null ? "coil" : "pcs");
+        const oldQty = r[qf] != null ? Number(r[qf]) : null;
+        const newQty = numOrNull(editIsForm.qty);
+        if (newKgs === oldKgs && newQty === oldQty && newLotNo === r.lotNo) { setEditIsIdx(null); return; }
+        const oldFound = findLotOf(r_matchName(r), r.maker, r.lotNo, r);
+        const dq = (f, oldV, newV) => f === qf ? (oldV || 0) - (newV || 0) : 0;
+        if (newLotNo === r.lotNo) {
+            // lot เดิม → ปรับเฉพาะส่วนต่าง (จ่ายมากขึ้น = คงเหลือน้อยลง)
+            if (oldFound.lot) await _bumpLot(oldFound.matId, oldFound.lot, {
+                kgs: (oldKgs || 0) - (newKgs || 0),
+                pcs: dq("pcs", oldQty, newQty),
+                coil: dq("coil", oldQty, newQty),
+                m: 0 });
+        } else {
+            // ย้ายไป lot อื่น → คืนของเข้า lot เดิมทั้งก้อน แล้วตัดออกจาก lot ใหม่ตามจำนวนที่แก้
+            const newFound = findLotOf(r_matchName(r), r.maker, newLotNo, r);
+            if (!newFound || !newFound.lot) { toast("❌ ไม่พบ Lot " + newLotNo + " ในวัตถุดิบตัวนี้ — ตรวจเลข Lot อีกครั้ง", "err"); return; }
+            const back = { kgs: oldKgs || 0, pcs: 0, coil: 0, m: Number(r.m) || 0 };
+            back[qf] = oldQty || 0;
+            const take = { kgs: -(newKgs || 0), pcs: 0, coil: 0, m: -(Number(r.m) || 0) };
+            take[qf] = -(newQty || 0);
+            if (oldFound.lot) await _bumpLot(oldFound.matId, oldFound.lot, back);
+            await _bumpLot(newFound.matId, newFound.lot, take);
+        }
+        if (r._dbId) {
+            const patch = { kgs: newKgs, lot_no: newLotNo };
+            patch[qf] = newQty;
+            const { error } = await sb.from('sf_issuehist').update(patch).eq('id', r._dbId);
+            if (error) { toast("❌ บันทึกไม่สำเร็จ: " + error.message, "err"); return; }
+        }
+        setIssueHist(hs => hs.map((x, i) => i === gi ? { ...x, kgs: newKgs, lotNo: newLotNo, [qf]: newQty } : x));
+        logAudit && logAudit("stock", "แก้ไขประวัติการจ่าย",
+            (r.reqId || "-") + " | " + sizeTxt(r.name)
+            + (newQty !== oldQty ? " | จำนวน " + (oldQty != null ? oldQty : "-") + " → " + (newQty != null ? newQty : "-") : "")
+            + (newKgs !== oldKgs ? " | KGS " + (oldKgs != null ? oldKgs : "-") + " → " + (newKgs != null ? newKgs : "-") : "")
+            + (newLotNo !== r.lotNo ? " | Lot " + r.lotNo + " → " + newLotNo : ""));
+        setEditIsIdx(null);
+        toast("✅ แก้ไขประวัติการจ่ายแล้ว — ปรับยอดในคลังให้ด้วยแล้ว");
     }
     const [editRecvIdx, setEditRecvIdx] = useState(null); // index ใน recvHist ที่กำลังแก้ไข
     const [editRecvForm, setEditRecvForm] = useState({});
@@ -5383,11 +5470,11 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                 })(),
                 tab === "issue" && !issueSum && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11 } },
                     React.createElement("thead", { style: { position: "sticky", top: 0, zIndex: 3 } },
-                        React.createElement("tr", { style: { background: C.sur2 } }, ["วันที่", "เลขที่ใบเบิก", "วัตถุดิบ", "Maker", "Lot No.", "QTY", "Unit", "KGS", "M", "Forecast/PO", "แผนก", "ผู้เบิก", "ผู้อนุมัติ", "ผู้จ่าย"].map(h => React.createElement("th", { key: h, style: { padding: "5px 7px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap", background: C.sur2 } }, h)))),
+                        React.createElement("tr", { style: { background: C.sur2 } }, ["วันที่", "เลขที่ใบเบิก", "วัตถุดิบ", "Maker", "Lot No.", "QTY", "Unit", "KGS", "M", "Forecast/PO", "แผนก", "ผู้เบิก", "ผู้อนุมัติ", "ผู้จ่าย", ...(setIssueHist ? ["แก้ไข"] : [])].map(h => React.createElement("th", { key: h, style: { padding: "5px 7px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap", background: C.sur2 } }, h)))),
                     React.createElement("tbody", null,
                         filtered.length === 0 && React.createElement("tr", null,
                             React.createElement("td", { colSpan: 13, style: { padding: 24, textAlign: "center", color: C.tx2 } }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25")),
-                        filtered.map((r, i) => React.createElement("tr", { key: i },
+                        filtered.map((r, i) => { const _ed = setIssueHist && editIsIdx === r._gi; return React.createElement("tr", { key: i, style: { background: _ed ? "rgba(88,166,255,.06)" : "transparent" } },
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, whiteSpace: "nowrap" } }, fmtDate(r.date)),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10, color: C.acc, whiteSpace: "nowrap" } }, r.reqId),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontWeight: 600, whiteSpace: "nowrap" } },
@@ -5395,17 +5482,34 @@ function HistPage({ issueHist, recvHist, setRecvHist, lots, setLots, materials, 
                                 (() => { const tp = histTemper(r); return tp ? React.createElement("span", { style: { marginLeft: 7, fontSize: 10, fontWeight: 700, color: "#8250df", background: "rgba(130,80,223,.1)", border: "1px solid rgba(130,80,223,.25)", borderRadius: 5, padding: "1px 7px", whiteSpace: "nowrap" } }, tp) : null; })()),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2 } },
                                 React.createElement(Tag, { color: C.acc2, bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, r.maker)),
-                            React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10 } }, r.lotNo),
-                            React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace", fontWeight: 700 } }, r.pcs != null ? r.pcs : (r.coil != null ? r.coil : "-")),
+                            React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10 } },
+                                _ed ? React.createElement("input", { value: editIsForm.lotNo || "", onChange: e => setEditIsForm(f => ({ ...f, lotNo: e.target.value })),
+                                    style: { width: 120, background: C.sur, border: "1px solid " + C.acc, borderRadius: 5, padding: "3px 6px", color: C.tx, fontFamily: "monospace", fontSize: 11, outline: "none" } })
+                                    : r.lotNo),
+                            React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace", fontWeight: 700 } },
+                                _ed ? React.createElement("input", { type: "number", step: "1", value: editIsForm.qty != null ? editIsForm.qty : "", onChange: e => setEditIsForm(f => ({ ...f, qty: e.target.value })),
+                                    style: { width: 70, background: C.sur, border: "1px solid " + C.acc, borderRadius: 5, padding: "3px 6px", color: C.tx, fontFamily: "monospace", fontSize: 11, outline: "none", textAlign: "right" } })
+                                    : (r.pcs != null ? r.pcs : (r.coil != null ? r.coil : "-"))),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2 } },
                                 React.createElement(Tag, null, r.unit || "PCS")),
-                            React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace" } }, r.kgs || "-"),
+                            React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace" } },
+                                _ed ? React.createElement("input", { type: "number", step: "0.01", value: editIsForm.kgs != null ? editIsForm.kgs : "", onChange: e => setEditIsForm(f => ({ ...f, kgs: e.target.value })),
+                                    style: { width: 80, background: C.sur, border: "1px solid " + C.acc, borderRadius: 5, padding: "3px 6px", color: C.tx, fontFamily: "monospace", fontSize: 11, outline: "none", textAlign: "right" } })
+                                    : (r.kgs || "-")),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace" } }, r.m != null && r.m !== "" ? fmtQty(r.m, 1) : "-"),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, color: C.acc3, fontSize: 11 } }, r.forecast || "-"),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2 } }, r.dept),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2 } }, r.requester),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, color: C.tx2 } }, r.approver || "-"),
-                            React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, color: C.acc2 } }, r.issuedBy || "-"))))),
+                            React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, color: C.acc2 } }, r.issuedBy || "-"),
+                            setIssueHist && React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, whiteSpace: "nowrap" } },
+                                _ed ? React.createElement("span", { style: { display: "inline-flex", gap: 4 } },
+                                    React.createElement("button", { onClick: () => saveIssueEdit(r._gi), title: "บันทึก และปรับยอดในคลังให้ตรงกัน",
+                                        style: { background: "#1a7f37", border: "none", borderRadius: 4, color: "#fff", cursor: "pointer", padding: "3px 9px", fontSize: 11, fontWeight: 700, fontFamily: "inherit" } }, "✓ บันทึก"),
+                                    React.createElement("button", { onClick: () => setEditIsIdx(null),
+                                        style: { background: "transparent", border: "1px solid " + C.brd, borderRadius: 4, color: C.tx2, cursor: "pointer", padding: "3px 8px", fontSize: 11, fontFamily: "inherit" } }, "✕"))
+                                    : React.createElement("button", { onClick: () => startEditIssue(r._gi, r), title: "แก้ไขจำนวน / น้ำหนัก KGS / เลข Lot — ระบบจะปรับยอดในคลังให้ตามอัตโนมัติ",
+                                        style: { background: "rgba(88,166,255,.15)", border: "1px solid rgba(88,166,255,.3)", borderRadius: 4, color: "#0969da", cursor: "pointer", padding: "3px 8px", fontSize: 11 } }, "✏️"))); }))),
                 tab === "recv" && recvSum && (() => {
                     // รวมยอดรับของ วันที่ + Maker + Material เข้าด้วยกัน
                     // สโตร์รับเข้าทีละหลาย Lot แต่ Invoice ที่มาทีหลังบอกยอดรวมก้อนเดียว
