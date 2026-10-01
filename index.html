@@ -181,6 +181,13 @@ function fmtDate(d) {
     if (!m) return s;
     return m[3] + "/" + m[2] + "/" + m[1];
 }
+// ของคงเหลือใน lot ตามหน่วยที่เบิก — ใช้ร่วมกันทั้งตอนเช็คก่อนจ่ายและตอนตัดสต๊อกจริง
+function availOfLotU(l, u) {
+    if (u === "M" || (l.rem_m != null && l.rem_pcs == null && l.rem_kgs == null && l.rem_coil == null)) return l.rem_m || 0;
+    if (u === "COIL" || u === "COIL+KGS" || (l.rem_coil != null && l.rem_pcs == null && l.rem_kgs == null)) return l.rem_coil || 0;
+    if (u === "KGS" && l.rem_kgs != null) return l.rem_kgs || 0;
+    return l.rem_pcs || 0;
+}
 function fmtQty(n, dec) {
     if (n == null || n === "-" || n === "") return n;
     const v = Number(n);
@@ -2467,12 +2474,32 @@ function StoreFlow() {
                 React.createElement(Btn, { v: "success", onClick: () => { setPinModal({ mode: "approve", title: "ยืนยันตัวตนผู้อนุมัติ", onSuccess: (u) => { setCurrentUser(u); approveReq(pendingApId); setModal(null); setPinModal(null); } }); } }, "\uD83D\uDD10 \u0E22\u0E37\u0E19\u0E22\u0E31\u0E19 + \u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34")) }, pendingApId && React.createElement(ApBody, { req: requests.find(r => r.id === pendingApId) })),
         React.createElement(Modal, { open: modal === "issue", onClose: () => setModal(null), title: "\u0E08\u0E48\u0E32\u0E22\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A (FIFO)", icon: "\uD83D\uDCE4", sub: "Lot \u0E40\u0E01\u0E48\u0E32\u0E2A\u0E38\u0E14\u0E01\u0E48\u0E2D\u0E19\u0E40\u0E2A\u0E21\u0E2D", width: 660, footer: React.createElement(React.Fragment, null,
                 React.createElement(Btn, { v: "ghost", onClick: () => setModal(null) }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"),
-                React.createElement(Btn, { v: "success", onClick: () => { if (!currentUser) {
-                        setPinModal({ mode: "login", title: "เข้าสู่ระบบก่อนจ่าย", onSuccess: (u) => { setCurrentUser(u); issueReq(pendingIsId); setModal(null); setPinModal(null); } });
-                    }
-                    else {
-                        issueReq(pendingIsId);
-                    } } }, currentUser ? "✅ ยืนยันการจ่าย + ตัดสต๊อก" : "🔐 Login + จ่าย")) }, pendingIsId && React.createElement(IsBody, { req: requests.find(r => r.id === pendingIsId), lots: lots, selectedLots: selectedLots, setSelectedLots: setSelectedLots, realLots: realLots, setRealLots: setRealLots, realKgs: realKgs, setRealKgs: setRealKgs })),
+                (() => {
+                    // กันกดจ่ายทั้งที่ยังเลือก Lot ไม่ครบ — เดิมกดได้เลย ใบเดียวมีหลายรายการ
+                    // แต่เลือก Lot แค่บางรายการ ระบบก็ปิดใบเป็น "จ่ายแล้ว" ยอดบนใบกับที่จ่ายจริงเลยไม่ตรง
+                    const _r = requests.find(x => x.id === pendingIsId);
+                    const miss = [];
+                    (_r && _r.items || []).forEach((it, idx) => {
+                        const u = it.unit || "PCS";
+                        const sel = ((selectedLots || {})[`${idx}_${it.matId}`] || []).reduce((s, x) => s + (parseFloat(x.qty) || 0), 0);
+                        const need = parseFloat(it.qty) || 0;
+                        const have = (lots[it.matId] || []).reduce((s, l) => s + availOfLotU(l, u), 0);
+                        const must = Math.min(need, have);   // ของไม่พอ = เลือกเท่าที่มีก็ถือว่าครบ
+                        if (sel + 0.001 < must) miss.push({ name: sizeTxt(it.name), u, sel, need, must });
+                    });
+                    if (miss.length) return React.createElement(Btn, { v: "warn", onClick: () => window.alert(
+                        "⚠️ ยังเลือก Lot ไม่ครบ จ่ายไม่ได้\n\n"
+                        + miss.map(m => "  • " + m.name + "\n      ขอเบิก " + fmtQty(m.need, 2) + " " + m.u
+                            + " · เลือกแล้ว " + fmtQty(m.sel, 2) + " · ยังขาด " + fmtQty(m.must - m.sel, 2)).join("\n")
+                        + "\n\nกรุณาเลือก Lot ให้ครบทุกรายการก่อนกดจ่าย\n(ถ้าของในคลังไม่พอ ระบบจะให้จ่ายเท่าที่มีได้)") },
+                        "⚠️ ยังเลือก Lot ไม่ครบ (" + miss.length + " รายการ)");
+                    return React.createElement(Btn, { v: "success", onClick: () => { if (!currentUser) {
+                            setPinModal({ mode: "login", title: "เข้าสู่ระบบก่อนจ่าย", onSuccess: (u) => { setCurrentUser(u); issueReq(pendingIsId); setModal(null); setPinModal(null); } });
+                        }
+                        else {
+                            issueReq(pendingIsId);
+                        } } }, currentUser ? "✅ ยืนยันการจ่าย + ตัดสต๊อก" : "🔐 Login + จ่าย");
+                })()) }, pendingIsId && React.createElement(IsBody, { req: requests.find(r => r.id === pendingIsId), lots: lots, selectedLots: selectedLots, setSelectedLots: setSelectedLots, realLots: realLots, setRealLots: setRealLots, realKgs: realKgs, setRealKgs: setRealKgs })),
         React.createElement(Modal, { open: modal === "mat", onClose: () => { setModal(null); setMmFromPartNo(false); }, title: mmForm.editId ? "แก้ไข Material" : (mmFromPartNo ? "เพิ่ม Material ใหม่ (ยังไม่บันทึก)" : "เพิ่ม Material ใหม่"), icon: "\u2699\uFE0F", width: 720, footer: React.createElement(React.Fragment, null,
                 React.createElement(Btn, { v: "ghost", onClick: () => { setModal(null); setMmFromPartNo(false); } }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"),
                 React.createElement(Btn, { v: mmFromPartNo ? "success" : "primary", sz: mmFromPartNo ? "md" : "sm", onClick: saveMat }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01" + (mmFromPartNo ? " \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E40\u0E02\u0E49\u0E32\u0E04\u0E25\u0E31\u0E07" : ""))) },
@@ -4269,6 +4296,25 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
             "\uD83D\uDCCC ",
             React.createElement("strong", null, "\u0E40\u0E25\u0E37\u0E2D\u0E01 Lot \u0E17\u0E35\u0E48\u0E08\u0E30\u0E2B\u0E22\u0E34\u0E1A\u0E08\u0E48\u0E32\u0E22"),
             " \u2014 \u0E40\u0E23\u0E35\u0E22\u0E07\u0E15\u0E32\u0E21\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\u0E23\u0E31\u0E1A (\u0E40\u0E01\u0E48\u0E32\u0E2A\u0E38\u0E14\u0E01\u0E48\u0E2D\u0E19) \u2611\uFE0F \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E44\u0E14\u0E49\u0E2B\u0E25\u0E32\u0E22 Lot \u0E1E\u0E23\u0E49\u0E2D\u0E21\u0E01\u0E31\u0E19 \u0E41\u0E25\u0E30\u0E23\u0E30\u0E1A\u0E38\u0E08\u0E33\u0E19\u0E27\u0E19\u0E41\u0E15\u0E48\u0E25\u0E30 Lot \u0E44\u0E14\u0E49"),
+        // \u0E2A\u0E23\u0E38\u0E1B\u0E2B\u0E31\u0E27\u0E43\u0E1A: \u0E43\u0E1A\u0E40\u0E14\u0E35\u0E22\u0E27\u0E21\u0E35\u0E2B\u0E25\u0E32\u0E22\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \u0E15\u0E49\u0E2D\u0E07\u0E40\u0E2B\u0E47\u0E19\u0E0A\u0E31\u0E14\u0E27\u0E48\u0E32\u0E40\u0E25\u0E37\u0E2D\u0E01 Lot \u0E04\u0E23\u0E1A\u0E17\u0E38\u0E01\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E41\u0E25\u0E49\u0E27\u0E2B\u0E23\u0E37\u0E2D\u0E22\u0E31\u0E07
+        (() => {
+            const st = (req.items || []).map((it, i) => {
+                const u = it.unit || "PCS";
+                const sel = ((selectedLots || {})[`${i}_${it.matId}`] || []).reduce((s, x) => s + (parseFloat(x.qty) || 0), 0);
+                const need = parseFloat(it.qty) || 0;
+                const have = (lots[it.matId] || []).reduce((s, l) => s + availOfLotU(l, u), 0);
+                return { ok: sel + 0.001 >= Math.min(need, have), name: sizeTxt(it.name) };
+            });
+            const done = st.filter(x => x.ok).length, all = st.length, full = done === all;
+            return React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12, padding: "9px 13px", borderRadius: 8,
+                    background: full ? "rgba(63,185,80,.10)" : "rgba(210,153,34,.10)",
+                    border: "1px solid " + (full ? "rgba(63,185,80,.45)" : "rgba(210,153,34,.45)") } },
+                React.createElement("span", { style: { fontSize: 15, fontWeight: 800, color: full ? C.ok : C.warn } },
+                    full ? "\u2705 \u0E40\u0E25\u0E37\u0E2D\u0E01 Lot \u0E04\u0E23\u0E1A\u0E17\u0E38\u0E01\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E41\u0E25\u0E49\u0E27 (" + all + "/" + all + ")" : "\u23F3 \u0E40\u0E25\u0E37\u0E2D\u0E01 Lot \u0E41\u0E25\u0E49\u0E27 " + done + " / " + all + " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"),
+                !full && React.createElement("span", { style: { fontSize: 11.5, color: C.tx2 } },
+                    "\u0E22\u0E31\u0E07\u0E02\u0E32\u0E14: " + st.filter(x => !x.ok).map(x => x.name).join(" \u00B7 ")),
+                !full && React.createElement("span", { style: { fontSize: 11, color: C.tx3, marginLeft: "auto" } }, "\u0E15\u0E49\u0E2D\u0E07\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E43\u0E2B\u0E49\u0E04\u0E23\u0E1A\u0E01\u0E48\u0E2D\u0E19\u0E08\u0E36\u0E07\u0E08\u0E30\u0E01\u0E14\u0E08\u0E48\u0E32\u0E22\u0E44\u0E14\u0E49"));
+        })(),
         req.items.map((it, i) => {
             const avail = [...(lots[it.matId] || [])]
                 .filter(l => (l.rem_kgs || 0) > 0 || (l.rem_pcs || 0) > 0 || (l.rem_coil || 0) > 0 || (l.rem_m || 0) > 0)
@@ -4379,6 +4425,15 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
                             (lotQuery[selKey] || "") ? React.createElement("button", { onClick: () => setLotQuery(s => ({ ...s, [selKey]: "" })),
                                 style: { background: "transparent", border: "1px solid " + C.brd, borderRadius: 6, color: C.tx2, fontSize: 11, padding: "5px 9px", cursor: "pointer" } }, "\u2715 \u0E25\u0E49\u0E32\u0E07") : null,
                             React.createElement("span", { style: { fontSize: 10, color: C.tx3 } }, "\u0E41\u0E2A\u0E14\u0E07 " + shown.length + "/" + avail.length + " Lot")),
+                        // \u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E40\u0E25\u0E02 Lot \u0E41\u0E25\u0E49\u0E27\u0E44\u0E21\u0E48\u0E40\u0E08\u0E2D \u0E40\u0E1E\u0E23\u0E32\u0E30 lot \u0E19\u0E31\u0E49\u0E19\u0E22\u0E2D\u0E14\u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A\u0E40\u0E1B\u0E47\u0E19 0 \u2014 \u0E1A\u0E2D\u0E01\u0E43\u0E2B\u0E49\u0E23\u0E39\u0E49 \u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48\u0E1B\u0E25\u0E48\u0E2D\u0E22\u0E43\u0E2B\u0E49\u0E2B\u0E32\u0E27\u0E19\u0E44\u0E1B\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E22 \u0E46
+                        (() => {
+                            if (!_q) return null;
+                            const zero = (lots[it.matId] || []).filter(l => !avail.some(a => a === l)
+                                && String(l.lotNo || "").toLowerCase().includes(_q));
+                            if (!zero.length) return null;
+                            return React.createElement("div", { style: { margin: "0 0 7px", padding: "7px 10px", background: "rgba(210,153,34,.1)", border: "1px solid rgba(210,153,34,.4)", borderRadius: 7, fontSize: 11.5, color: "#9a6700", fontWeight: 600 } },
+                                "\u26A0\uFE0F \u0E21\u0E35 Lot " + zero.map(l => l.lotNo).join(", ") + " \u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A \u0E41\u0E15\u0E48\u0E22\u0E2D\u0E14\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E40\u0E1B\u0E47\u0E19 0 \u0E08\u0E36\u0E07\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E08\u0E48\u0E32\u0E22\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49 \u2014 \u0E16\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E08\u0E23\u0E34\u0E07\u0E22\u0E31\u0E07\u0E21\u0E35 \u0E41\u0E08\u0E49\u0E07\u0E1D\u0E48\u0E32\u0E22\u0E08\u0E31\u0E14\u0E0B\u0E37\u0E49\u0E2D\u0E43\u0E2B\u0E49\u0E22\u0E49\u0E32\u0E22\u0E22\u0E2D\u0E14\u0E21\u0E32\u0E17\u0E35\u0E48 Lot \u0E19\u0E35\u0E49\u0E01\u0E48\u0E2D\u0E19");
+                        })(),
                         React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 260, overflowY: "auto" } }, shown.map((lot, j) => {
                             const isSel = !!selList.find(x => x.lotNo === lot.lotNo);
                             const selEntry = selList.find(x => x.lotNo === lot.lotNo);
