@@ -2091,10 +2091,13 @@ function StoreFlow() {
         }
         if (dnUpd.length) await saveDnBulk(dnUpd);
         const g0 = groups[0];
-        toast(groups.length > 1
+        toast((groups.length > 1
             ? `✅ รับ ${g0.mat.name} (${maker}) ${groups.length} size / ${validLots.length} Lot สำเร็จ`
-            : `✅ รับ ${g0.mat.name} ${g0.mat.size} (${maker}) จำนวน ${validLots.length} Lot สำเร็จ`);
-        setRvForm(emptyRv());
+            : `✅ รับ ${g0.mat.name} ${g0.mat.size} (${maker}) จำนวน ${validLots.length} Lot สำเร็จ`)
+            + " — คงหัวเอกสารไว้ให้คีย์ size ถัดไปต่อได้เลย");
+        // ใบส่งของใบเดียวมักมีหลาย size (เช่น NASTOA ต้นเดือน) → เก็บ วันที่/PO/Invoice/DN/ประเภท/Maker ไว้
+        // ล้างเฉพาะ Size กับรายการ Lot จะได้ไม่ต้องคีย์หัวเอกสารซ้ำทุกรอบ (กดปุ่ม "ล้างฟอร์ม" ถ้าจะขึ้นใบใหม่)
+        setRvForm(f => ({ ...emptyRv(), date: f.date, po: f.po, inv: f.inv, dn: f.dn, type: f.type, maker: f.maker, rohs: f.rohs }));
     }
     // ── เพิ่ม "ความยาวใหม่" จากหน้ารับวัตถุดิบ ──
     // ก๊อปทุกอย่างจากตัวต้นแบบในกลุ่มเดียวกัน เปลี่ยนแค่ Size (รูปแบบถูกสร้างให้ กัน format เพี้ยน)
@@ -4693,6 +4696,13 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
     const [saving, setSaving] = useState(false);
     // ราคาเดียวกันทุก Lot — สโตร์รับหลาย Lot แต่ราคาเดียว จะได้ไม่ต้องพิมพ์ซ้ำทุกแถว
     const [samePrice, setSamePrice] = useState(true);
+    // ช่องวางหลาย Lot ทีเดียว (ก๊อปจาก Excel / ใบส่งของ)
+    const [pasteOpen, setPasteOpen] = useState(false);
+    const [pasteTxt, setPasteTxt] = useState("");
+    // ตัวเลขที่วางมาจะลงช่องไหน — ปกติระบบเลือกให้ตามหน่วยของวัตถุดิบที่เลือกไว้
+    // (ทองแดง LWC = กิโล + ม้วน, SUS เป็นเส้น = เส้น + กิโล) แต่เปลี่ยนเองได้ถ้าเอกสารเรียงคนละแบบ
+    const [pasteC1, setPasteC1] = useState("");
+    const [pasteC2, setPasteC2] = useState("");
     const filtMats = form.type ? sortBySize(materials.filter(m => m.type === form.type && m.active !== false)) : [];
     const mkrs = form.matId
         ? [(_a = materials.find(m => m.id === form.matId)) === null || _a === void 0 ? void 0 : _a.maker].filter(Boolean)
@@ -4707,6 +4717,74 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
     // ใส่ราคา/หน่วยเดียวกันให้ทุก Lot พร้อมกัน
     function setAllPrice(field, val) { setForm(f => ({ ...f, lots: f.lots.map(l => ({ ...l, [field]: val })) })); }
     function remLot(idx) { setForm(f => ({ ...f, lots: f.lots.filter((_, i) => i !== idx) })); }
+    // ── สร้าง Size ใหม่จากหน้ารับของ ──
+    // ของใหม่ที่ยังไม่มีในคลัง (เช่น SUS304 14.0x0.6x4000) หรือ Size เดิมแต่คนละ Maker
+    // ก๊อป ชื่อ/Temper/หน่วย จากตัวที่เลือกไว้ แล้วเช็กซ้ำก่อนสร้างเสมอ กันพิมพ์ผิดจนกลายเป็น Size ใหม่
+    async function addNewSize() {
+        const base = selMat || (form.type ? materials.find(m => m.active !== false && m.type === form.type && (!form.maker || m.maker === form.maker)) : null);
+        if (!base) { window.alert("⛔ เลือก \"ประเภทวัตถุดิบ\" และ Size ที่ใกล้เคียงไว้ก่อน 1 ตัว\n\nระบบจะก๊อป ชื่อ Material / Temper / หน่วย จากตัวนั้นให้ จะได้ไม่ต้องกรอกใหม่ทั้งหมด"); return; }
+        const mkNow = form.maker || base.maker;
+        const raw = window.prompt("พิมพ์ Size ใหม่ทั้งบรรทัด เช่น  Ø14.0x0.6x4000\n\n"
+            + "ก๊อปจาก : " + (base.size || "").replace(/^size:/i, "") + "  (" + base.name + ")\n"
+            + "Temper : " + (base.temper || "-") + "   |   Maker : " + mkNow,
+            (base.size || "").replace(/^site:/i, "").replace(/^size:/i, ""));
+        if (raw == null) return;
+        const ns = String(raw).trim();
+        if (!ns) return;
+        const key = s => String(s == null ? "" : s).replace(/^size:/i, "").replace(/[^0-9.]/g, "");
+        // 1) ซ้ำกับของ maker นี้อยู่แล้ว → ใช้ตัวเดิม ไม่สร้างซ้ำ
+        const same = materials.find(x => x.active !== false && x.type === base.type && x.maker === mkNow
+            && ((x.temper || "") === (base.temper || "")) && key(x.size) === key(ns));
+        if (same) { window.alert("ℹ️ Size นี้มีอยู่แล้วในคลัง (" + (same.size || "") + " · " + same.maker + ") — จะเลือกตัวเดิมให้"); setForm(f => ({ ...f, matId: same.id, maker: same.maker, _sizeTxt: null })); return; }
+        // 2) มีของ maker อื่นแล้ว → บอกให้รู้ (เคส size เดิมแต่เปลี่ยนเจ้า) แล้วสร้างให้ maker นี้
+        const otherMk = materials.filter(x => x.active !== false && x.type === base.type && key(x.size) === key(ns) && x.maker !== mkNow);
+        // 3) ใกล้เคียง (Ø กับความหนาเท่ากัน) → โชว์ให้ตรวจก่อน กันพิมพ์ผิดหลักเดียว
+        const n0 = _nums(ns);
+        const near = n0.length >= 1 ? materials.filter(x => x.active !== false && x.type === base.type
+            && (() => { const n = _nums(x.size); return n.length >= 1 && n[0] === n0[0]; })())
+            .map(x => "   · " + (x.size || "").replace(/^size:/i, "") + "  (" + x.maker + ")").slice(0, 8) : [];
+        if (!window.confirm("จะสร้างวัตถุดิบใหม่ตามนี้ — ตรวจให้แน่ใจก่อน\n\n"
+            + "ประเภท : " + base.type + "\nชื่อ    : " + base.name + "\nSize   : " + ns + "\n"
+            + "Temper : " + (base.temper || "-") + "\nMaker  : " + mkNow + "\nหน่วย   : " + (base.unit || "-") + "\n"
+            + (otherMk.length ? "\n⚠️ Size นี้มีอยู่แล้วของ: " + otherMk.map(x => x.maker).join(", ") + "\n   (ถ้าใช่ของเจ้าเดิม ให้กด Cancel แล้วเลือกจากรายการแทน)\n" : "")
+            + (near.length ? "\nSize ใกล้เคียงที่มีอยู่แล้ว:\n" + near.join("\n") + "\n   (ถ้าตัวใดตัวหนึ่งคือตัวที่ต้องการ แปลว่าพิมพ์ผิด ให้กด Cancel)\n" : "")
+            + "\nยืนยันสร้าง?")) return;
+        const created = await onAddLength(base, ns, mkNow);
+        if (created) setForm(f => ({ ...f, matId: created.id, maker: created.maker, _sizeTxt: null }));
+    }
+    // แตกข้อความที่วางมาเป็นบรรทัด Lot — รองรับ "68CN319 80" / "68CN319<TAB>80<TAB>241.50" / คั่นด้วยจุลภาค
+    // ตัวเลขตัวแรกลงช่องหน่วยหลักของวัตถุดิบตัวนั้น (เส้น หรือ กิโล) ตัวที่สองลงกิโล
+    // ช่องปลายทางของตัวเลขที่ 1 / 2 — ตั้งให้ตามหน่วยของวัตถุดิบที่เลือกไว้
+    function pasteMapDefault() {
+        const mm = materials.find(m => m.id === form.matId);
+        const u = String((mm && mm.unit) || "").toUpperCase();
+        if (u.indexOf("COIL") >= 0) return ["kgs", "coil"];   // ทองแดง LWC: กิโล + จำนวนม้วน
+        if (u === "M") return ["m", ""];                       // ท่อ PVC เป็นเมตร
+        if (u === "KGS") return ["kgs", "pcs"];
+        if (u === "COIL") return ["coil", "kgs"];
+        return ["pcs", "kgs"];                                 // PCS / BOTH: เส้น + กิโล
+    }
+    function pasteMap() { const d = pasteMapDefault(); return [pasteC1 || d[0], pasteC2 !== "" ? pasteC2 : d[1]]; }
+    function applyPaste() {
+        const [c1, c2] = pasteMap();
+        const rows = String(pasteTxt || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean).map(line => {
+            const parts = line.split(/[\t,;]+|\s{1,}/).map(x => x.trim()).filter(Boolean);
+            const lotNo = parts.shift() || "";
+            const nums = parts.map(x => parseFloat(String(x).replace(/,/g, ""))).filter(n => isFinite(n));
+            const row = { lotNo, pcs: "", coil: "", kgs: "", m: "", price: "", priceUnit: "", matId: "" };
+            if (nums.length >= 1 && c1) row[c1] = nums[0];
+            if (nums.length >= 2 && c2) row[c2] = nums[1];
+            return row;
+        }).filter(x => x.lotNo);
+        if (!rows.length) { window.alert("ยังไม่มีข้อมูลให้แตกบรรทัด — วางข้อความก่อน เช่น\n68CN319  80\n68CN320  80"); return; }
+        setForm(f => {
+            const pv = f.lots[f.lots.length - 1] || {};
+            const keep = f.lots.filter(l => String(l.lotNo || "").trim() || l.pcs || l.kgs || l.coil || l.m);
+            return { ...f, lots: [...keep, ...rows.map(x => ({ ...x, price: pv.price || "", priceUnit: pv.priceUnit || "" }))] };
+        });
+        setPasteTxt("");
+        setPasteOpen(false);
+    }
     // ย้ายบรรทัดขึ้น/ลง — ให้เรียงตรงกับใบส่งของ/Invoice จะได้คีย์ตามเอกสารทีละบรรทัด ไม่สลับกัน
     function moveLot(idx, dir) {
         setForm(f => {
@@ -4770,7 +4848,9 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
     const totalCoil = form.lots.reduce((s, l) => s + (parseFloat(l.coil) || 0), 0);
     return React.createElement("div", { onKeyDown: enterAsTab },
         React.createElement(Card, null,
-            React.createElement(CHd, { title: "\uD83D\uDCE5 \u0E23\u0E31\u0E1A\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A\u0E40\u0E02\u0E49\u0E32\u0E04\u0E25\u0E31\u0E07" }),
+            React.createElement(CHd, { title: "\uD83D\uDCE5 \u0E23\u0E31\u0E1A\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A\u0E40\u0E02\u0E49\u0E32\u0E04\u0E25\u0E31\u0E07",
+                // \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E41\u0E25\u0E49\u0E27\u0E23\u0E30\u0E1A\u0E1A\u0E04\u0E07\u0E2B\u0E31\u0E27\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E44\u0E27\u0E49\u0E43\u0E2B\u0E49\u0E04\u0E35\u0E22\u0E4C size \u0E16\u0E31\u0E14\u0E44\u0E1B \u2014 \u0E1B\u0E38\u0E48\u0E21\u0E19\u0E35\u0E49\u0E44\u0E27\u0E49\u0E25\u0E49\u0E32\u0E07\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E02\u0E36\u0E49\u0E19\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07\u0E43\u0E1A\u0E43\u0E2B\u0E21\u0E48
+                right: React.createElement(Btn, { v: "ghost", sz: "xs", onClick: () => { if (window.confirm("\u0E25\u0E49\u0E32\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E1F\u0E2D\u0E23\u0E4C\u0E21\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14 (\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48 PO Invoice DN Size \u0E41\u0E25\u0E30 Lot) ?")) setForm({ date: new Date().toISOString().split("T")[0], po: "", inv: "", dn: "", type: "", matId: "", maker: "", rohs: "ROHS", lots: [{ lotNo: "", pcs: "", coil: "", kgs: "", m: "", price: "", priceUnit: "" }] }); } }, "\uD83E\uDDF9 \u0E25\u0E49\u0E32\u0E07\u0E1F\u0E2D\u0E23\u0E4C\u0E21") }),
             React.createElement("div", { style: { padding: 18 } },
                 React.createElement(SecTitle, null, "\uD83D\uDCC4 \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E01\u0E32\u0E23\u0E23\u0E31\u0E1A"),
                 React.createElement(FGrid, { cols: 3 },
@@ -4820,7 +4900,14 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
                                 React.createElement("datalist", { id: "rv-size-list" },
                                     opts.map(m => React.createElement("option", { key: m.id, value: lbl(m) }))),
                                 (form._sizeTxt && !selMat) ? React.createElement("div", { style: { fontSize: 11, color: "#9a6700", marginTop: 3, fontWeight: 600 } },
-                                    "⚠️ ยังไม่ตรงกับรายการใด — เลือกจากรายการ หรือไปเพิ่ม Size ใหม่ที่หน้าจัดการ Material") : null);
+                                    "⚠️ ยังไม่ตรงกับรายการใด — เลือกจากรายการ หรือกดปุ่ม \"➕ Size ใหม่\" ด้านล่าง") : null,
+                                // รับของ Size ที่ยังไม่มีในคลังได้เลย ไม่ต้องไปสร้างที่หน้าจัดการ Material ก่อน
+                                // แต่ต้องเลือก Size ใกล้เคียงไว้ก่อน เพื่อก๊อป ชื่อ/Temper/หน่วย และกันสร้างซ้ำ
+                                onAddLength ? React.createElement("button", { type: "button", onClick: () => addNewSize(),
+                                    title: "สร้าง Size ใหม่จากตัวที่เลือกไว้ แล้วรับเข้าได้เลย",
+                                    style: { marginTop: 6, background: "rgba(26,127,55,.1)", border: "1px solid rgba(26,127,55,.45)", borderRadius: 7,
+                                        color: "#1a7f37", cursor: "pointer", padding: "5px 12px", fontSize: 12, fontWeight: 700, fontFamily: "inherit" } },
+                                    "➕ Size ใหม่ (ยังไม่มีในคลัง)") : null);
                         })()),
 
                     React.createElement(FG, { label: "Maker / Supplier", note: "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E14\u0E49" },
@@ -4898,6 +4985,44 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
                                 React.createElement("span", { style: { fontSize: 11, color: C.tx3 } }, "→ ระบบใส่ราคานี้ให้ครบทุก Lot (" + form.lots.length + " Lot) ไม่ต้องพิมพ์ซ้ำ"))
                             : React.createElement("span", { style: { fontSize: 11, color: C.tx3 } }, "→ กรอกราคาแยกทีละ Lot ในตารางด้านล่าง"));
                 })(),
+                // ── วางหลาย Lot ทีเดียว ──
+                // ของบาง maker (เช่น NASTOA) 1 size มีสิบกว่า Lot ถ้าคีย์ทีละช่องเสียเวลามาก
+                // ให้ก๊อปจาก Excel/ใบส่งของมาวางทีเดียว แล้วระบบแตกเป็นบรรทัดให้เอง
+                React.createElement("div", { style: { marginBottom: 10 } },
+                    React.createElement("button", { onClick: () => setPasteOpen(v => !v), type: "button",
+                        style: { background: pasteOpen ? C.acc : "rgba(9,105,218,.1)", border: "1px solid " + (pasteOpen ? C.acc : "rgba(9,105,218,.4)"),
+                            borderRadius: 7, color: pasteOpen ? "#fff" : C.acc, cursor: "pointer", padding: "6px 13px", fontSize: 12.5, fontWeight: 700, fontFamily: "inherit" } },
+                        pasteOpen ? "✕ ปิดช่องวาง Lot" : "📋 วางหลาย Lot ทีเดียว"),
+                    pasteOpen && React.createElement("div", { style: { marginTop: 8, border: "1px solid " + C.brd, borderRadius: 8, padding: 11, background: C.sur2 } },
+                        React.createElement("div", { style: { fontSize: 11.5, color: C.tx2, marginBottom: 6, lineHeight: 1.6 } },
+                            "วางได้เลยจาก Excel หรือพิมพ์เอง บรรทัดละ 1 Lot — ",
+                            React.createElement("b", null, "เลข Lot เว้นวรรค จำนวน"),
+                            " เช่น ", React.createElement("span", { style: { fontFamily: "monospace", background: "#fff", padding: "1px 6px", borderRadius: 4, border: "1px solid " + C.brd } }, "68CN319 80"),
+                            " · ถ้ามีทั้งเส้นและกิโล ใส่ 2 ตัวเลขต่อกัน เช่น ",
+                            React.createElement("span", { style: { fontFamily: "monospace", background: "#fff", padding: "1px 6px", borderRadius: 4, border: "1px solid " + C.brd } }, "68CN319 80 241.50")),
+                        React.createElement("textarea", { value: pasteTxt, onChange: e => setPasteTxt(e.target.value),
+                            placeholder: "68CN319\t80\n68CN320\t80\n68CN321\t32",
+                            style: { width: "100%", minHeight: 110, border: "1px solid " + C.brd, borderRadius: 7, padding: "9px 11px", fontFamily: "Consolas,monospace", fontSize: 12.5, outline: "none", resize: "vertical", background: "#fff", color: C.tx } }),
+                        (() => {
+                            // ให้เห็นชัดว่าตัวเลขจะลงช่องไหน และแก้ได้ถ้าเอกสารเรียงคนละแบบ
+                            const d = pasteMapDefault();
+                            const opts = [{ v: "pcs", l: "PCS (เส้น)" }, { v: "kgs", l: "KGS (กิโล)" }, { v: "coil", l: "COIL (ม้วน)" }, { v: "m", l: "M (เมตร)" }, { v: "", l: "— ไม่ใช้ —" }];
+                            const box = (val, setv, def, lb) => React.createElement("span", { style: { display: "inline-flex", alignItems: "center", gap: 5 } },
+                                React.createElement("span", { style: { fontSize: 11, color: C.tx2, fontWeight: 700 } }, lb),
+                                React.createElement("select", { value: val || def, onChange: e => setv(e.target.value),
+                                    style: { background: "#fff", border: "1px solid " + C.brd, borderRadius: 6, padding: "4px 7px", fontSize: 11.5, fontFamily: "inherit", color: C.tx, outline: "none" } },
+                                    opts.map(o => React.createElement("option", { key: o.v, value: o.v }, o.l))));
+                            return React.createElement("div", { style: { display: "flex", gap: 12, alignItems: "center", marginTop: 8, flexWrap: "wrap", padding: "7px 10px", background: "rgba(9,105,218,.05)", border: "1px solid rgba(9,105,218,.2)", borderRadius: 7 } },
+                                React.createElement("span", { style: { fontSize: 11, color: C.acc, fontWeight: 800 } }, "ตัวเลขจะลงช่อง:"),
+                                box(pasteC1, setPasteC1, d[0], "ตัวที่ 1 →"),
+                                box(pasteC2, setPasteC2, d[1], "ตัวที่ 2 →"),
+                                React.createElement("span", { style: { fontSize: 10.5, color: C.tx3 } }, "ระบบตั้งให้ตามหน่วยของวัตถุดิบที่เลือกไว้แล้ว"));
+                        })(),
+                        React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" } },
+                            React.createElement(Btn, { v: "primary", sz: "sm", onClick: () => applyPaste() }, "➕ แตกเป็นบรรทัด"),
+                            React.createElement(Btn, { v: "ghost", sz: "sm", onClick: () => setPasteTxt("") }, "ล้างข้อความ"),
+                            React.createElement("span", { style: { fontSize: 11, color: C.tx3 } },
+                                "ระบบจะเติมต่อท้ายบรรทัดที่มีอยู่ และใส่ราคาตามที่ตั้งไว้ด้านบนให้เอง")))),
                     React.createElement("div", { style: { display: "grid", gridTemplateColumns: GCOLS, gap: 0, background: C.sur3, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: C.tx2, textTransform: "uppercase", letterSpacing: .5 } },
                         React.createElement("span", { title: "ลำดับบรรทัด — เรียงให้ตรงกับใบส่งของ/Invoice ด้วยปุ่ม ↑ ↓" }, "#"),
                         multiSize && React.createElement("span", null, "Size / ความยาว"),
