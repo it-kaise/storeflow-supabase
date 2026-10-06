@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>คู่มือใช้งาน MCS — ระบบเบิก-จ่ายวัตถุดิบ</title>
+<style>*{box-sizing:border-box}html,body{margin:0;padding:0}</style>
+</head>
+<body>
+<style>
+  :root {
+    --ink: #16202b;
+    --ink-2: #3d4c5c;
+    --ink-3: #6b7a8a;
+    --line: #d3dbe3;
+    --line-soft: #e6ecf1;
+    --paper: #fbfcfd;
+    --card: #ffffff;
+    --accent: #0b62c4;
+    --accent-soft: #e8f1fc;
+    --copper: #a85d1f;
+    --copper-soft: #fbf0e6;
+    --ok: #1a7f37;
+    --ok-soft: #e7f4ec;
+    --warn: #9a6700;
+    --warn-soft: #fdf5e2;
+    --err: #b62324;
+    --err-soft: #fdeceb;
+    --mono: "Cascadia Mono", Consolas, "SF Mono", monospace;
+    --sans: "Leelawadee UI", "Noto Sans Thai", "Sarabun", Tahoma, system-ui, sans-serif;
+  }
+  /* เอกสารทางการ — ใช้พื้นขาวอย่างเดียว ไม่สลับตามธีมของเครื่องผู้อ่าน
+     เพื่อให้หน้าตาเหมือนกันทุกคน และเหมาะกับการพิมพ์ออกกระดาษ
+     ต้องบังคับ color-scheme ด้วย ไม่งั้นเบราว์เซอร์ที่ตั้งโหมดมืดไว้
+     จะวาดพื้นหลังชั้นนอกสุดเป็นสีดำ แม้ body จะเป็นสีขาวแล้วก็ตาม */
+  :root { color-scheme: only light; }
+  html {
+    background: #fbfcfd;
+    color-scheme: only light;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 0 20px 96px; }
+
+  /* ─ หัวเอกสาร ─ */
+  .masthead {
+    border-bottom: 2px solid var(--ink);
+    padding: 44px 0 20px;
+    margin-bottom: 34px;
+    display: flex; flex-wrap: wrap; gap: 20px;
+    align-items: flex-end; justify-content: space-between;
+  }
+  .masthead h1 {
+    margin: 0; font-size: clamp(27px, 4.6vw, 40px); line-height: 1.15;
+    letter-spacing: -0.02em; font-weight: 800; text-wrap: balance;
+  }
+  .masthead .sub { margin: 7px 0 0; color: var(--ink-3); font-size: 14.5px; }
+  .stamp {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--copper);
+    border: 1.5px solid var(--copper); border-radius: 3px;
+    padding: 5px 11px; white-space: nowrap; background: var(--copper-soft);
+  }
+
+  /* ─ สารบัญ ─ */
+  nav.toc {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+    gap: 1px; background: var(--line); border: 1px solid var(--line);
+    border-radius: 6px; overflow: hidden; margin-bottom: 42px;
+  }
+  nav.toc a {
+    background: var(--card); color: var(--ink-2); text-decoration: none;
+    padding: 11px 14px; font-size: 13.5px; font-weight: 600;
+    display: flex; gap: 9px; align-items: baseline; transition: background .12s;
+  }
+  nav.toc a:hover, nav.toc a:focus-visible { background: var(--accent-soft); color: var(--accent); outline: none; }
+  nav.toc a b { font-family: var(--mono); font-size: 11px; color: var(--ink-3); font-weight: 700; }
+
+  /* ─ ส่วนเนื้อหา ─ */
+  section { margin-bottom: 52px; scroll-margin-top: 18px; }
+  h2 {
+    font-size: 21px; font-weight: 800; letter-spacing: -0.01em;
+    margin: 0 0 5px; display: flex; align-items: baseline; gap: 11px;
+  }
+  h2 .n {
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    color: var(--card); background: var(--ink); border-radius: 3px;
+    padding: 3px 7px; letter-spacing: .04em; flex-shrink: 0;
+  }
+  .lede { color: var(--ink-2); margin: 0 0 20px; max-width: 66ch; }
+  h3 { font-size: 15.5px; font-weight: 800; margin: 26px 0 9px; letter-spacing: -0.005em; }
+  p { margin: 0 0 13px; max-width: 68ch; }
+  ul, ol { margin: 0 0 13px; padding-left: 21px; max-width: 68ch; }
+  li { margin-bottom: 6px; }
+  strong { font-weight: 700; }
+  code {
+    font-family: var(--mono); font-size: .88em; background: var(--line-soft);
+    padding: 1.5px 5px; border-radius: 3px; color: var(--ink);
+  }
+
+  /* ─ การ์ดบทบาท ─ */
+  .roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(238px, 1fr)); gap: 14px; margin: 20px 0; }
+  .role {
+    background: var(--card); border: 1px solid var(--line);
+    border-top: 3px solid var(--rc, var(--accent)); border-radius: 5px; padding: 15px 17px;
+  }
+  .role .who { font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; color: var(--rc); margin-bottom: 3px; }
+  .role .name { font-weight: 800; font-size: 16px; margin-bottom: 9px; }
+  .role ul { margin: 0; padding-left: 17px; font-size: 14px; color: var(--ink-2); }
+  .role li { margin-bottom: 4px; }
+
+  /* ─ ผังวงจร ─ */
+  .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(196px, 1fr)); gap: 13px; margin: 22px 0; }
+  .step {
+    background: var(--card); border: 1px solid var(--line); border-radius: 5px;
+    padding: 15px 17px; position: relative;
+  }
+  .step .idx {
+    font-family: var(--mono); font-size: 11px; font-weight: 700;
+    color: var(--sc, var(--accent)); letter-spacing: .09em; text-transform: uppercase;
+    display: flex; align-items: center; gap: 7px; margin-bottom: 7px;
+  }
+  .step .idx::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .step h4 { margin: 0 0 5px; font-size: 15.5px; font-weight: 800; }
+  .step p { margin: 0; font-size: 13.5px; color: var(--ink-2); }
+  .step .by {
+    display: inline-block; margin-top: 9px; font-size: 11.5px; font-weight: 700;
+    background: var(--ss); color: var(--sc); border-radius: 3px; padding: 2px 8px;
+  }
+
+  /* ─ ตาราง ─ */
+  .tw { overflow-x: auto; margin: 18px 0; border: 1px solid var(--line); border-radius: 5px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; background: var(--card); }
+  th {
+    text-align: left; font-size: 11px; font-weight: 800; letter-spacing: .07em;
+    text-transform: uppercase; color: var(--ink-3); padding: 9px 13px;
+    border-bottom: 1.5px solid var(--line); white-space: nowrap; background: var(--paper);
+  }
+  td { padding: 9px 13px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.mono { font-family: var(--mono); font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+  /* ─ กล่องเน้น ─ */
+  .note {
+    border-left: 3px solid var(--nc, var(--accent)); background: var(--nb, var(--accent-soft));
+    padding: 13px 16px; border-radius: 0 5px 5px 0; margin: 18px 0; font-size: 14.5px;
+  }
+  .note .t { font-weight: 800; margin-bottom: 3px; color: var(--nc); }
+  .note p:last-child { margin-bottom: 0; }
+
+  /* ─ ป้ายสถานะ ─ */
+  .pill {
+    display: inline-block; font-size: 12px; font-weight: 700;
+    padding: 1.5px 9px; border-radius: 11px; white-space: nowrap;
+    border: 1px solid currentColor;
+  }
+  .p-wait { color: var(--warn); background: var(--warn-soft); }
+  .p-ok { color: var(--ok); background: var(--ok-soft); }
+  .p-no { color: var(--err); background: var(--err-soft); }
+  .p-rev { color: var(--ink-3); background: var(--line-soft); }
+
+  /* ─ รายการขั้นตอน ─ */
+  ol.howto { counter-reset: s; list-style: none; padding: 0; margin: 14px 0; }
+  ol.howto > li {
+    counter-increment: s; position: relative; padding-left: 34px; margin-bottom: 11px;
+  }
+  ol.howto > li::before {
+    content: counter(s); position: absolute; left: 0; top: 1px;
+    width: 23px; height: 23px; border-radius: 50%;
+    background: var(--ink); color: var(--card);
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .kbd {
+    font-family: var(--mono); font-size: 12.5px; font-weight: 700;
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+    padding: 1px 7px; background: var(--card); white-space: nowrap;
+  }
+
+  footer {
+    border-top: 1px solid var(--line); margin-top: 20px; padding-top: 18px;
+    font-size: 13px; color: var(--ink-3);
+    display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between;
+  }
+  @media (max-width: 600px) {
+    .masthead { padding-top: 30px; }
+    .wrap { padding: 0 15px 60px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <div class="masthead">
+    <div>
+      <h1>คู่มือใช้งานเบื้องต้น</h1>
+      <p class="sub">Material Control System (MCS) · ระบบเบิก-จ่ายวัตถุดิบ · KAISE (Thailand) Co.,Ltd.</p>
+    </div>
+    <span class="stamp">ฉบับทดลองใช้งาน</span>
+  </div>
+
+  <nav class="toc">
+    <a href="#s1"><b>01</b> ระบบนี้ทำอะไร</a>
+    <a href="#s2"><b>02</b> เข้าใช้งาน</a>
+    <a href="#s3"><b>03</b> ใครทำอะไรได้</a>
+    <a href="#s4"><b>04</b> วงจรการเบิก</a>
+    <a href="#s5"><b>05</b> ฝ่ายผลิต</a>
+    <a href="#s6"><b>06</b> หัวหน้า</a>
+    <a href="#s7"><b>07</b> สโตร์</a>
+    <a href="#s8"><b>08</b> เรื่องที่ควรรู้</a>
+    <a href="#s9"><b>09</b> ช่วงทดลอง</a>
+  </nav>
+
+  <section id="s1">
+    <h2><span class="n">01</span> ระบบนี้ทำอะไร</h2>
+    <p class="lede">แทน Stock Card แบบ Excel ที่ใช้อยู่ ด้วยระบบที่ทุกคนเห็นข้อมูลชุดเดียวกันแบบทันที</p>
+    <p>ตั้งแต่ <strong>รับวัตถุดิบเข้าคลัง</strong> → <strong>ฝ่ายผลิตขอเบิก</strong> → <strong>หัวหน้าอนุมัติ</strong> → <strong>สโตร์จ่ายของ</strong> ระบบจะตัดยอดคงเหลือให้อัตโนมัติตามหลัก FIFO และเก็บประวัติทุกรายการไว้ตรวจสอบย้อนหลังได้</p>
+    <p>เปิดใช้ได้จากเบราว์เซอร์ทั้งคอมและมือถือ ไม่ต้องติดตั้งโปรแกรม</p>
+  </section>
+
+  <section id="s2">
+    <h2><span class="n">02</span> เข้าใช้งาน</h2>
+    <ol class="howto">
+      <li>เปิดลิงก์ที่ได้รับ (บันทึกไว้เป็น Bookmark จะสะดวกกว่า)</li>
+      <li>กดปุ่ม <span class="kbd">🔐 เข้าสู่ระบบ</span> มุมซ้ายล่าง</li>
+      <li>ใส่ <strong>PIN 4 หลัก</strong> ของตัวเอง แล้วกด <span class="kbd">✅ ยืนยัน</span></li>
+    </ol>
+    <div class="note" style="--nc: var(--copper); --nb: var(--copper-soft)">
+      <div class="t">ยังไม่ได้ล็อกอินก็ดูข้อมูลได้</div>
+      <p>ดูสต๊อกและใบเบิกได้เลย แต่จะ <strong>สร้าง อนุมัติ หรือจ่ายของไม่ได้</strong> จนกว่าจะใส่ PIN — ระบบจะรู้ว่าคุณเป็นใครจาก PIN แล้วแสดงเฉพาะเมนูที่คุณใช้ได้</p>
+    </div>
+  </section>
+
+  <section id="s3">
+    <h2><span class="n">03</span> ใครทำอะไรได้</h2>
+    <p class="lede">แต่ละคนเห็นเมนูไม่เหมือนกัน ขึ้นกับหน้าที่</p>
+    <div class="roles">
+      <div class="role" style="--rc: var(--accent)">
+        <div class="who">ฝ่ายผลิต</div>
+        <div class="name">สร้างใบเบิก</div>
+        <ul>
+          <li>สร้าง / แก้ไข / ยกเลิกใบเบิก</li>
+          <li>เช็คสต๊อกก่อนเบิก</li>
+          <li>ดูสถานะใบของตัวเอง</li>
+        </ul>
+      </div>
+      <div class="role" style="--rc: var(--warn)">
+        <div class="who">หัวหน้า</div>
+        <div class="name">อนุมัติ</div>
+        <ul>
+          <li>อนุมัติ / ไม่อนุมัติใบเบิก</li>
+          <li>ดูสต๊อกคงเหลือประกอบการตัดสินใจ</li>
+        </ul>
+      </div>
+      <div class="role" style="--rc: var(--ok)">
+        <div class="who">สโตร์</div>
+        <div class="name">จ่ายของ &amp; รับของ</div>
+        <ul>
+          <li>จ่ายวัตถุดิบตามใบที่อนุมัติแล้ว</li>
+          <li>รับวัตถุดิบเข้าคลัง (ลง Lot)</li>
+          <li>แก้ไขข้อมูล Lot</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="s4">
+    <h2><span class="n">04</span> วงจรการเบิก — 3 ขั้น</h2>
+    <p class="lede">ใบเบิก 1 ใบต้องผ่านครบทั้ง 3 ขั้น สต๊อกถึงจะถูกตัด</p>
+    <div class="flow">
+      <div class="step" style="--sc: var(--accent); --ss: var(--accent-soft)">
+        <div class="idx">ขั้นที่ 1</div>
+        <h4>สร้างใบเบิก</h4>
+        <p>ระบุ Part No. จำนวน และหน่วยที่ต้องการ</p>
+        <span class="by">ฝ่ายผลิต</span>
+      </div>
+      <div class="step" style="--sc: var(--warn); --ss: var(--warn-soft)">
+        <div class="idx">ขั้นที่ 2</div>
+        <h4>อนุมัติ</h4>
+        <p>หัวหน้าตรวจแล้วกดอนุมัติ หรือไม่อนุมัติ</p>
+        <span class="by">หัวหน้า</span>
+      </div>
+      <div class="step" style="--sc: var(--ok); --ss: var(--ok-soft)">
+        <div class="idx">ขั้นที่ 3</div>
+        <h4>จ่ายวัตถุดิบ</h4>
+        <p>สโตร์จ่ายของจริง ระบบตัดสต๊อกทันที</p>
+        <span class="by">สโตร์</span>
+      </div>
+    </div>
+
+    <h3>สถานะที่จะเห็นบนใบเบิก</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>สถานะ</th><th>หมายความว่า</th><th>ใครต้องทำต่อ</th></tr></thead>
+        <tbody>
+          <tr><td><span class="pill p-wait">รออนุมัติ</span></td><td>สร้างแล้ว ยังไม่มีใครอนุมัติ</td><td>หัวหน้า</td></tr>
+          <tr><td><span class="pill p-wait">รอจ่าย</span></td><td>อนุมัติแล้ว รอสโตร์จ่ายของ</td><td>สโตร์</td></tr>
+          <tr><td><span class="pill p-ok">จ่ายแล้ว</span></td><td>จ่ายของและตัดสต๊อกเรียบร้อย</td><td>— จบแล้ว</td></tr>
+          <tr><td><span class="pill p-no">ไม่อนุมัติ</span></td><td>หัวหน้าไม่อนุมัติ</td><td>— จบแล้ว</td></tr>
+          <tr><td><span class="pill p-rev">แก้ไขแล้ว</span></td><td>ใบนี้ถูกแทนที่ด้วยฉบับแก้ไข</td><td>— ดูใบใหม่แทน</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="s5">
+    <h2><span class="n">05</span> ฝ่ายผลิต — สร้างใบเบิก</h2>
+    <ol class="howto">
+      <li>เมนู <strong>ใบเบิกวัตถุดิบ</strong> → กด <span class="kbd">➕ สร้างใบเบิก</span></li>
+      <li>กรอกหัวใบ: วันที่ · แผนก · ชื่อผู้เบิก · W/O No. · Forecast เดือน</li>
+      <li>ช่อง <strong>Part No.</strong> — พิมพ์รหัสสินค้าที่จะผลิต เช่น <code>SU00N685G19-CB</code></li>
+      <li>ระบบจะเติม <strong>ประเภท · Maker · Size · หน่วย</strong> ให้อัตโนมัติ ตรวจดูว่าถูกต้อง</li>
+      <li>ใส่จำนวนที่ต้องการ แล้วเลือกหน่วย (KGS / PCS / COIL / M)</li>
+      <li>ต้องการเบิกหลายรายการในใบเดียว กด <span class="kbd">➕ เพิ่มรายการ</span></li>
+      <li>กด <span class="kbd">📤 ส่งใบเบิก</span></li>
+    </ol>
+    <div class="note">
+      <div class="t">ระบบเช็คสต๊อกให้ตอนกรอก</div>
+      <p>ถ้าของไม่พอจะขึ้นเตือนทันทีพร้อมบอกยอดคงเหลือจริง และแสดง <strong>Lot ที่จะถูกจ่าย</strong> ให้ดูล่วงหน้า</p>
+    </div>
+    <p>อยากเช็คของก่อนสร้างใบ ใช้เมนู <strong>🔍 เช็คสต๊อกด่วน</strong> พิมพ์ Part No. หรือ Size ก็เห็นยอดคงเหลือทันที</p>
+  </section>
+
+  <section id="s6">
+    <h2><span class="n">06</span> หัวหน้า — อนุมัติ</h2>
+    <ol class="howto">
+      <li>เมนู <strong>ใบเบิกวัตถุดิบ</strong> → กดแท็บ <span class="kbd">⏳ รออนุมัติ</span></li>
+      <li>คลิกที่หัวใบเพื่อกางดูรายการข้างใน</li>
+      <li>ตรวจว่า Size · Maker · จำนวน ถูกต้อง และดู Lot ที่จะถูกจ่าย</li>
+      <li>กด <span class="kbd">อนุมัติ</span> หรือ <span class="kbd">ไม่อนุมัติ</span></li>
+    </ol>
+    <div class="note" style="--nc: var(--warn); --nb: var(--warn-soft)">
+      <div class="t">อนุมัติแล้วสต๊อกยังไม่ถูกตัด</div>
+      <p>สต๊อกจะลดก็ต่อเมื่อสโตร์กดจ่ายของจริงในขั้นที่ 3</p>
+    </div>
+  </section>
+
+  <section id="s7">
+    <h2><span class="n">07</span> สโตร์ — จ่ายของ &amp; รับของ</h2>
+
+    <h3>จ่ายวัตถุดิบ</h3>
+    <ol class="howto">
+      <li>เมนู <strong>ใบเบิกวัตถุดิบ</strong> → แท็บ <span class="kbd">✅ อนุมัติแล้ว</span></li>
+      <li>กด <span class="kbd">จ่ายวัตถุดิบ</span> ที่ใบที่จะจ่าย</li>
+      <li>ระบบเลือก <strong>Lot เก่าสุดให้อัตโนมัติ (FIFO)</strong> — ถ้าต้องจ่ายจาก Lot อื่นเลือกเองได้</li>
+      <li>ยืนยัน → ระบบตัดสต๊อกและบันทึกประวัติทันที</li>
+    </ol>
+
+    <h3>รับวัตถุดิบเข้าคลัง</h3>
+    <ol class="howto">
+      <li>เมนู <strong>📥 รับวัตถุดิบ</strong></li>
+      <li>เลือกประเภท → Maker → Size ที่รับเข้า</li>
+      <li>กรอก PO No. · Invoice · วันที่รับ</li>
+      <li>กรอก <strong>Lot No.</strong> และจำนวนตามหน่วยที่รับจริง (KGS / PCS / COIL / M) กรอกได้หลาย Lot ในครั้งเดียว</li>
+      <li>กรอกราคาต่อหน่วยไว้ด้วยจะดีมาก ระบบจะคำนวณมูลค่าสต๊อกให้ได้</li>
+      <li>กด <span class="kbd">📥 บันทึกรับเข้า</span></li>
+    </ol>
+    <div class="note" style="--nc: var(--copper); --nb: var(--copper-soft)">
+      <div class="t">Lot No. คือหัวใจของระบบ</div>
+      <p>ระบบตัดสต๊อกและตามรอยย้อนหลังด้วย Lot No. — กรอกให้ตรงกับที่ระบุบนของจริงเสมอ</p>
+    </div>
+  </section>
+
+  <section id="s8">
+    <h2><span class="n">08</span> เรื่องที่ควรรู้</h2>
+
+    <h3>FIFO — เข้าก่อน จ่ายก่อน</h3>
+    <p>ระบบเรียง Lot ตามวันที่รับเข้า แล้วจ่าย Lot เก่าสุดก่อนเสมอ ป้ายสีฟ้า <strong>▶ NEXT</strong> คือ Lot ถัดไปที่จะถูกจ่าย ดูรายละเอียดทุก Lot ได้ที่เมนู <strong>🔢 Lot / FIFO View</strong></p>
+
+    <h3>หน่วยที่ระบบรองรับ</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>หน่วย</th><th>ใช้กับ</th><th>ตัวอย่าง</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">KGS</td><td>ของที่ชั่งน้ำหนัก</td><td>ท่อทองแดงเป็นม้วน</td></tr>
+          <tr><td class="mono">PCS</td><td>ของที่นับเป็นชิ้น</td><td>ท่อตัดสำเร็จ, แหวน</td></tr>
+          <tr><td class="mono">COIL</td><td>ของที่นับเป็นม้วน</td><td>ลวด, ท่อ LWC</td></tr>
+          <tr><td class="mono">M</td><td>ของที่วัดเป็นความยาว</td><td>สั่ง 1,000 ม. มาเป็นม้วนละ 100 ม.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>บางรายการมี 2 หน่วยพร้อมกัน เช่น รับเข้า 10 ม้วน = 1,000 เมตร เบิกไป 250 เมตร ระบบจะตัดทั้งเมตรและม้วนตามสัดส่วนให้เอง</p>
+
+    <h3>ทุกคนใช้ข้อมูลชุดเดียวกัน</h3>
+    <p>ไม่ว่าใครเปิดจากเครื่องไหน เวลาไหน จะเห็นข้อมูลเดียวกันทั้งหมด ระบบดึงข้อมูลใหม่ให้เองทุก <strong>20 วินาที</strong> ไม่ต้องกดรีเฟรช และจะหยุดดึงชั่วคราวขณะที่คุณกำลังกรอกฟอร์มค้างอยู่</p>
+    <div class="note" style="--nc: var(--err); --nb: var(--err-soft)">
+      <div class="t">อย่าบันทึกรายการเดียวกันซ้ำ</div>
+      <p>เพราะทุกคนเห็นข้อมูลชุดเดียวกัน ถ้า 2 คนบันทึกรายการเดียวกันคนละครั้ง ระบบจะได้ 2 รายการซ้อนกันจริง ๆ — ตกลงกันก่อนว่าใครรับผิดชอบส่วนไหน</p>
+    </div>
+
+    <h3>ปุ่มที่ช่วยให้ทำงานเร็วขึ้น</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>ปุ่ม</th><th>อยู่ที่</th><th>ใช้ทำอะไร</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">🔍 ค้นหา</td><td>หน้าใบเบิก, คลังวัตถุดิบ</td><td>ค้นได้ทั้งเลขที่ใบเบิก · ผู้เบิก · Part No. · Lot No.</td></tr>
+          <tr><td class="mono">🖨️ พิมพ์</td><td>ทุกใบเบิก</td><td>พิมพ์เอกสาร A4 พร้อมช่องลายเซ็น 3 ช่อง</td></tr>
+          <tr><td class="mono">📊 Export Excel</td><td>เกือบทุกหน้า</td><td>ดาวน์โหลดข้อมูลตามที่กรองไว้</td></tr>
+          <tr><td class="mono">▶ กางทั้งหมด</td><td>หน้าใบเบิก</td><td>กาง/ยุบรายการในใบเบิกทุกใบ</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="s9">
+    <h2><span class="n">09</span> ช่วงทดลอง — อ่านก่อนเริ่ม</h2>
+
+    <div class="note" style="--nc: var(--copper); --nb: var(--copper-soft)">
+      <div class="t">ข้อมูลตอนนี้เป็นข้อมูลทดลอง จะถูกล้างทิ้งทั้งหมด</div>
+      <p>กดผิดกดถูกได้เต็มที่ ไม่ต้องกลัวพัง แต่ <strong>อย่าเพิ่งใช้ทำงานจริง</strong> — ยังต้องบันทึกใน Stock Card Excel ตามปกติไปก่อน</p>
+    </div>
+
+    <h3>อยากให้ลองครบ 4 อย่างนี้</h3>
+    <ul>
+      <li><strong>ฝ่ายผลิต</strong> — สร้างใบเบิก 2-3 ใบ ลองใช้หน่วยต่างกัน และดูว่าพิมพ์ Part No. แล้วระบบเติม Size กับ Maker ให้ถูกไหม</li>
+      <li><strong>หัวหน้า</strong> — อนุมัติ 1 ใบ ไม่อนุมัติ 1 ใบ ดูว่าสถานะเปลี่ยนถูกต้อง</li>
+      <li><strong>สโตร์</strong> — จ่ายของตามใบที่อนุมัติ แล้วเช็คว่ายอดคงเหลือลดถูกต้อง จากนั้นลองรับของเข้าใหม่</li>
+      <li><strong>ทุกคน</strong> — ลองค้นหา กดพิมพ์ใบเบิก และ Export Excel</li>
+    </ul>
+
+    <h3>เจอปัญหา จดแบบนี้</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>จดอะไร</th><th>ตัวอย่าง</th></tr></thead>
+        <tbody>
+          <tr><td><strong>กำลังทำอะไรอยู่</strong></td><td>กำลังสร้างใบเบิก พิมพ์ Part No. <code>DQ00T714G01</code></td></tr>
+          <tr><td><strong>เกิดอะไรขึ้น</strong></td><td>ช่อง Maker ว่างเปล่า ไม่ขึ้นให้</td></tr>
+          <tr><td><strong>คิดว่าควรเป็นยังไง</strong></td><td>ควรขึ้น TANI (FURUKAWA) เพราะทะเบียนระบุไว้</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>แค่ 3 บรรทัดนี้ก็พอ ยิ่งบอก <strong>Part No. หรือเลขที่ใบเบิก</strong> ที่เจอปัญหามาด้วย จะตรวจสอบและแก้ให้ได้เร็วขึ้นมาก</p>
+  </section>
+
+  <footer>
+    <span>Material Control System · คู่มือฉบับทดลองใช้งาน</span>
+    <span>KAISE (Thailand) Co.,Ltd.</span>
+  </footer>
+
+</div>
+
+</body>
+</html>

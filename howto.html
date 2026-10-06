@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>วิธีใช้งาน MCS — ฝ่ายผลิต &amp; หัวหน้างาน</title>
+<style>
+  :root{
+    --ink:#101418; --ink2:#48535f; --ink3:#7b8794;
+    --line:#dfe5ea; --paper:#f4f6f8; --card:#fff;
+    --acc:#0969da; --acc-s:#e8f1fd;
+    --ok:#1a7f37; --ok-s:#e7f6ec;
+    --warn:#9a6700; --warn-s:#fdf5e3;
+    --err:#cf222e; --err-s:#fdeceb;
+    --pur:#8250df; --pur-s:#f2ecfd;
+    --r:16px; --sh:0 1px 2px rgba(16,20,24,.06),0 8px 28px rgba(16,20,24,.08);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);
+    font-family:'Segoe UI','Leelawadee UI','Noto Sans Thai',system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.55}
+  .wrap{max-width:1080px;margin:0 auto;padding:22px 18px 40px}
+
+  /* ── หัวเรื่อง ── */
+  .top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+  .logo{width:44px;height:44px;border-radius:12px;background:linear-gradient(140deg,#0969da,#2b82e6);
+    display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:var(--sh)}
+  .ttl{font-size:22px;font-weight:800;letter-spacing:-.4px}
+  .sub{font-size:12.5px;color:var(--ink3);font-weight:600}
+  .roles{margin-left:auto;display:flex;gap:6px;background:#e9edf1;padding:4px;border-radius:999px}
+  .roles button{border:0;background:transparent;font:inherit;font-weight:800;font-size:13px;color:var(--ink2);
+    padding:8px 18px;border-radius:999px;cursor:pointer;transition:.18s}
+  .roles button.on{background:#fff;color:var(--acc);box-shadow:0 1px 3px rgba(16,20,24,.14)}
+
+  /* ── เวที ── */
+  .stage{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden}
+  .bar{height:4px;background:#eef1f4}
+  .bar > i{display:block;height:100%;width:0;background:linear-gradient(90deg,#0969da,#4f9bf0);transition:width .25s linear}
+  .scene{display:grid;grid-template-columns:1fr 1fr;gap:26px;padding:30px 32px 26px;min-height:430px;align-items:center}
+  @media(max-width:860px){.scene{grid-template-columns:1fr;min-height:0;padding:22px}}
+  .kicker{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:800;letter-spacing:.4px;
+    color:var(--acc);background:var(--acc-s);border-radius:999px;padding:5px 13px;margin-bottom:12px}
+  .kicker.k-ok{color:var(--ok);background:var(--ok-s)}
+  .kicker.k-warn{color:var(--warn);background:var(--warn-s)}
+  .kicker.k-pur{color:var(--pur);background:var(--pur-s)}
+  h2{font-size:27px;line-height:1.3;font-weight:800;letter-spacing:-.6px;margin-bottom:12px}
+  @media(max-width:860px){h2{font-size:22px}}
+  .lead{font-size:15px;color:var(--ink2)}
+  .lead b{color:var(--ink)}
+  ul.pts{margin-top:14px;display:flex;flex-direction:column;gap:9px}
+  ul.pts li{list-style:none;display:flex;gap:9px;font-size:14px;color:var(--ink2)}
+  ul.pts li:before{content:"";flex:0 0 7px;height:7px;border-radius:50%;background:var(--acc);margin-top:8px}
+  .note{margin-top:16px;border-left:3px solid var(--warn);background:var(--warn-s);
+    padding:10px 14px;border-radius:0 10px 10px 0;font-size:13.5px;color:#6b4a00;font-weight:600}
+  .note.ok{border-color:var(--ok);background:var(--ok-s);color:#0f5c28}
+  .note.err{border-color:var(--err);background:var(--err-s);color:#9d1b25}
+
+  /* ── ภาพจำลองหน้าจอ ── */
+  .shot{background:#fbfcfd;border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--sh);
+    position:relative;overflow:hidden;animation:pop .45s ease both}
+  @keyframes pop{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+  .win{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
+  .winbar{background:#eef2f6;padding:7px 10px;display:flex;gap:6px;align-items:center;border-bottom:1px solid var(--line)}
+  .dot{width:9px;height:9px;border-radius:50%;background:#cfd8e0}
+  .winttl{font-size:11px;color:var(--ink3);font-weight:700;margin-left:6px}
+  .winbody{padding:13px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .fld{flex:1;min-width:0;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--ink2);background:#fff}
+  .fld .lb{font-size:9.5px;font-weight:800;color:var(--ink3);letter-spacing:.3px;text-transform:uppercase}
+  .fld .vl{font-weight:700;color:var(--ink);font-size:13px;margin-top:2px}
+  .btn{border:0;border-radius:8px;padding:8px 15px;font:inherit;font-size:12.5px;font-weight:800;color:#fff;background:var(--acc)}
+  .btn.g{background:var(--ok)} .btn.r{background:var(--err)} .btn.w{background:#fff;color:var(--ink2);border:1px solid var(--line)}
+  .pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 10px;font-size:11px;font-weight:800}
+  .p-ok{background:var(--ok-s);color:var(--ok)} .p-warn{background:var(--warn-s);color:var(--warn)}
+  .p-err{background:var(--err-s);color:var(--err)} .p-acc{background:var(--acc-s);color:var(--acc)}
+  .p-pur{background:var(--pur-s);color:var(--pur)}
+  .grn{border:1.5px solid #9fd8b2;background:var(--ok-s);border-radius:9px;padding:9px 11px;font-size:12.5px;font-weight:800;color:#0f5c28}
+  .grn small{display:block;font-weight:600;color:#3f7a56;font-size:11px;margin-top:2px}
+  .tbl{width:100%;border-collapse:collapse;font-size:11.5px}
+  .tbl th{background:#eef2f6;border:1px solid var(--line);padding:5px 7px;text-align:left;font-size:10px;color:var(--ink3)}
+  .tbl td{border:1px solid var(--line);padding:5px 7px}
+  .mono{font-family:Consolas,monospace}
+  .big{font-family:Consolas,monospace;font-size:26px;font-weight:800;line-height:1.1}
+  .cnt{display:flex;gap:14px;align-items:center;justify-content:center;border:1px solid #f0d9a6;background:#fdf7e8;border-radius:10px;padding:11px}
+  .cnt.done{border-color:#9fd8b2;background:var(--ok-s)}
+  .cnt .c{text-align:center;min-width:76px}
+  .cnt .c span{display:block;font-size:9.5px;font-weight:800;color:var(--ink3)}
+  /* เคอร์เซอร์จำลอง */
+  .cursor{position:absolute;width:22px;height:22px;pointer-events:none;z-index:5;
+    filter:drop-shadow(0 2px 3px rgba(0,0,0,.3));animation:tap 2.6s ease-in-out infinite}
+  @keyframes tap{0%,55%{transform:translate(0,0) scale(1)}65%{transform:translate(0,0) scale(.82)}75%,100%{transform:translate(0,0) scale(1)}}
+  .ripple{position:absolute;border-radius:50%;border:2px solid var(--acc);width:34px;height:34px;opacity:0;
+    animation:rip 2.6s ease-out infinite;pointer-events:none}
+  @keyframes rip{0%,55%{opacity:0;transform:scale(.4)}70%{opacity:.75;transform:scale(1)}100%{opacity:0;transform:scale(1.5)}}
+  /* แป้นพิมพ์จำลอง */
+  .keys{display:flex;gap:9px;justify-content:center;align-items:center;padding:8px 0}
+  .key{min-width:62px;text-align:center;border:1px solid #c9d2da;border-bottom-width:3px;border-radius:9px;
+    background:#fff;padding:11px 14px;font-weight:800;font-size:14px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  .key.hit{animation:press 1.6s ease-in-out infinite}
+  .key.hit2{animation:press 1.6s ease-in-out .2s infinite}
+  @keyframes press{0%,60%,100%{transform:none;background:#fff}70%,85%{transform:translateY(2px);background:var(--acc-s);border-color:var(--acc)}}
+  .pindots{display:flex;gap:10px;justify-content:center;padding:6px 0}
+  .pindots i{width:14px;height:14px;border-radius:50%;background:#dfe5ea;display:block}
+  .pindots i.f{background:var(--acc);animation:fill .3s ease both}
+  @keyframes fill{from{transform:scale(.4);opacity:.3}to{transform:none;opacity:1}}
+
+  /* ── แถบควบคุม ── */
+  .ctrl{display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid var(--line);background:#fbfcfd;flex-wrap:wrap}
+  .ctrl button{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 14px;font:inherit;
+    font-size:13px;font-weight:800;color:var(--ink2);cursor:pointer}
+  .ctrl button:hover{border-color:var(--acc);color:var(--acc)}
+  .ctrl .play{background:var(--acc);color:#fff;border-color:var(--acc)}
+  .ctrl .play:hover{opacity:.9;color:#fff}
+  .steps{display:flex;gap:5px;margin-left:auto;flex-wrap:wrap}
+  .steps i{width:9px;height:9px;border-radius:50%;background:#d7dee5;cursor:pointer;display:block}
+  .steps i.on{background:var(--acc);transform:scale(1.25)}
+  .steps i.seen{background:#9cc3ee}
+  .count{font-size:12.5px;font-weight:800;color:var(--ink3);font-family:Consolas,monospace}
+
+  /* ── สรุปท้ายหน้า ── */
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:20px}
+  .c1{background:#fff;border:1px solid var(--line);border-radius:13px;padding:15px 16px;box-shadow:var(--sh)}
+  .c1 h4{font-size:13.5px;margin-bottom:7px}
+  .c1 p{font-size:12.5px;color:var(--ink2)}
+  .foot{margin-top:22px;font-size:11.5px;color:var(--ink3);display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  @media print{
+    .ctrl,.roles,.bar{display:none}
+    .scene{display:block;page-break-after:always;min-height:0}
+    .shot{margin-top:14px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div class="logo">⚙️</div>
+    <div>
+      <div class="ttl">วิธีใช้งานระบบเบิก-จ่ายวัตถุดิบ (MCS)</div>
+      <div class="sub">KAISE (THAILAND) CO.,LTD. · ดูทีละขั้น กดลูกศรเพื่อเลื่อน</div>
+    </div>
+    <div class="roles">
+      <button data-role="pd" class="on">👷 ฝ่ายผลิต</button>
+      <button data-role="sv">👨‍💼 หัวหน้างาน</button>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="bar"><i id="bar"></i></div>
+    <div class="scene" id="scene"></div>
+    <div class="ctrl">
+      <button id="prev">◀ ย้อน</button>
+      <button id="play" class="play">⏸ หยุดเล่น</button>
+      <button id="next">ถัดไป ▶</button>
+      <span class="count" id="count">1 / 1</span>
+      <span class="steps" id="dots"></span>
+    </div>
+  </div>
+
+  <div class="cards">
+    <div class="c1"><h4>🔄 ก่อนใช้งานทุกครั้งหลังมีอัปเดต</h4><p>กด <b>Ctrl + F5</b> หนึ่งครั้ง เพื่อให้เครื่องโหลดระบบเวอร์ชันล่าสุด มือถือให้ปิดแท็บแล้วเปิดใหม่</p></div>
+    <div class="c1"><h4>🔐 PIN ของใครของมัน</h4><p>ห้ามใช้ PIN ของคนอื่น เพราะระบบบันทึกชื่อผู้เขียนใบ ผู้อนุมัติ และผู้จ่ายไว้ทุกใบ</p></div>
+    <div class="c1"><h4>✏️ แก้ใบได้เฉพาะเจ้าของใบ</h4><p>คนที่เขียนใบนั้นเท่านั้นที่แก้ได้ และแก้ได้ก่อนสโตร์จ่ายของเท่านั้น</p></div>
+    <div class="c1"><h4>🖨️ เอกสารตามระบบ ISO</h4><p>ใบเบิกที่พิมพ์ออกมาจะมีเลขทะเบียน <b class="mono">F-KKQE-ST-06,R02</b> ที่มุมขวาล่าง</p></div>
+  </div>
+
+  <div class="foot">
+    <span>เปิดระบบที่ <b class="mono">storeflow-supabase.vercel.app</b></span>
+    <span>ติดปัญหาแจ้งฝ่ายจัดซื้อ (ประดิษฐ์)</span>
+  </div>
+</div>
+
+<script>
+// ─────────── เนื้อหาคู่มือ ───────────
+// visual = ภาพจำลองหน้าจอ เขียนเป็น HTML ง่าย ๆ ให้ดูคล้ายของจริง
+const cur = (x, y) => `<div class="ripple" style="left:${x-6}px;top:${y-6}px"></div>
+  <svg class="cursor" style="left:${x}px;top:${y}px" viewBox="0 0 24 24" fill="#111"><path d="M4 2l7 18 2.5-7.5L21 10z"/></svg>`;
+
+const COMMON = [
+  {
+    k:"เริ่มต้น", kc:"", h:"เปิดระบบจากลิงก์ ไม่ต้องติดตั้งอะไร",
+    p:"ระบบเป็นเว็บ ใช้ได้ทั้งคอมพิวเตอร์ แท็บเล็ต และมือถือ ขอแค่มีอินเทอร์เน็ต",
+    pts:["พิมพ์หรือแตะลิงก์ <b class='mono'>storeflow-supabase.vercel.app</b>",
+         "Android: เมนู 3 จุด → เพิ่มลงในหน้าจอหลัก",
+         "iPhone: ปุ่มแชร์ → เพิ่มไปยังหน้าจอโฮม",
+         "ข้อมูลทุกเครื่องเป็นชุดเดียวกัน ไม่ต้องส่งไฟล์ให้กัน"],
+    v:`<div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i>
+        <span class="winttl mono">storeflow-supabase.vercel.app</span></div>
+      <div class="winbody" style="text-align:center;padding:26px 13px">
+        <div style="font-size:34px">⚙️</div>
+        <div style="font-weight:800;margin-top:6px">Material Control System</div>
+        <div style="font-size:12px;color:var(--ink3)">ระบบเบิก-จ่ายวัตถุดิบ</div>
+      </div></div>`
+  },
+  {
+    k:"สำคัญมาก", kc:"k-warn", h:"หลังมีอัปเดตระบบ กด Ctrl + F5 ก่อนใช้งาน",
+    p:"เบราว์เซอร์จะจำหน้าเดิมไว้ ถ้าไม่กดจะยังเห็นเวอร์ชันเก่า ปุ่มใหม่ ๆ จะไม่ขึ้น",
+    pts:["คอมพิวเตอร์: กด <b>Ctrl</b> ค้างไว้แล้วกด <b>F5</b>",
+         "มือถือ: ปิดแท็บแล้วเปิดลิงก์ใหม่",
+         "ทำครั้งเดียวต่อการอัปเดตหนึ่งครั้ง",
+         "ข้อมูลไม่หาย ยอดสต๊อกยังอยู่ครบ"],
+    v:`<div style="text-align:center">
+        <div class="keys"><span class="key hit">Ctrl</span><span style="font-size:20px;font-weight:800;color:var(--ink3)">+</span><span class="key hit2">F5</span></div>
+        <div class="note ok" style="text-align:left">โหลดระบบเวอร์ชันล่าสุดแล้ว พร้อมใช้งาน</div>
+      </div>`
+  },
+  {
+    k:"เข้าสู่ระบบ", kc:"", h:"ใส่ PIN 4 หลักของตัวเอง",
+    p:"กดปุ่ม <b>🔐 เข้าสู่ระบบ</b> ที่มุมซ้ายล่าง แล้วใส่ PIN ของตัวเอง",
+    pts:["ชื่อที่ปรากฏในใบเบิกจะเป็นชื่อของคนที่ล็อกอิน",
+         "ปิดหน้าเว็บแล้วเปิดใหม่ ต้องใส่ PIN อีกครั้งทุกครั้ง",
+         "ยังไม่มี PIN แจ้งฝ่ายจัดซื้อเพื่อเพิ่มชื่อเข้าระบบ"],
+    v:`<div class="shotpos" style="position:relative">
+       <div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="winttl">เข้าสู่ระบบ</span></div>
+       <div class="winbody" style="text-align:center">
+         <div style="font-size:26px">🔐</div>
+         <div style="font-size:12.5px;color:var(--ink2);margin:7px 0 3px">กรอก PIN ของคุณ</div>
+         <div class="pindots"><i class="f"></i><i class="f"></i><i class="f"></i><i></i></div>
+         <div class="row" style="justify-content:center;margin-top:12px">
+           <span class="btn w">ยกเลิก</span><span class="btn g">✅ ยืนยัน</span></div>
+       </div></div>${cur(228,186)}</div>`
+  }
+];
+
+const PD = [
+  {
+    k:"ฝ่ายผลิต · ขั้นที่ 1", kc:"k-pur", h:"กดปุ่ม ➕ สร้างใบเบิก",
+    p:"อยู่ที่เมนู <b>📋 ใบเบิกวัตถุดิบ</b> มุมขวาบน ถ้ายังไม่ได้ล็อกอิน ระบบจะขอ PIN ก่อนแล้วเปิดฟอร์มให้ต่อเลย",
+    pts:["ชื่อผู้เบิกจะขึ้นอัตโนมัติ แก้ไม่ได้","แผนกเลือกเองได้ทุกใบ","วันที่ขึ้นเป็นวันปัจจุบันให้เลย"],
+    v:`<div style="position:relative">
+      <div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="winttl">ใบเบิกวัตถุดิบ</span></div>
+      <div class="winbody">
+        <div class="row" style="justify-content:flex-end"><span class="btn">➕ สร้างใบเบิก</span></div>
+        <div class="row" style="margin-top:11px;gap:6px">
+          <span class="pill p-acc">ทั้งหมด</span><span class="pill p-warn">⏳ รออนุมัติ</span>
+          <span class="pill p-ok">✅ อนุมัติแล้ว</span><span class="pill p-acc">📤 จ่ายแล้ว</span></div>
+      </div></div>${cur(300,64)}</div>`
+  },
+  {
+    k:"ฝ่ายผลิต · ขั้นที่ 2", kc:"k-pur", h:"กรอกหัวใบ แล้วเลือกแผนกที่เบิก",
+    p:"กรอกเท่าที่มี ช่องที่มีดอกจัน * ต้องกรอก",
+    pts:["<b>Forecast เดือน / PO</b> — ใช้อ้างอิงว่าเบิกไปทำงานของเดือนไหน",
+         "<b>Work Order / Trial Sheet No.</b> — ใส่ถ้ามี",
+         "<b>แผนก *</b> — เลือกแผนกของตัวเอง เช่น CU1, ST4, AL"],
+    v:`<div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="winttl">สร้างใบเบิกวัตถุดิบ</span></div>
+      <div class="winbody">
+        <div class="row">
+          <div class="fld"><div class="lb">วันที่เบิก</div><div class="vl">26/09/2026</div></div>
+          <div class="fld"><div class="lb">Forecast / PO</div><div class="vl">October 2026</div></div>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <div class="fld"><div class="lb">แผนก *</div><div class="vl">CU5 ▾</div></div>
+          <div class="fld" style="background:#f6f8fa"><div class="lb">ชื่อผู้เบิก * (จากผู้ที่ล็อกอิน)</div><div class="vl">RATCHADAPORN (CU1,3)</div></div>
+        </div>
+      </div></div>`
+  },
+  {
+    k:"ฝ่ายผลิต · ขั้นที่ 3", kc:"k-pur", h:"พิมพ์ Part No. หรือ Size แล้วดูกล่องเขียว",
+    p:"พิมพ์ไม่กี่ตัวระบบจะขึ้นรายการให้เลือก เลือกแล้วจะมี<b>กล่องเขียวยืนยัน</b>ใต้ช่อง บอกชื่อเต็มและยอดคงเหลือ",
+    pts:["ถ้ายังไม่ขึ้นกล่องเขียว แปลว่ายังไม่ได้เลือกวัตถุดิบจริง",
+         "Size เดียวกันมีหลาย Maker ระบบจะให้กดเลือก Maker",
+         "ตรวจให้ตรงก่อนเสมอ โดยเฉพาะ Temper"],
+    v:`<div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="winttl">เลือกวัตถุดิบ</span></div>
+      <div class="winbody">
+        <div class="fld"><div class="lb">Size</div><div class="vl mono">🔍 12.7x0.8x2530</div></div>
+        <div class="grn" style="margin-top:9px">✅ Ø12.7x0.8x2530
+          <small>COPPER TUBE C1220T · TANI (FURUKAWA) · คงเหลือ 144 เส้น · 95.84 KGS</small></div>
+        <div class="row" style="margin-top:9px"><span class="pill p-pur">Temper: O</span><span class="pill p-acc">🔖 SU00N685G19</span></div>
+      </div></div>`
+  },
+  {
+    k:"ฝ่ายผลิต · ขั้นที่ 4", kc:"k-pur", h:"ใส่จำนวนและหน่วย ระบบเตือนถ้าของไม่พอ",
+    p:"เลือกหน่วยให้ตรงกับที่เบิกจริง ถ้าเบิกทองแดงเป็นม้วนให้เลือก <b>COIL</b> แล้วจะมีช่องน้ำหนัก KGS ขึ้นมาให้กรอกเพิ่ม (ไม่บังคับ)",
+    pts:["เบิกเป็นเส้น → PCS","เบิกเป็นม้วน → COIL แล้วใส่กิโลถ้าทราบ",
+         "ถ้าจำนวนเกินของในคลัง ระบบขึ้นเตือนสีเหลืองทันที",
+         "กด ➕ เพิ่มรายการวัตถุดิบ เพื่อเบิกหลาย size ในใบเดียว"],
+    v:`<div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="winttl">จำนวนที่เบิก</span></div>
+      <div class="winbody">
+        <div class="row">
+          <div class="fld"><div class="lb">จำนวน *</div><div class="vl mono">2</div></div>
+          <div class="fld"><div class="lb">หน่วย</div><div class="vl">COIL ▾</div></div>
+          <div class="fld"><div class="lb">น้ำหนักรวม KGS</div><div class="vl mono">282.20</div></div>
+        </div>
+        <div class="note ok" style="margin-top:10px">✅ สต๊อกพร้อมจ่าย — คงเหลือ 282.20 KGS · 2 COIL</div>
+        <div class="note" style="margin-top:8px">⚠️ ถ้าขอเกินของที่มี จะขึ้นเตือนแบบนี้ ให้แก้จำนวนก่อนส่ง</div>
+      </div></div>`
+  },
+  {
+    k:"ฝ่ายผลิต · ขั้นที่ 5", kc:"k-pur", h:"กด 📤 ส่งใบเบิก แล้วรอหัวหน้าอนุมัติ",
+    p:"ใบจะไปอยู่ในแท็บ <b>⏳ รออนุมัติ</b> และขึ้นตัวเลขแดงที่เมนูของหัวหน้าทันที",
+    pts:["เลขที่ใบจะออกให้อัตโนมัติ เช่น REQ-2026-0025",
+         "ดูสถานะได้จากแถบล่างของใบ: ผู้เขียน → ผู้อนุมัติ → ผู้จ่าย",
+         "กด 🖨️ พิมพ์ เพื่อพิมพ์ใบเบิกเป็นกระดาษได้"],
+    v:`<div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="winttl">REQ-2026-0025</span></div>
+      <div class="winbody">
+        <table class="tbl"><tr><th>วัตถุดิบ</th><th>MAKER</th><th style="text-align:right">จำนวน</th></tr>
+        <tr><td class="mono">Ø12.7x0.8x2530</td><td>TANI</td><td style="text-align:right" class="mono"><b>538 PCS</b></td></tr></table>
+        <div class="row" style="margin-top:11px;gap:16px">
+          <span class="pill p-ok">✓ ผู้เขียน</span><span class="pill p-warn">2 รออนุมัติ</span><span class="pill p-acc">3 รอจ่าย</span></div>
+      </div></div>`
+  },
+  {
+    k:"ฝ่ายผลิต · ขั้นที่ 6", kc:"k-pur", h:"แก้ไขใบ ทำได้เฉพาะใบของตัวเองและก่อนจ่ายของ",
+    p:"กดปุ่ม <b>แก้ไข</b> ที่มุมขวาล่างของการ์ดใบนั้น ระบบจะสร้างใบใหม่ลงท้าย <b>-R01</b> ให้",
+    pts:["ใบเดิมเปลี่ยนเป็น “แก้ไขแล้ว” เก็บไว้ดูย้อนหลังได้",
+         "ใบ -R01 กลับไปเป็น “รออนุมัติ” หัวหน้าต้องอนุมัติใหม่",
+         "ใบของคนอื่นจะไม่มีปุ่ม ขึ้นข้อความว่าแก้ไขได้เฉพาะเจ้าของใบ",
+         "ใบที่จ่ายของแล้ว หรือใบที่ไม่อนุมัติ แก้ไม่ได้ ต้องเขียนใบใหม่"],
+    v:`<div style="position:relative">
+      <div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="winttl">REQ-2026-0025</span></div>
+      <div class="winbody"><div class="row" style="justify-content:flex-end;gap:7px">
+        <span class="btn w">แก้ไข</span><span class="btn r">ยกเลิก</span></div>
+        <div class="note err" style="margin-top:10px">ใบของคนอื่น → “แก้ไขได้เฉพาะ ANONGRUK (ST4)”</div>
+      </div></div>${cur(232,64)}</div>`
+  }
+];
+
+const SV = [
+  {
+    k:"หัวหน้างาน · ขั้นที่ 1", kc:"k-ok", h:"ดูตัวเลขแดงที่เมนูใบเบิกวัตถุดิบ",
+    p:"ตัวเลขแดงคือจำนวนใบที่<b>รออนุมัติ</b> กดเข้าไปแล้วเลือกแท็บ ⏳ รออนุมัติ",
+    pts:["ระบบดึงข้อมูลใหม่เองทุก 20 วินาที ไม่ต้องรีเฟรช",
+         "ใบจะกางรายละเอียดไว้ให้อยู่แล้ว ไม่ต้องกดเปิดทีละใบ",
+         "ค้นหาได้จากเลขที่ใบ ชื่อผู้เบิก แผนก หรือชื่อวัตถุดิบ"],
+    v:`<div style="position:relative">
+      <div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="winttl">เมนู</span></div>
+      <div class="winbody" style="font-size:13px">
+        <div class="row" style="justify-content:space-between"><span>🔍 เช็คสต๊อกด่วน</span></div>
+        <div class="row" style="justify-content:space-between;margin-top:9px;background:var(--acc-s);border-radius:8px;padding:7px 9px">
+          <span style="font-weight:800;color:var(--acc)">📋 ใบเบิกวัตถุดิบ</span>
+          <span class="pill p-err">2</span></div>
+        <div class="row" style="justify-content:space-between;margin-top:9px"><span>📜 ประวัติการเบิก</span></div>
+      </div></div>${cur(250,104)}</div>`
+  },
+  {
+    k:"หัวหน้างาน · ขั้นที่ 2", kc:"k-ok", h:"ตรวจ 4 จุดก่อนกดอนุมัติ",
+    p:"ข้อมูลทั้งหมดแสดงอยู่ในการ์ดใบเบิกแล้ว ไม่ต้องเปิดหน้าอื่น",
+    pts:["<b>วัตถุดิบและ Size</b> — ตรงกับงานที่จะผลิตไหม",
+         "<b>จำนวนและหน่วย</b> — สมเหตุสมผลกับ Work Order ไหม",
+         "<b>แผนก / ผู้เบิก</b> — ใช่คนที่ควรเบิกไหม",
+         "<b>Forecast / PO</b> — อ้างอิงงานเดือนไหน"],
+    v:`<div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="winttl">REQ-2026-0025 · CU5</span></div>
+      <div class="winbody">
+        <table class="tbl">
+          <tr><th>วัตถุดิบ / SIZE</th><th>MAKER</th><th style="text-align:right">จำนวน</th><th>LOT</th></tr>
+          <tr><td class="mono"><b>Ø12.7x0.8x2530</b><br><span style="color:var(--ink3)">COPPER TUBE C1220T</span></td>
+              <td>TANI</td><td style="text-align:right" class="mono"><b>538 PCS</b></td><td class="mono">TJ0604477…</td></tr>
+        </table>
+        <div class="row" style="margin-top:10px;gap:7px">
+          <span class="pill p-acc">ผู้เบิก: นิตยา</span><span class="pill p-acc">แผนก CU5</span><span class="pill p-pur">Forecast: October 2026</span></div>
+      </div></div>`
+  },
+  {
+    k:"หัวหน้างาน · ขั้นที่ 3", kc:"k-ok", h:"กดอนุมัติ แล้วยืนยันด้วย PIN",
+    p:"ระบบจะบันทึกชื่อและวันเวลาที่อนุมัติไว้ในใบ ใช้อ้างอิงย้อนหลังได้",
+    pts:["กด <b>✅ อนุมัติ</b> → ใส่ PIN → ใบย้ายไปแท็บ “อนุมัติแล้ว”",
+         "สโตร์จะเห็นใบนี้และจ่ายของได้ทันที",
+         "ถ้าใบไหนมีฉบับแก้ไขแล้ว ระบบจะเตือนให้ไปอนุมัติฉบับล่าสุดแทน"],
+    v:`<div style="position:relative">
+      <div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="winttl">อนุมัติใบเบิก</span></div>
+      <div class="winbody">
+        <div class="row" style="justify-content:flex-end;gap:7px">
+          <span class="btn w">ปิด</span><span class="btn r">❌ ไม่อนุมัติ</span><span class="btn g">🔐 ยืนยัน + อนุมัติ</span></div>
+        <div class="pindots" style="margin-top:12px"><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i></div>
+      </div></div>${cur(286,64)}</div>`
+  },
+  {
+    k:"หัวหน้างาน · ขั้นที่ 4", kc:"k-warn", h:"ถ้าไม่อนุมัติ ใบนั้นจะแก้ไขไม่ได้อีก",
+    p:"กด <b>❌ ไม่อนุมัติ</b> เมื่อไม่ต้องการให้จ่ายของตามใบนี้ ฝ่ายผลิตต้อง<b>เขียนใบใหม่</b>ทั้งใบ",
+    pts:["บอกเหตุผลกับฝ่ายผลิตด้วย เพื่อให้เขียนใบใหม่ได้ถูก",
+         "ถ้าผิดแค่จำนวนเล็กน้อย ให้ฝ่ายผลิตกดแก้ไขเองก่อนจะเร็วกว่า",
+         "ใบที่ไม่อนุมัติยังเก็บไว้ดูย้อนหลังในแท็บ ❌ ไม่อนุมัติ"],
+    v:`<div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="winttl">สถานะใบเบิก</span></div>
+      <div class="winbody">
+        <div class="row" style="gap:7px"><span class="pill p-warn">⏳ รออนุมัติ</span><span style="color:var(--ink3)">→</span>
+          <span class="pill p-ok">✅ อนุมัติแล้ว</span><span style="color:var(--ink3)">→</span><span class="pill p-acc">📤 จ่ายแล้ว</span></div>
+        <div class="row" style="gap:7px;margin-top:11px"><span class="pill p-err">❌ ไม่อนุมัติ</span>
+          <span style="font-size:12px;color:var(--ink2)">= จบที่ใบนี้ ต้องเขียนใบใหม่</span></div>
+      </div></div>`
+  },
+  {
+    k:"หัวหน้างาน · ขั้นที่ 5", kc:"k-ok", h:"หัวหน้าเบิกเองก็ได้ และแก้ใบของตัวเองได้",
+    p:"ขั้นตอนเหมือนฝ่ายผลิตทุกอย่าง กด ➕ สร้างใบเบิก แล้วกรอกตามปกติ",
+    pts:["ใบที่หัวหน้าเขียนเอง หัวหน้าแก้ได้เอง",
+         "ใบของฝ่ายผลิต หัวหน้าแก้ไม่ได้ ให้เจ้าของใบแก้",
+         "ถ้าจำเป็นจริง ๆ ให้แจ้งฝ่ายจัดซื้อ (สิทธิ์ Admin)"],
+    v:`<div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="winttl">สิทธิ์การแก้ไข</span></div>
+      <div class="winbody" style="font-size:12.5px">
+        <div class="row" style="justify-content:space-between"><span>ใบที่ตัวเองเขียน</span><span class="pill p-ok">แก้ได้</span></div>
+        <div class="row" style="justify-content:space-between;margin-top:9px"><span>ใบของคนอื่น</span><span class="pill p-err">แก้ไม่ได้</span></div>
+        <div class="row" style="justify-content:space-between;margin-top:9px"><span>ใบที่จ่ายของแล้ว</span><span class="pill p-err">แก้ไม่ได้</span></div>
+      </div></div>`
+  },
+  {
+    k:"หัวหน้างาน · ขั้นที่ 6", kc:"k-ok", h:"ดูรายงานและสต๊อกได้ตลอดเวลา",
+    p:"ไม่ต้องรอสรุปจากใคร เปิดดูเองได้ทุกเมนู",
+    pts:["<b>🔍 เช็คสต๊อกด่วน</b> — พิมพ์ size ดูของคงเหลือทันที",
+         "<b>📜 ประวัติการเบิก</b> — กดปุ่ม 📊 สรุปยอดต่อวัน ดูยอดรวมรายวัน แยกตามแผนกหรือตามใบเบิกได้",
+         "<b>🗃️ วัตถุดิบไม่เคลื่อนไหว</b> — ของค้างนานไม่ถูกเบิก",
+         "บนมือถือให้ตะแคงจอแนวนอน จะอ่านตารางง่ายขึ้น"],
+    v:`<div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="winttl">สรุปยอดต่อวัน</span></div>
+      <div class="winbody">
+        <table class="tbl"><tr><th>วันที่</th><th>วัตถุดิบ</th><th style="text-align:right">รวม PCS</th><th style="text-align:right">รวม KGS</th></tr>
+        <tr><td>25/09/2026</td><td class="mono">Ø12.7x0.8x2530</td><td style="text-align:right" class="mono">538</td><td style="text-align:right" class="mono">364.33</td></tr>
+        <tr><td>25/09/2026</td><td class="mono">Ø22.20x0.8x2350</td><td style="text-align:right" class="mono">538</td><td style="text-align:right" class="mono">601.37</td></tr></table>
+      </div></div>`
+  }
+];
+
+const END = [{
+  k:"จบคู่มือ", kc:"k-ok", h:"จำ 4 ข้อนี้ไว้ ใช้งานได้ราบรื่นแน่นอน",
+  p:"ถ้าเจอปัญหาให้จดไว้ว่าใบไหน เวลาไหน กำลังทำอะไรอยู่ แล้วส่งภาพหน้าจอมาให้ฝ่ายจัดซื้อ",
+  pts:["มีอัปเดตระบบ → กด <b>Ctrl + F5</b> ก่อนใช้งาน",
+       "ใช้ <b>PIN ของตัวเอง</b> เท่านั้น",
+       "แก้ใบได้<b>เฉพาะใบของตัวเอง</b> และ<b>ก่อนสโตร์จ่ายของ</b>",
+       "ใบที่<b>ไม่อนุมัติ</b> ต้องเขียนใบใหม่"],
+  v:`<div class="win"><div class="winbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="winttl">ใบเบิกที่พิมพ์ออกมา</span></div>
+    <div class="winbody" style="font-size:11.5px">
+      <div style="font-weight:800">KAISE (THAILAND) CO.,LTD.</div>
+      <div style="color:var(--ink3);font-size:10.5px">ใบเบิกวัตถุดิบ · MATERIAL REQUISITION</div>
+      <div style="border-top:1px solid var(--line);margin:9px 0"></div>
+      <div class="row" style="justify-content:space-between;color:var(--ink3);font-size:10px">
+        <span>พิมพ์เมื่อ 26/9/2569</span><span class="mono">REQ-2026-0025</span>
+        <span class="mono" style="color:var(--ink);font-weight:800;font-size:11px">F-KKQE-ST-06,R02</span></div>
+    </div></div>`
+}];
+
+// ─────────── ตัวเล่นสไลด์ ───────────
+let role = "pd", i = 0, timer = null, playing = true, seen = new Set();
+const scene = document.getElementById("scene"), bar = document.getElementById("bar"),
+      dots = document.getElementById("dots"), count = document.getElementById("count"),
+      playBtn = document.getElementById("play");
+const list = () => COMMON.concat(role === "pd" ? PD : SV).concat(END);
+
+function render(){
+  const s = list()[i];
+  seen.add(role + i);
+  scene.innerHTML = `<div>
+      <span class="kicker ${s.kc||''}">${s.k}</span>
+      <h2>${s.h}</h2>
+      <div class="lead">${s.p}</div>
+      ${s.pts ? `<ul class="pts">${s.pts.map(x=>`<li><span>${x}</span></li>`).join("")}</ul>` : ""}
+      ${s.n ? `<div class="note">${s.n}</div>` : ""}
+    </div>
+    <div class="shot">${s.v}</div>`;
+  count.textContent = (i+1) + " / " + list().length;
+  dots.innerHTML = list().map((_,n)=>`<i data-n="${n}" class="${n===i?'on':(seen.has(role+n)?'seen':'')}"></i>`).join("");
+  bar.style.width = ((i+1)/list().length*100) + "%";
+}
+function go(n){ const L = list().length; i = (n + L) % L; render(); restart(); }
+function restart(){ clearInterval(timer); if(playing) timer = setInterval(()=>go(i+1), 9000); }
+function setPlay(v){ playing = v; playBtn.textContent = v ? "⏸ หยุดเล่น" : "▶ เล่นอัตโนมัติ"; restart(); }
+
+document.getElementById("next").onclick = ()=>go(i+1);
+document.getElementById("prev").onclick = ()=>go(i-1);
+playBtn.onclick = ()=>setPlay(!playing);
+dots.onclick = e => { const n = e.target.getAttribute("data-n"); if(n!==null) go(+n); };
+document.querySelectorAll(".roles button").forEach(b=>{
+  b.onclick = ()=>{ document.querySelectorAll(".roles button").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on"); role = b.dataset.role; i = 0; render(); restart(); };
+});
+document.addEventListener("keydown", e=>{
+  if(e.key === "ArrowRight"){ go(i+1); } else if(e.key === "ArrowLeft"){ go(i-1); }
+  else if(e.key === " "){ e.preventDefault(); setPlay(!playing); }
+});
+render(); restart();
+</script>
+</body>
+</html>
