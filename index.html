@@ -181,6 +181,10 @@ function fmtDate(d) {
     if (!m) return s;
     return m[3] + "/" + m[2] + "/" + m[1];
 }
+// เลข Lot ของ maker บางเจ้า (เช่น NASTOA) มีขีดคั่น แต่สโตร์พิมพ์ไม่เหมือนกันทุกครั้ง
+// (บางคนใส่ขีด บางคนไม่ใส่ บางทีเว้นวรรค) — ถ้าตัวอักษร/ตัวเลขเหมือนกัน ถือเป็น Lot เดียวกัน
+// ใช้ค่านี้เป็นตัวเทียบทุกที่ (ค้นหา / ตัดสต๊อก / กัน Lot ซ้ำ) เพื่อให้สไตล์การพิมพ์ไม่มีผล
+function normLot(s) { return String(s == null ? "" : s).toUpperCase().replace(/[\s\-_.]/g, "").trim(); }
 // ของคงเหลือใน lot ตามหน่วยที่เบิก — ใช้ร่วมกันทั้งตอนเช็คก่อนจ่ายและตอนตัดสต๊อกจริง
 function availOfLotU(l, u) {
     if (u === "M" || (l.rem_m != null && l.rem_pcs == null && l.rem_kgs == null && l.rem_coil == null)) return l.rem_m || 0;
@@ -1454,19 +1458,26 @@ function StoreFlow() {
     // ── สำรองข้อมูลอัตโนมัติ วันละครั้งเมื่อเปิดระบบ ──
     // เก็บสำเนาไว้ในเครื่อง (3 ชุดล่าสุด) + ดาวน์โหลดไฟล์ให้เก็บนอกเครื่อง
     // ทำหลังโหลดข้อมูลครบแล้วเท่านั้น เพื่อไม่ให้สำรองข้อมูลว่างทับของดี
+    // ทุกเครื่องเก็บสำเนาเงียบๆ ไว้ในเครื่องวันละครั้ง (ไม่มีไฟล์ดาวน์โหลดมากวน)
+    // ส่วนไฟล์สำรองที่ดาวน์โหลดไว้เก็บนอกเครื่อง ทำเฉพาะเครื่องสโตร์/admin เท่านั้น
     useEffect(() => {
         if (isLoading || isRestoring) return;
         if (!materials.length && !requests.length) return;
         const today = new Date().toISOString().slice(0, 10);
-        if (localStorage.getItem("sf_autobk_day") === today) { setBkInfo(listLocalBackups()[0] || null); return; }
-        const data = buildBackup({ master, materials, lots, requests, issueHist, recvHist, users, ngReturns, auditLog, priceMap, lotPriceMap, partDb });
+        const mk = () => buildBackup({ master, materials, lots, requests, issueHist, recvHist, users, ngReturns, auditLog, priceMap, lotPriceMap, partDb });
+        if (localStorage.getItem("sf_autobk_local_day") !== today) {
+            saveLocalBackup(mk());
+            localStorage.setItem("sf_autobk_local_day", today);
+        }
+        if (!canEditStock || localStorage.getItem("sf_autobk_day") === today) { setBkInfo(listLocalBackups()[0] || null); return; }
+        const data = mk();
         const r = saveLocalBackup(data);
         localStorage.setItem("sf_autobk_day", today);
         setBkInfo(listLocalBackups()[0] || null);
         try { downloadBackup(data); } catch (e) { }
         toast(r.ok ? "🛡️ สำรองข้อมูลอัตโนมัติแล้ว — ไฟล์ถูกดาวน์โหลด กรุณาเก็บไว้ที่ปลอดภัย"
                    : "🛡️ ดาวน์โหลดไฟล์สำรองแล้ว (เก็บในเครื่องไม่ได้: " + r.why + ")", "info");
-    }, [isLoading, isRestoring, materials.length, requests.length]);
+    }, [isLoading, isRestoring, materials.length, requests.length, canEditStock]);
 
     const [modal, setModal] = useState(null);
     const [historyModal, setHistoryModal] = useState(null);
@@ -1802,7 +1813,7 @@ function StoreFlow() {
     for (const item of r.items) {
         const selKey = `${r.items.indexOf(item)}_${item.matId}`;
         // เลข Lot จริงที่สโตร์จดมา — ถ้ามี ให้ลงประวัติเบิกด้วยเลขนี้
-        const realLotNo = String((realLots && realLots[selKey]) || "").trim();
+        const realLotNo = normLot((realLots && realLots[selKey]) || "");
         // น้ำหนักจริงที่สโตร์ชั่งตอนจ่าย (ถ้าใส่มา) — ใช้แทนการคำนวณกิโลจากสัดส่วนของ lot
         // เกลี่ยตามจำนวนที่ตัดจริงของแต่ละ lot แล้วไม่ให้เกินกิโลคงเหลือของ lot นั้น
         const realKgTotal = parseFloat((realKgs && realKgs[selKey]) || "") || 0;
@@ -1818,7 +1829,8 @@ function StoreFlow() {
         // ถ้ามี Lot No. ซ้ำกันหลายแถว ต้องเอาทุกแถวมาไล่ตัด ไม่ใช่แค่แถวแรก
         // เดิมใช้ findIndex ได้แถวเดียว ถ้าแถวนั้นของหมดแล้วจะข้ามไปเลย
         // ทำให้ "เบิกแล้วสต๊อกไม่ลด" ทั้งที่ยังมีของอยู่ในแถวที่ชื่อเดียวกัน
-        const idxOfLot = no => ml.map((l, i) => (l.lotNo === no ? i : -1)).filter(i => i >= 0);
+        // เทียบแบบไม่สนขีด/เว้นวรรค — Lot เดียวกันที่พิมพ์คนละสไตล์ต้องตัดสต๊อกได้
+        const idxOfLot = no => ml.map((l, i) => (normLot(l.lotNo) === normLot(no) ? i : -1)).filter(i => i >= 0);
         const processOrder = chosenLots.length > 0
             ? chosenLots.flatMap(cl => idxOfLot(cl.lotNo).map(lotIdx => ({ lotIdx: lotIdx, fixedQty: cl.qty })))
             : sortedByDate.flatMap(l => idxOfLot(l.lotNo).map(lotIdx => ({ lotIdx: lotIdx, fixedQty: null })))
@@ -1961,7 +1973,9 @@ function StoreFlow() {
             toast("กรุณาเลือก Maker", "err");
             return;
         }
-        const validLots = rvLots.filter(l => l.lotNo);
+        // เก็บเลข Lot ให้เป็นรูปแบบเดียวกันตั้งแต่ตอนรับ (ตัดขีด/เว้นวรรคออก)
+        // สโตร์พิมพ์สไตล์ไหนก็ได้ ระบบเก็บเหมือนกันหมด → ค้นหาเจอและนับเป็น Lot เดียวกัน
+        const validLots = rvLots.filter(l => l.lotNo).map(l => ({ ...l, lotNo: normLot(l.lotNo) }));
         if (!validLots.length) {
             toast("กรุณาระบุ Lot No. อย่างน้อย 1 รายการ", "err");
             return;
@@ -2001,7 +2015,7 @@ function StoreFlow() {
             if (!g) { g = { mat: tm, realMatId: tm.id, lots: [] }; groups.push(g); }
             g.lots.push(l);
         }
-        const _lk = v => String(v == null ? "" : v).trim().toLowerCase();
+        const _lk = v => normLot(v);
         // กัน Lot ซ้ำ — แต่ maker บางเจ้าส่ง Lot No. เดิมมาคนละ PO / คนละ Invoice ซึ่งเป็นของคนละชุดจริง
         // จึงห้ามเฉพาะกรณีที่ "ซ้ำทุกอย่าง" (Lot + PO + Invoice) ซึ่งแปลว่ากดปุ่มซ้ำ
         // ถ้า PO หรือ Invoice ต่างกัน → ถามยืนยันแล้วให้ผ่านได้ เพื่อไม่ให้ของจริงเข้าคลังไม่ได้
@@ -2279,7 +2293,7 @@ function StoreFlow() {
                         toast(r.ok ? "🛡️ สำรองข้อมูลแล้ว — ไฟล์ถูกดาวน์โหลด และเก็บสำเนาไว้ในเครื่องด้วย"
                                    : "📤 ดาวน์โหลดไฟล์สำรองแล้ว (เก็บในเครื่องไม่ได้: " + r.why + ")");
                     }, title: bkInfo ? "สำรองล่าสุดในเครื่อง: " + String(bkInfo.at).replace("T", " ").slice(0, 16) : "ยังไม่มีสำเนาในเครื่อง", style: { background: "rgba(88,166,255,.12)", border: "1px solid rgba(88,166,255,.3)", borderRadius: 6, color: "#0969da", cursor: "pointer", padding: "4px 10px", fontSize: 10, fontWeight: 700, fontFamily: "inherit" } }, "🛡️ สำรองข้อมูล"),
-                React.createElement("label", { style: { background: "rgba(188,140,255,.12)", border: "1px solid rgba(188,140,255,.3)", borderRadius: 6, color: "#8250df", cursor: "pointer", padding: "4px 10px", fontSize: 10, fontWeight: 700, fontFamily: "inherit" } },
+                canEditStock && React.createElement("label", { style: { background: "rgba(188,140,255,.12)", border: "1px solid rgba(188,140,255,.3)", borderRadius: 6, color: "#8250df", cursor: "pointer", padding: "4px 10px", fontSize: 10, fontWeight: 700, fontFamily: "inherit" } },
                     "↩️ กู้คืนจากไฟล์",
                     React.createElement("input", { type: "file", accept: ".json", style: { display: "none" }, onChange: e => {
                             const file = e.target.files[0];
@@ -2294,7 +2308,7 @@ function StoreFlow() {
                             reader.readAsText(file);
                             e.target.value = "";
                         } })),
-                React.createElement("button", { onClick: () => {
+                canEditStock && React.createElement("button", { onClick: () => {
                         const bks = listLocalBackups();
                         if (!bks.length) { alert("ยังไม่มีสำเนาสำรองในเครื่องนี้\n\nระบบจะสร้างให้อัตโนมัติวันละครั้งเมื่อเปิดใช้งาน หรือกดปุ่ม \"สำรองข้อมูล\" เพื่อสร้างเดี๋ยวนี้"); return; }
                         const lines = bks.map(b => b.slot + ") " + String(b.at).replace("T", " ").slice(0, 16)
@@ -2307,7 +2321,7 @@ function StoreFlow() {
                         catch (err) { alert("อ่านสำเนาไม่ได้: " + err.message); }
                     }, style: { background: "rgba(210,153,34,.12)", border: "1px solid rgba(210,153,34,.35)", borderRadius: 6, color: "#9a6700", cursor: "pointer", padding: "4px 10px", fontSize: 10, fontWeight: 700, fontFamily: "inherit" } }, "🗄️ สำเนาในเครื่อง"),
 
-                React.createElement("button", { onClick: () => { if (window.confirm("ล้างข้อมูลทั้งหมดใน browser นี้? (กู้คืนไม่ได้)")) {
+                canEditStock && React.createElement("button", { onClick: () => { if (window.confirm("ล้างข้อมูลทั้งหมดใน browser นี้? (กู้คืนไม่ได้)")) {
                         ["master", "materials", "lots", "requests", "issueHist", "recvHist"].forEach(k => localStorage.removeItem("sf_" + k));
                         window.location.reload();
                     } }, style: { background: "rgba(248,81,73,.12)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 6, color: "#cf222e", cursor: "pointer", padding: "4px 10px", fontSize: 10, fontFamily: "inherit" } }, "\uD83D\uDDD1\uFE0F \u0E25\u0E49\u0E32\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25"),
@@ -4345,9 +4359,13 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
             const lack = targetQty - haveTotal;
             const dateGroups = [...new Set(avail.map(l => l.date || "ไม่ระบุ"))];
             // ลิสต์ที่แสดงจริง = กรองด้วยคำที่สโตร์พิมพ์ (เลข Lot / PO / วันที่) — Lot ที่เลือกไว้แล้วต้องไม่หายไปจากจอ
-            const _q = String(lotQuery[selKey] || "").trim().toLowerCase();
+            // ค้นหาแบบไม่สนขีด/เว้นวรรค — พิมพ์ 689N309 หรือ 689-N-309 ก็เจอตัวเดียวกัน
+            const _qRaw = String(lotQuery[selKey] || "").trim();
+            const _q = _qRaw.toLowerCase();
+            const _qn = normLot(_qRaw);
             const shown = _q
                 ? avail.filter(l => (String(l.lotNo || "") + " " + (l.po || "") + " " + (l.date || "")).toLowerCase().includes(_q)
+                    || (_qn && normLot(l.lotNo).includes(_qn))
                     || selList.some(x => x.lotNo === l.lotNo))
                 : avail;
             return React.createElement("div", { key: i, style: { background: C.sur2, border: "1px solid " + (lack > 0.001 ? C.err : C.brd), borderRadius: 8, padding: 12, marginBottom: 10 } },
@@ -4422,7 +4440,7 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
                                     e.preventDefault();
                                     const q = String(lotQuery[selKey] || "").trim().toLowerCase();
                                     if (!q) return;
-                                    const hit = shown.find(l => String(l.lotNo).toLowerCase() === q) || (shown.length === 1 ? shown[0] : null);
+                                    const hit = shown.find(l => normLot(l.lotNo) === normLot(q)) || shown.find(l => String(l.lotNo).toLowerCase() === q) || (shown.length === 1 ? shown[0] : null);
                                     if (!hit) return; // \u0E22\u0E31\u0E07\u0E40\u0E08\u0E2D\u0E2B\u0E25\u0E32\u0E22 Lot \u2014 \u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E15\u0E48\u0E2D\u0E43\u0E2B\u0E49\u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E15\u0E31\u0E27\u0E40\u0E14\u0E35\u0E22\u0E27 (\u0E15\u0E31\u0E27\u0E40\u0E25\u0E02\u0E02\u0E49\u0E32\u0E07\u0E0A\u0E48\u0E2D\u0E07\u0E1A\u0E2D\u0E01\u0E27\u0E48\u0E32\u0E40\u0E08\u0E2D\u0E01\u0E35\u0E48 Lot)
                                     if (!selList.find(x => x.lotNo === hit.lotNo)) toggleLot(selKey, hit, targetQty);
                                     setLotQuery(s => ({ ...s, [selKey]: "" }));
@@ -4436,7 +4454,7 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
                         (() => {
                             if (!_q) return null;
                             const zero = (lots[it.matId] || []).filter(l => !avail.some(a => a === l)
-                                && String(l.lotNo || "").toLowerCase().includes(_q));
+                                && (String(l.lotNo || "").toLowerCase().includes(_q) || (_qn && normLot(l.lotNo).includes(_qn))));
                             if (!zero.length) return null;
                             return React.createElement("div", { style: { margin: "0 0 7px", padding: "7px 10px", background: "rgba(210,153,34,.1)", border: "1px solid rgba(210,153,34,.4)", borderRadius: 7, fontSize: 11.5, color: "#9a6700", fontWeight: 600 } },
                                 "\u26A0\uFE0F \u0E21\u0E35 Lot " + zero.map(l => l.lotNo).join(", ") + " \u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A \u0E41\u0E15\u0E48\u0E22\u0E2D\u0E14\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E40\u0E1B\u0E47\u0E19 0 \u0E08\u0E36\u0E07\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E08\u0E48\u0E32\u0E22\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49 \u2014 \u0E16\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E08\u0E23\u0E34\u0E07\u0E22\u0E31\u0E07\u0E21\u0E35 \u0E41\u0E08\u0E49\u0E07\u0E1D\u0E48\u0E32\u0E22\u0E08\u0E31\u0E14\u0E0B\u0E37\u0E49\u0E2D\u0E43\u0E2B\u0E49\u0E22\u0E49\u0E32\u0E22\u0E22\u0E2D\u0E14\u0E21\u0E32\u0E17\u0E35\u0E48 Lot \u0E19\u0E35\u0E49\u0E01\u0E48\u0E2D\u0E19");
@@ -4773,7 +4791,7 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
         const [c1, c2] = pasteMap();
         const rows = String(pasteTxt || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean).map(line => {
             const parts = line.split(/[\t,;]+|\s{1,}/).map(x => x.trim()).filter(Boolean);
-            const lotNo = parts.shift() || "";
+            const lotNo = normLot(parts.shift() || "");
             const nums = parts.map(x => parseFloat(String(x).replace(/,/g, ""))).filter(n => isFinite(n));
             const row = { lotNo, pcs: "", coil: "", kgs: "", m: "", price: "", priceUnit: "", matId: "" };
             if (nums.length >= 1 && c1) row[c1] = nums[0];
@@ -5171,11 +5189,11 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
             return !maker || !m.maker || m.maker === maker;
         });
         const inMat = [];
-        same.forEach(mid => { (lots[mid] || []).forEach(l => { if (l.lotNo === lotNo) inMat.push({ matId: mid, lot: l }); }); });
+        same.forEach(mid => { (lots[mid] || []).forEach(l => { if (normLot(l.lotNo) === normLot(lotNo)) inMat.push({ matId: mid, lot: l }); }); });
         if (inMat.length) return pick(inMat);
         // เผื่อชื่อไม่ตรงเป๊ะ (ข้อมูลเก่า) — ถอยไปหาทั้งระบบ แต่ต้องแยกออกได้แน่ ๆ เท่านั้น
         const hits = [];
-        ids.forEach(mid => { (lots[mid] || []).forEach(l => { if (l.lotNo === lotNo) hits.push({ matId: mid, lot: l }); }); });
+        ids.forEach(mid => { (lots[mid] || []).forEach(l => { if (normLot(l.lotNo) === normLot(lotNo)) hits.push({ matId: mid, lot: l }); }); });
         return hits.length === 1 ? hits[0] : { matId: null, lot: null };
     }
     // ── แก้ไขประวัติการจ่าย — แก้ได้ทั้ง "จำนวน" "น้ำหนัก KGS" และ "เลข Lot" ──
