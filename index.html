@@ -9,7 +9,29 @@
 <style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#f6f8fa;color:#1f2328;font-family:system-ui,sans-serif;}::-webkit-scrollbar{width:12px;height:16px;}::-webkit-scrollbar-track{background:#dde3ea;border-radius:8px;}::-webkit-scrollbar-thumb{background:#57606a;border-radius:8px;border:3px solid #dde3ea;}::-webkit-scrollbar-thumb:hover{background:#0969da;}
 .xscroll{overflow-x:scroll!important;scrollbar-color:#57606a #dde3ea;scrollbar-width:auto;}
 .xscroll::-webkit-scrollbar{height:16px;}
-.xscroll::-webkit-scrollbar-thumb{background:#0969da;border:3px solid #dde3ea;}select option{background:#ffffff;color:#1f2328;}#loading{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:14px;color:#57606a;}.spin{width:34px;height:34px;border:3px solid #d0d7de;border-top-color:#0969da;border-radius:50%;animation:sp .8s linear infinite;}@keyframes sp{to{transform:rotate(360deg)}}</style>
+.xscroll::-webkit-scrollbar-thumb{background:#0969da;border:3px solid #dde3ea;}select option{background:#ffffff;color:#1f2328;}#loading{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:14px;color:#57606a;}.spin{width:34px;height:34px;border:3px solid #d0d7de;border-top-color:#0969da;border-radius:50%;animation:sp .8s linear infinite;}@keyframes sp{to{transform:rotate(360deg)}}
+/* ── จอเล็ก (แท็บเล็ต/มือถือ): ย่อฟอร์มเหลือคอลัมน์เดียว ลดระยะขอบ ให้ตารางเลื่อนได้ ── */
+@media(max-width:860px){
+ .fgrid{grid-template-columns:1fr!important;gap:10px!important}
+ .mdbody{padding:13px!important}
+ .apphdr{padding:8px 11px!important;gap:8px!important;flex-wrap:wrap!important}
+ .pgwrap{padding:11px 9px!important}
+ .tblwrap{overflow-x:auto!important;-webkit-overflow-scrolling:touch}
+ /* การ์ดใบเบิก: ข้อมูลหัวใบลงมาเป็นบรรทัดของตัวเอง 2 ช่องต่อแถว ไม่ถูกบีบจนตัวหนังสือตกทีละตัว */
+ .rqhd{flex-basis:100%!important;width:100%!important;gap:4px 0!important;margin-top:4px}
+ .rqfield{flex:1 1 44%!important;min-width:128px!important;border-left:none!important;padding:2px 0!important}
+ .rqcard{padding:11px 12px!important;gap:9px!important}
+ .rqitems{padding:8px 12px!important}
+}
+@media(max-width:560px){
+ .fgrid{gap:8px!important}
+ .mdbody{padding:10px!important}
+ .pgwrap{padding:9px 6px!important}
+}
+/* นิ้วแตะง่ายขึ้นบนจอสัมผัส */
+@media(hover:none) and (pointer:coarse){
+ button,select,input,.navitem{min-height:34px}
+}</style>
 </head><body>
 <div id="loading"><div class="spin"></div><div style="font-size:14px;font-weight:700">⚙️ Material Control System</div><div style="font-size:11px">กำลังเชื่อมต่อ Supabase...</div></div>
 <div id="root" style="display:none"></div>
@@ -856,7 +878,7 @@ function FG({ label, children, span = false, note = "" }) {
         React.createElement("div", null, children));
 }
 // tpl = กำหนดความกว้างแต่ละช่องเองได้ (ช่องที่ข้อความยาวอย่าง Size ควรกว้างกว่าช่องอื่น)
-function FGrid({ children, cols = 3, tpl }) { return React.createElement("div", { style: { display: "grid", gridTemplateColumns: tpl || `repeat(${cols},1fr)`, gap: 12, marginBottom: 12 } }, children); }
+function FGrid({ children, cols = 3, tpl }) { return React.createElement("div", { className: "fgrid", style: { display: "grid", gridTemplateColumns: tpl || `repeat(${cols},1fr)`, gap: 12, marginBottom: 12 } }, children); }
 function SecTitle({ children }) { return React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: C.tx2, textTransform: "uppercase", letterSpacing: .5, margin: "14px 0 8px", display: "flex", alignItems: "center", gap: 8 } },
     children,
     React.createElement("div", { style: { flex: 1, height: 1, background: C.brd } })); }
@@ -873,8 +895,8 @@ function Modal({ open, onClose, title, sub, icon = "📋", children, footer, wid
                     React.createElement("div", { style: { fontSize: 15, fontWeight: 700 } }, title),
                     sub && React.createElement("div", { style: { fontSize: 11, color: C.tx2, marginTop: 1 } }, sub)),
                 React.createElement("button", { onClick: onClose, style: { marginLeft: "auto", background: "none", border: "none", color: C.tx2, cursor: "pointer", fontSize: 24, lineHeight: 1, padding: "0 4px" } }, "\u00D7")),
-            React.createElement("div", { style: { padding: 20 } }, children),
-            footer && React.createElement("div", { style: { padding: "12px 20px", borderTop: `1px solid ${C.brd}`, display: "flex", gap: 8, justifyContent: "flex-end", position: "sticky", bottom: 0, background: C.sur } }, footer)));
+            React.createElement("div", { className: "mdbody", style: { padding: 20 } }, children),
+            footer && React.createElement("div", { style: { padding: "12px 20px", borderTop: `1px solid ${C.brd}`, display: "flex", gap: 8, justifyContent: "flex-end", position: "sticky", bottom: 0, background: C.sur, flexWrap: "wrap" } }, footer)));
 }
 function Toasts({ list }) {
     return React.createElement("div", { style: { position: "fixed", bottom: 20, right: 20, display: "flex", flexDirection: "column", gap: 8, zIndex: 9999, pointerEvents: "none" } }, list.map(t => React.createElement("div", { key: t.id, style: { background: C.sur2, border: `1px solid ${C.brd}`, borderLeft: `3px solid ${t.type === "ok" ? C.ok : t.type === "err" ? C.err : t.type === "warn" ? C.warn : C.acc2}`, borderRadius: 8, padding: "10px 15px", minWidth: 260, display: "flex", gap: 8, fontSize: 13, boxShadow: "0 8px 24px rgba(0,0,0,.5)" } },
@@ -1088,6 +1110,16 @@ function StoreFlow() {
     const [pinInput, setPinInput] = useState("");
     const [pinError, setPinError] = useState("");
     const role = (currentUser === null || currentUser === void 0 ? void 0 : currentUser.role) || "guest";
+    // ── รองรับมือถือ/แท็บเล็ต: วัดความกว้างจอ แล้วให้เมนูซ้ายเป็นแบบ "ซ่อน-เปิด" เมื่อจอแคบ ──
+    const [vw, setVw] = useState(typeof window !== "undefined" ? window.innerWidth : 1280);
+    const [navOpen, setNavOpen] = useState(false);
+    React.useEffect(() => {
+        const onResize = () => setVw(window.innerWidth);
+        window.addEventListener("resize", onResize);
+        window.addEventListener("orientationchange", onResize);
+        return () => { window.removeEventListener("resize", onResize); window.removeEventListener("orientationchange", onResize); };
+    }, []);
+    const isNarrow = vw < 860;   // แท็บเล็ตแนวตั้งและมือถือ
     // ── สิทธิ์การใช้งานตาม role ──────────────────────────────
     // admin = ทุกอย่าง | store = สต๊อก+ตั้งค่า | supervisor = อนุมัติ+ดู | production = ใบเบิก+ดู
     // หมายเหตุ: การกั้นสิทธิ์ฝั่งหน้าเว็บ = กันแก้ผิดพลาด ไม่ใช่ security จริง (ต้องเปิด RLS ที่ Supabase ด้วย)
@@ -1656,6 +1688,8 @@ function StoreFlow() {
             const nl = (lots[i.matId] || []).find(l => (l.rem_kgs || 0) > 0 || (l.rem_pcs || 0) > 0 || (l.rem_coil || 0) > 0 || (l.rem_m || 0) > 0);
             return { matId: i.matId, name: `${m.name || m.type} ${m.size}`, maker: m.maker, temper: (m.temper && m.temper !== "-") ? m.temper : "", partNo: m.partNo, model: i.model || "", customer: i.customer || "",
                 qty: parseFloat(i.qty) || 0, unit: i.unit, kgs: parseFloat(i.kgs) || null, coil: parseFloat(i.coil) || null,
+                // W/O และ Forecast เฉพาะรายการ (ว่าง = ใช้ของหัวใบ)
+                jo: (i.jo || "").trim() || null, forecast: (i.forecast || "").trim() || null,
                 lotNo: nl ? nl.lotNo : "-" };
         });
         const yr = new Date().getFullYear();
@@ -1929,7 +1963,7 @@ function StoreFlow() {
                 pcs: c.pcs != null ? c.pcs : null,
                 kgs: c.kgs != null ? c.kgs : null,
                 coil: c.coil != null ? c.coil : null,
-                unit: item.unit, forecast: r.forecast, dept: r.dept, requester: r.requester,
+                unit: item.unit, forecast: item.forecast || r.forecast, dept: r.dept, requester: r.requester,
                 approver: r.approvedBy, issued_by: issuedByName
             };
             if (ISSUEHIST_HAS_TEMPER) rec.temper = itemTp || null;
@@ -2252,7 +2286,13 @@ function StoreFlow() {
             ] },
     ].map(g => ({ ...g, items: g.items.filter(n => n.can !== false) })).filter(g => g.items.length > 0);
     return (React.createElement("div", { style: { display: "flex", height: "100vh", background: C.bg, color: C.tx, fontFamily: "system-ui,sans-serif", overflow: "hidden", fontSize: 13 } },
-        React.createElement("aside", { style: { width: 178, background: C.sur, borderRight: `1px solid ${C.brd}`, display: "flex", flexDirection: "column", flexShrink: 0, overflowY: "auto" } },
+        // ฉากหลังทึบตอนเปิดเมนูบนจอแคบ — แตะที่ว่างเพื่อปิดเมนู
+        isNarrow && navOpen && React.createElement("div", { onClick: () => setNavOpen(false),
+            style: { position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 110 } }),
+        React.createElement("aside", { style: { width: isNarrow ? 216 : 178, background: C.sur, borderRight: `1px solid ${C.brd}`, display: "flex", flexDirection: "column", flexShrink: 0, overflowY: "auto",
+                ...(isNarrow ? { position: "fixed", top: 0, bottom: 0, left: 0, zIndex: 120,
+                    transform: navOpen ? "translateX(0)" : "translateX(-102%)", transition: "transform .22s ease",
+                    boxShadow: navOpen ? "0 0 26px rgba(0,0,0,.35)" : "none" } : {}) } },
             React.createElement("div", { style: { padding: "12px 11px 10px", borderBottom: `1px solid ${C.brd}` } },
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 9 } },
                     React.createElement("div", { style: { width: 26, height: 26, background: "linear-gradient(135deg,#b87333,#0969da)", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 } }, "\u2699\uFE0F"),
@@ -2261,7 +2301,7 @@ function StoreFlow() {
                         React.createElement("div", { style: { fontSize: 10, color: C.tx2 } }, "\u0E23\u0E30\u0E1A\u0E1A\u0E40\u0E1A\u0E34\u0E01-\u0E08\u0E48\u0E32\u0E22\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A")))),
             React.createElement("nav", { style: { flex: 1, padding: "6px 0" } }, navGroups.map(g => (React.createElement("div", { key: g.lbl },
                 React.createElement("div", { style: { fontSize: 9, fontWeight: 700, color: C.tx3, padding: "5px 10px", letterSpacing: 1, textTransform: "uppercase" } }, g.lbl),
-                g.items.map(n => (React.createElement("div", { key: n.id, onClick: () => setPage(n.id), style: { display: "flex", alignItems: "center", gap: 7, padding: "7px 10px", cursor: "pointer", borderLeft: `3px solid ${page === n.id ? C.acc : "transparent"}`, background: page === n.id ? "rgba(9,105,218,.1)" : "transparent", color: page === n.id ? C.acc : C.tx2, fontSize: 12, fontWeight: 500, transition: "all .15s" } },
+                g.items.map(n => (React.createElement("div", { key: n.id, className: "navitem", onClick: () => { setPage(n.id); setNavOpen(false); }, style: { display: "flex", alignItems: "center", gap: 7, padding: "7px 10px", cursor: "pointer", borderLeft: `3px solid ${page === n.id ? C.acc : "transparent"}`, background: page === n.id ? "rgba(9,105,218,.1)" : "transparent", color: page === n.id ? C.acc : C.tx2, fontSize: 12, fontWeight: 500, transition: "all .15s" } },
                     React.createElement("span", { style: { fontSize: 13, width: 16, textAlign: "center" } }, n.icon),
                     React.createElement("span", { style: { flex: 1 } }, n.lbl),
                     n.badge > 0 && React.createElement("span", { style: { background: C.err, color: "#fff", fontSize: 9, padding: "1px 5px", borderRadius: 10, fontWeight: 700 } }, n.badge)))))))),
@@ -2275,12 +2315,15 @@ function StoreFlow() {
                     ? React.createElement("button", { onClick: () => { setCurrentUser(null); setPinInput(""); setPinError(""); }, style: { width: "100%", padding: "5px 0", border: `1px solid ${C.brd}`, background: "rgba(248,81,73,.12)", color: "#cf222e", borderRadius: 5, fontSize: 10, cursor: "pointer", fontFamily: "inherit", marginTop: 4 } }, "\uD83D\uDEAA \u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E23\u0E30\u0E1A\u0E1A")
                     : React.createElement("button", { onClick: () => setPinModal({ mode: "login", title: "เข้าสู่ระบบ", onSuccess: (u) => { setCurrentUser(u); setPinModal(null); } }), style: { width: "100%", padding: "5px 0", border: `1px solid ${C.acc}`, background: "rgba(9,105,218,.1)", color: C.acc, borderRadius: 5, fontSize: 10, cursor: "pointer", fontFamily: "inherit", marginTop: 4 } }, "\uD83D\uDD10 \u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A"))),
         React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" } },
-            React.createElement("div", { style: { padding: "10px 20px", borderBottom: `1px solid ${C.brd}`, background: C.sur, display: "flex", alignItems: "center", gap: 12, flexShrink: 0 } },
-                React.createElement("span", { style: { fontSize: 14, fontWeight: 700, flex: 1 } }, (_a = navGroups.flatMap(g => g.items).find(n => n.id === page)) === null || _a === void 0 ? void 0 :
+            React.createElement("div", { className: "apphdr", style: { padding: "10px 20px", borderBottom: `1px solid ${C.brd}`, background: C.sur, display: "flex", alignItems: "center", gap: 12, flexShrink: 0 } },
+                // ปุ่มเปิด-ปิดเมนู (เห็นเฉพาะจอแคบ)
+                isNarrow && React.createElement("button", { onClick: () => setNavOpen(o => !o), title: "เมนู",
+                    style: { background: navOpen ? "rgba(9,105,218,.14)" : C.sur2, border: `1px solid ${C.brd}`, borderRadius: 8, color: C.tx, cursor: "pointer", fontSize: 17, lineHeight: 1, padding: "5px 11px", fontFamily: "inherit", flexShrink: 0 } }, navOpen ? "✕" : "☰"),
+                React.createElement("span", { style: { fontSize: isNarrow ? 13 : 14, fontWeight: 700, flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, (_a = navGroups.flatMap(g => g.items).find(n => n.id === page)) === null || _a === void 0 ? void 0 :
                     _a.icon,
                     " ", (_b = navGroups.flatMap(g => g.items).find(n => n.id === page)) === null || _b === void 0 ? void 0 :
                     _b.lbl),
-                React.createElement("div", { style: { fontSize: 10, color: "#1a7f37", padding: "3px 10px", background: "rgba(63,185,80,.1)", border: "1px solid rgba(63,185,80,.25)", borderRadius: 6 } }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34"),
+                !isNarrow && React.createElement("div", { style: { fontSize: 10, color: "#1a7f37", padding: "3px 10px", background: "rgba(63,185,80,.1)", border: "1px solid rgba(63,185,80,.25)", borderRadius: 6 } }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34"),
                 // \u0E04\u0E39\u0E48\u0E21\u0E37\u0E2D\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E41\u0E1A\u0E1A\u0E2A\u0E44\u0E25\u0E14\u0E4C (howto.html \u0E27\u0E32\u0E07\u0E44\u0E27\u0E49\u0E17\u0E35\u0E48\u0E40\u0E14\u0E35\u0E22\u0E27\u0E01\u0E31\u0E1A\u0E23\u0E30\u0E1A\u0E1A) \u2014 \u0E17\u0E38\u0E01\u0E04\u0E19\u0E40\u0E1B\u0E34\u0E14\u0E44\u0E14\u0E49\u0E42\u0E14\u0E22\u0E44\u0E21\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E40\u0E01\u0E47\u0E1A\u0E25\u0E34\u0E07\u0E01\u0E4C\u0E40\u0E2D\u0E07
                 React.createElement("a", { href: "howto.html", target: "_blank", rel: "noopener",
                     title: "\u0E27\u0E34\u0E18\u0E35\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E17\u0E35\u0E25\u0E30\u0E02\u0E31\u0E49\u0E19 \u0E41\u0E22\u0E01\u0E1D\u0E48\u0E32\u0E22\u0E1C\u0E25\u0E34\u0E15 / \u0E2B\u0E31\u0E27\u0E2B\u0E19\u0E49\u0E32\u0E07\u0E32\u0E19",
@@ -2330,7 +2373,7 @@ function StoreFlow() {
                         if (!currentUser) { setPinModal({ mode: "login", title: "\u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A\u0E01\u0E48\u0E2D\u0E19\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01", onSuccess: (u) => { setCurrentUser(u); setPinModal(null); openReqForm(u); } }); return; }
                         openReqForm(currentUser);
                     } }, "\u2795 \u0E2A\u0E23\u0E49\u0E32\u0E07\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01")),
-            React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: "16px 12px" } },
+            React.createElement("div", { className: "pgwrap", style: { flex: 1, overflowY: "auto", overflowX: "hidden", padding: "16px 12px" } },
                 page === "quickcheck" && React.createElement(QuickCheckPage, { materials: materials, lots: lots, toast: toast }),
                 page === "dashboard" && React.createElement(DashPage, { requests: requests, materials: materials, lots: lots, role: role, master: master, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, goto: setPage, issueHist: issueHist, recvHist: recvHist, priceMap: priceMap, onSavePrice: canEditStock ? savePrice : null, lotPriceMap: lotPriceMap, only: "main" }),
                 page === "deadstock" && React.createElement(DashPage, { requests: requests, materials: materials, lots: lots, role: role, master: master, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, goto: setPage, issueHist: issueHist, recvHist: recvHist, priceMap: priceMap, onSavePrice: canEditStock ? savePrice : null, lotPriceMap: lotPriceMap, only: "aged" }),
@@ -3549,7 +3592,7 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
     };
     // สถานะที่แสดงจริง: ใบที่ถูกแทนที่ด้วยฉบับแก้ไข จะถือเป็น "revised" แม้ใน DB จะยังเป็น pending/approved
     const effStatus = r => isSupersededReq(r, requests) ? "revised" : r.status;
-    const counts = { all: requests.length, ...Object.fromEntries(["pending", "approved", "issued", "rejected", "revised"].map(s => [s, requests.filter(r => effStatus(r) === s).length])) };
+    const counts = { all: requests.length, ...Object.fromEntries(["pending", "approved", "issued", "rejected", "revised", "cancelled"].map(s => [s, requests.filter(r => effStatus(r) === s).length])) };
     const [q, setQ] = useState("");
     const [month, setMonth] = useState("");
     const [dept, setDept] = useState("");
@@ -3587,7 +3630,8 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
         approved: { lbl: "รอจ่าย", c: "#ca8a04", bg: "#fde047", bd: "#eab308", tc: "#713f12" },
         issued: { lbl: "จ่ายแล้ว", c: C.ok },
         rejected: { lbl: "ไม่อนุมัติ", c: C.err },
-        revised: { lbl: "แก้ไขแล้ว", c: C.tx3 }
+        revised: { lbl: "แก้ไขแล้ว", c: C.tx3 },
+        cancelled: { lbl: "ยกเลิก", c: C.tx3 }
     };
     // ── Export ใบเบิกเป็น Excel ──
     // 2 ชีต: "รายการเบิก-จ่าย" = 1 แถวต่อ 1 วัตถุดิบ (ใช้สรุป/pivot ได้)
@@ -3609,6 +3653,8 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
                 + "<td><div class='b'>" + esc(sz || nm) + "</div>" + (sz ? "<div class='s'>" + esc(nm) + "</div>" : "") + (tp ? "<div class='s'>Temper: " + esc(tp) + "</div>" : "") + "</td>"
                 + "<td>" + esc(it.maker || "-") + "</td>"
                 + "<td><div class='b'>" + esc(it.model || "-") + "</div>" + (it.customer ? "<div class='s'>" + esc(it.customer) + "</div>" : "") + "</td>"
+                // W/O และ Forecast ของรายการนี้ (ถ้าไม่ได้ระบุ ใช้ของหัวใบ) — ฝ่ายผลิตขอให้เห็นทีละรายการ
+                + "<td><div class='b'>" + esc(it.jo || r.jo || "-") + "</div><div class='s'>" + esc(it.forecast || r.forecast || "-") + "</div></td>"
                 + "<td class='r'><div class='b'>" + esc(qty.trim() || "-") + "</div>" + (sub ? "<div class='s'>" + esc(sub) + "</div>" : "") + "</td>"
                 + "<td>" + esc(it.lotNo || "-") + "</td>"
                 + "</tr>";
@@ -3645,8 +3691,8 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
             + "<div class='gr'>" + info("วันที่ขอเบิก", fmtDate(r.date)) + info("แผนก", r.dept) + info("ผู้เบิก", r.requester)
             + info("W/O No.", r.jo) + info("Forecast/PO", r.forecast) + info("ลูกค้า", r.customer) + "</div>"
             + "<table><thead><tr><th style='width:26px'>#</th><th>วัตถุดิบ / SIZE</th><th style='width:110px'>MAKER</th>"
-            + "<th style='width:130px'>PART NO. / ลูกค้า</th><th style='width:92px' class='r'>จำนวน</th><th style='width:96px'>LOT NO.</th></tr></thead>"
-            + "<tbody>" + (rows || "<tr><td colspan='6' class='c'>- ไม่มีรายการ -</td></tr>") + "</tbody></table>"
+            + "<th style='width:118px'>PART NO. / ลูกค้า</th><th style='width:104px'>W/O No. / FORECAST</th><th style='width:88px' class='r'>จำนวน</th><th style='width:92px'>LOT NO.</th></tr></thead>"
+            + "<tbody>" + (rows || "<tr><td colspan='7' class='c'>- ไม่มีรายการ -</td></tr>") + "</tbody></table>"
             + "<div class='nt'><b>หมายเหตุ:</b> " + esc(r.note || "-") + "</div>"
             + "<div class='sgs'>" + sign("ผู้ขอเบิก", r.requester, (r.date || "").slice(0, 10))
             + sign("ผู้อนุมัติ", r.approvedBy, (r.approvedAt || "").slice(0, 10))
@@ -3676,8 +3722,8 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
             const its = (r.items || []);
             if (!its.length) return;
             its.forEach(it => {
-                detRows.push([r.id || "", r.date || "", stLbl(r), r.dept || "", r.requester || "", r.jo || "",
-                    r.forecast || "", it.customer || r.customer || "",
+                detRows.push([r.id || "", r.date || "", stLbl(r), r.dept || "", r.requester || "", it.jo || r.jo || "",
+                    it.forecast || r.forecast || "", it.customer || r.customer || "",
                     it.model || "", (it.name || "").replace(/size:/i, ""), itemTemper(it) || "-", it.maker || "",
                     it.lotNo || "", it.qty != null ? it.qty : "", it.unit || "",
                     it.kgs != null ? it.kgs : "", it.coil != null ? it.coil : "", it.m != null ? it.m : "",
@@ -3706,7 +3752,7 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
 
     return React.createElement("div", null,
         React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" } },
-            [["all", "ทั้งหมด"], ["pending", "⏳ รออนุมัติ"], ["approved", "✅ อนุมัติแล้ว"], ["issued", "📤 จ่ายแล้ว"], ["rejected", "❌ ไม่อนุมัติ"], ["revised", "🔁 แก้ไขแล้ว"]].map(([f, l]) => (React.createElement("button", { key: f, onClick: () => setFilter(f), style: { padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", border: `1px solid ${filter === f ? C.acc : C.brd}`, background: filter === f ? C.acc : "transparent", color: filter === f ? "#fff" : C.tx2, fontFamily: "inherit" } },
+            [["all", "ทั้งหมด"], ["pending", "⏳ รออนุมัติ"], ["approved", "✅ อนุมัติแล้ว"], ["issued", "📤 จ่ายแล้ว"], ["rejected", "❌ ไม่อนุมัติ"], ["revised", "🔁 แก้ไขแล้ว"], ["cancelled", "🚫 ยกเลิก"]].map(([f, l]) => (React.createElement("button", { key: f, onClick: () => setFilter(f), style: { padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", border: `1px solid ${filter === f ? C.acc : C.brd}`, background: filter === f ? C.acc : "transparent", color: filter === f ? "#fff" : C.tx2, fontFamily: "inherit" } },
                 l,
                 " (",
                 counts[f] || 0,
@@ -3747,24 +3793,25 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
             // และตัดช่องที่ไม่มีข้อมูลออก ไม่ให้เหลือ "-" เกะกะเต็มหัวใบ
             const hd = [["วันที่", r.date || ""], ["แผนก", r.dept || ""], ["ผู้เบิก", r.requester || ""],
                 ["W/O No.", r.jo || ""], ["Forecast/PO", r.forecast || ""], ["ลูกค้า", r.customer || ""]].filter(x => x[1]);
-            const field = (lb, val, fi) => React.createElement("div", { key: lb, style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0, padding: "1px 14px", borderLeft: fi === 0 ? "none" : "1px solid #6e7781", flex: "0 1 auto" } },
+            const field = (lb, val, fi) => React.createElement("div", { key: lb, className: "rqfield", style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0, padding: "1px 14px", borderLeft: fi === 0 ? "none" : "1px solid #6e7781", flex: "0 1 auto" } },
                 React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: C.tx3, letterSpacing: 0.5, textTransform: "uppercase" } }, lb),
                 React.createElement("span", { style: { fontSize: 13, fontWeight: 400, color: "#111418", whiteSpace: "normal", wordBreak: "break-word" } }, val));
             return React.createElement("div", { key: r.id, style: { background: C.sur, border: "1px solid #1b1f24", borderRadius: 8, marginBottom: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(27,31,36,.10)" } },
-                React.createElement("div", { onClick: () => toggleOpen(r.id), style: { cursor: "pointer", padding: "13px 18px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", borderBottom: "1px solid #1b1f24", background: "linear-gradient(180deg, rgba(9,105,218,.035), transparent)" } },
+                React.createElement("div", { className: "rqcard", onClick: () => toggleOpen(r.id), style: { cursor: "pointer", padding: "13px 18px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", borderBottom: "1px solid #1b1f24", background: "linear-gradient(180deg, rgba(9,105,218,.035), transparent)" } },
                     React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
                         React.createElement("span", { style: { fontSize: 11, color: C.tx2, width: 12, display: "inline-block" } }, isOpen(r.id) ? "▼" : "▶"),
                         React.createElement("span", { style: { fontFamily: "monospace", fontSize: 19, fontWeight: 800, color: C.acc2, letterSpacing: 0.3 } }, r.id),
                         React.createElement("span", { style: { fontSize: 11, color: C.tx3, fontWeight: 700 } }, "· " + (r.items || []).length + " รายการ"),
                         r.revisedFrom && React.createElement("span", { style: { fontSize: 11, color: C.tx3 } }, "← แก้ไขจาก " + r.revisedFrom)),
-                    React.createElement("div", { style: { display: "flex", gap: 0, flexWrap: "wrap", flex: 1, minWidth: 0, rowGap: 6 } }, hd.map((x, fi) => field(x[0], x[1], fi))),
+                    React.createElement("div", { className: "rqhd", style: { display: "flex", gap: 0, flexWrap: "wrap", flex: 1, minWidth: 0, rowGap: 6 } }, hd.map((x, fi) => field(x[0], x[1], fi))),
                     React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 7, background: sm.bg || (sm.c + "14"), border: "1.5px solid " + (sm.bd || (sm.c + "55")), borderRadius: 20, padding: "5px 14px", flexShrink: 0 } },
                         React.createElement("span", { style: { width: 9, height: 9, borderRadius: "50%", background: sm.c, boxShadow: "0 0 0 3px " + sm.c + "30" } }),
                         React.createElement("span", { style: { fontSize: 13.5, fontWeight: 800, color: sm.tc || sm.c, whiteSpace: "nowrap" } }, sm.lbl)),
                     React.createElement("button", { onClick: e => { e.stopPropagation(); printReq(r); }, title: "พิมพ์ใบเบิกนี้", style: { background: C.sur2, border: "1px solid " + C.brd, borderRadius: 6, color: C.tx2, cursor: "pointer", padding: "5px 11px", fontSize: 12, fontWeight: 700, fontFamily: "inherit", flexShrink: 0 } }, "🖨️ พิมพ์")),
 
                 !isOpen(r.id) && React.createElement("div", { onClick: () => toggleOpen(r.id), style: { cursor: "pointer", padding: "8px 18px", fontSize: 12, color: C.tx2, background: C.bg, borderBottom: "1px solid #1b1f24", display: "flex", flexWrap: "wrap", gap: 6, alignItems: "baseline" } }, (r.items || []).map((it, ii) => { const si = (it.name || "").toLowerCase().indexOf("size:"); const sz = si >= 0 ? it.name.slice(si + 5).trim() : (it.name || ""); return React.createElement("span", { key: ii, style: { display: "inline-flex", gap: 6, alignItems: "baseline" } }, ii > 0 ? React.createElement("span", { style: { color: "#c4ccd4", marginRight: 4 } }, "|") : null, React.createElement("span", { style: { fontFamily: "monospace", fontSize: 13.5, fontWeight: 800, color: "#111418" } }, sz), React.createElement("span", { style: { color: C.tx2 } }, "· " + (it.maker || "-")), React.createElement("span", { style: { fontWeight: 700, color: C.tx } }, "· " + (it.qty != null ? fmtQty(it.qty) : "") + " " + (it.unit || ""))); })),
-                isOpen(r.id) && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 13 } },
+                isOpen(r.id) && React.createElement("div", { className: "tblwrap", style: { width: "100%", overflowX: "auto" } },
+                React.createElement("table", { style: { width: "100%", minWidth: 540, borderCollapse: "collapse", fontSize: 13 } },
                     React.createElement("thead", null,
                         React.createElement("tr", { style: { background: "#eef3f8" } },
                             [["MATERIAL / SIZE", "left", "8px 14px"], ["MAKER", "left", "8px 10px"], ["PART NO. / CUSTOMER", "left", "8px 10px"], ["Q'TY", "right", "8px 14px"], ["NEXT LOT (FIFO)", "left", "8px 14px"]].map((h, hi) =>
@@ -3785,13 +3832,16 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
                                 React.createElement(Tag, { color: mkc.text, bg: mkc.bg, brd: mkc.border }, it.maker || "-")),
                             React.createElement("td", { style: { padding: 10, borderBottom: bb, borderRight: br } },
                                 React.createElement("div", { style: { fontFamily: "monospace", fontSize: 14.5, fontWeight: 700, color: C.acc2 } }, it.model || "-"),
-                                it.customer ? React.createElement("div", { style: { fontSize: 11.5, color: C.acc3, fontWeight: 600 } }, it.customer) : null),
+                                it.customer ? React.createElement("div", { style: { fontSize: 11.5, color: C.acc3, fontWeight: 600 } }, it.customer) : null,
+                                // W/O / Forecast เฉพาะรายการนี้ (แสดงเมื่อไม่เหมือนหัวใบ)
+                                (it.jo || it.forecast) ? React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: "#9a6700", marginTop: 3 } },
+                                    [it.jo ? "W/O " + it.jo : null, it.forecast || null].filter(Boolean).join(" · ")) : null),
                             React.createElement("td", { style: { padding: "10px 14px", borderBottom: bb, borderRight: br, textAlign: "right", whiteSpace: "nowrap" } },
                                 React.createElement("span", { style: { fontFamily: "monospace", fontSize: 19, fontWeight: 800, color: C.acc2 } }, fmtQty(it.qty) || "-"),
                                 React.createElement("span", { style: { fontSize: 13.5, fontWeight: 700, color: C.acc2 } }, " " + (it.unit || "")),
                                 it.kgs ? React.createElement("div", { style: { fontSize: 11, color: C.tx2 } }, "≈ " + fmtQty(it.kgs, 2) + " KGS") : null),
                             React.createElement("td", { style: { padding: "10px 14px", borderBottom: bb, fontFamily: "monospace", fontSize: 14, fontWeight: 700, color: C.acc2 } }, it.lotNo || "-"));
-                    }))),
+                    })))),
                 isOpen(r.id) && r.note && React.createElement("div", { style: { padding: "8px 18px", fontSize: 12, color: C.tx2, borderTop: "1px solid " + C.brd2 } }, "หมายเหตุ: " + r.note),
                 React.createElement("div", { style: { background: C.bg, borderTop: "1px solid #1b1f24", padding: "10px 18px", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 } },
                     (() => {
@@ -4184,6 +4234,15 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                 React.createElement(FGrid, { cols: 2 },
                     React.createElement(FG, { label: "KGS (\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34)" },
                         React.createElement("div", { style: { ...roBoxStyle, color: it.kgs ? C.acc : C.tx3 } }, it.kgs || "คำนวณอัตโนมัติ"))),
+                // W/O และ Forecast ของ "รายการนี้" — เบิกหลายรายการในใบเดียวแต่คนละ W/O ได้
+                // ปล่อยว่าง = ใช้เลขเดียวกับหัวใบ (ไม่ต้องพิมพ์ซ้ำถ้าเหมือนกัน)
+                React.createElement(FGrid, { cols: 2 },
+                    React.createElement(FG, { label: "W/O No. (เฉพาะรายการนี้)", note: "ว่าง = ใช้ของหัวใบ" },
+                        React.createElement(Inp, { value: it.jo || "", onChange: v => updateItem(idx, "jo", v),
+                            placeholder: form.jo ? "ใช้ของหัวใบ: " + form.jo : "WO-2026-001" })),
+                    React.createElement(FG, { label: "Forecast / PO (เฉพาะรายการนี้)", note: "ว่าง = ใช้ของหัวใบ" },
+                        React.createElement(Sel, { value: it.forecast || "", onChange: v => updateItem(idx, "forecast", v), options: fcopts,
+                            placeholder: form.forecast ? "ใช้ของหัวใบ: " + form.forecast : "-- เดือน --" }))),
                 (() => {
                     // เตือนสต๊อกตั้งแต่ตอนกรอกใบเบิก — กันส่งใบที่ของไม่พอไปให้หัวหน้าอนุมัติแล้วไปตันตอนจ่าย
                     if (!it.matId) return null;
@@ -4385,6 +4444,9 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
                     "\uD83D\uDD16 ",
                     it.model,
                     it.customer && ` → 🏢 ${it.customer}`),
+                // W/O / Forecast เฉพาะรายการนี้ — ให้สโตร์เห็นตอนจ่ายของว่าบรรทัดนี้ของ W/O ไหน
+                (it.jo || it.forecast) && React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "#9a6700", marginBottom: 4, marginLeft: 8, padding: "3px 10px", background: "rgba(210,153,34,.12)", border: "1px solid rgba(210,153,34,.4)", borderRadius: 6, display: "inline-block" } },
+                    [it.jo ? "📄 W/O " + it.jo : null, it.forecast ? "📅 " + it.forecast : null].filter(Boolean).join("  ·  ")),
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10, marginTop: 6, padding: "9px 13px", borderRadius: 8,
                         background: isComplete ? "rgba(63,185,80,.10)" : isOver ? "rgba(248,81,73,.10)" : "rgba(210,153,34,.10)",
                         border: "1px solid " + (isComplete ? "rgba(63,185,80,.45)" : isOver ? "rgba(248,81,73,.45)" : "rgba(210,153,34,.45)") } },
