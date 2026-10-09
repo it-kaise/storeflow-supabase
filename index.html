@@ -2377,7 +2377,7 @@ function StoreFlow() {
                 page === "quickcheck" && React.createElement(QuickCheckPage, { materials: materials, lots: lots, toast: toast }),
                 page === "dashboard" && React.createElement(DashPage, { requests: requests, materials: materials, lots: lots, role: role, master: master, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, goto: setPage, issueHist: issueHist, recvHist: recvHist, priceMap: priceMap, onSavePrice: canEditStock ? savePrice : null, lotPriceMap: lotPriceMap, only: "main" }),
                 page === "deadstock" && React.createElement(DashPage, { requests: requests, materials: materials, lots: lots, role: role, master: master, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, goto: setPage, issueHist: issueHist, recvHist: recvHist, priceMap: priceMap, onSavePrice: canEditStock ? savePrice : null, lotPriceMap: lotPriceMap, only: "aged" }),
-                page === "request" && React.createElement(ReqPage, { requests: requests, materials: materials, filter: reqFilter, setFilter: setReqFilter, role: role, me: (currentUser && currentUser.name) || "", setHistoryModal: setHistoryModal, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, onNew: () => {
+                page === "request" && React.createElement(ReqPage, { requests: requests, materials: materials, issueHist: issueHist, filter: reqFilter, setFilter: setReqFilter, role: role, me: (currentUser && currentUser.name) || "", setHistoryModal: setHistoryModal, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, onNew: () => {
                         // ต้องล็อกอินก่อนเขียนใบเบิก แล้วเติมชื่อผู้เบิกจากคนที่ล็อกอินให้เลย
                         // (เดิมใครเปิดลิงก์ก็ส่งใบได้ และพิมพ์ชื่อใครก็ได้ ตามกลับไม่ได้ว่าใครส่งจริง)
                         const openReqForm = (u) => { setRqForm({ ...emptyRq(), requester: (u && u.name) || "" }); setRqErrors({}); setModal("req"); };
@@ -3579,7 +3579,7 @@ function HistoryModal({ open, onClose, request }) {
     );
 }
 
-function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryModal, onAp, onIs, onNew, onEdit, onCancel }) {
+function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryModal, onAp, onIs, onNew, onEdit, onCancel, issueHist }) {
     // แก้ไข/ยกเลิกใบเบิกได้เฉพาะ "คนที่เขียนใบนั้นเอง" (หัวหน้าที่เบิกเองก็แก้ใบตัวเองได้)
     // admin แก้ได้ทุกใบไว้กู้สถานการณ์ เช่น คนเขียนลาหยุดแล้วใบติดค้าง
     const _norm = v => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
@@ -3641,13 +3641,38 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
         const esc = s => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
         const es2 = effStatus(r);
         const stTxt = (smap[es2] || {}).lbl || es2 || "";
+        // จ่ายจริงของใบนี้ (จากประวัติการจ่าย) — จับคู่ด้วยชื่อวัตถุดิบ เพื่อเอา lot + น้ำหนักจริงมาพิมพ์ลงใบ
+        // วัตถุดิบตัวเดียวกันอาจอยู่ในใบหลายบรรทัด (คนละ W/O) จึงต้องแบ่งแถวประวัติตามจำนวนของแต่ละบรรทัด
+        // ไม่งั้นทุกบรรทัดจะโชว์ lot ซ้ำกันหมดและน้ำหนักถูกนับซ้ำ
+        const issQ = {};
+        (issueHist || []).filter(h => h.reqId === r.id).forEach(h => { (issQ[h.name] = issQ[h.name] || []).push(h); });
+        const dupName = {};
+        (r.items || []).forEach(x => { dupName[x.name] = (dupName[x.name] || 0) + 1; });
+        const issuedOf = (it) => {
+            const q = issQ[it.name];
+            if (!q || !q.length) return [];
+            if (dupName[it.name] <= 1) { const all = q.slice(); issQ[it.name] = []; return all; }
+            const u = (it.unit || "PCS").toUpperCase();
+            const fld = u === "KGS" ? "kgs" : u.indexOf("COIL") === 0 ? "coil" : u === "M" ? "m" : "pcs";
+            const want = parseFloat(it.qty) || 0;
+            const out = []; let got = 0;
+            while (q.length && got < want - 0.001) { const h = q.shift(); out.push(h); got += parseFloat(h[fld]) || 0; }
+            return out;
+        };
         const rows = (r.items || []).map((it, i) => {
             const szIdx = (it.name || "").toLowerCase().indexOf("size:");
             const nm = szIdx >= 0 ? it.name.slice(0, szIdx).trim() : (it.name || "");
             const sz = szIdx >= 0 ? it.name.slice(szIdx + 5).trim() : "";
             const tp = itemTemper(it);
             const qty = (it.qty != null ? fmtQty(it.qty) : "") + " " + (it.unit || "");
-            const sub = [it.kgs ? "≈ " + fmtQty(it.kgs, 2) + " KGS" : "", it.m ? fmtQty(it.m, 1) + " M" : ""].filter(Boolean).join(" · ");
+            const iss = issuedOf(it);
+            const sumF = f => iss.reduce((s, h) => s + (parseFloat(h[f]) || 0), 0);
+            const issKg = sumF("kgs"), issPcs = sumF("pcs"), issCoil = sumF("coil"), issM = sumF("m");
+            // บรรทัดรองในช่องจำนวน: ก่อนจ่าย = น้ำหนักประมาณการ · จ่ายแล้ว = น้ำหนักจ่ายจริง
+            const sub = iss.length
+                ? ("จ่ายจริง " + [issPcs ? fmtQty(issPcs) + " PCS" : "", issCoil ? fmtQty(issCoil) + " COIL" : "",
+                    issM ? fmtQty(issM, 1) + " M" : "", issKg ? fmtQty(issKg, 2) + " KGS" : ""].filter(Boolean).join(" · "))
+                : [it.kgs ? "≈ " + fmtQty(it.kgs, 2) + " KGS" : "", it.m ? fmtQty(it.m, 1) + " M" : ""].filter(Boolean).join(" · ");
             return "<tr>"
                 + "<td class='c'>" + (i + 1) + "</td>"
                 + "<td><div class='b'>" + esc(sz || nm) + "</div>" + (sz ? "<div class='s'>" + esc(nm) + "</div>" : "") + (tp ? "<div class='s'>Temper: " + esc(tp) + "</div>" : "") + "</td>"
@@ -3656,7 +3681,12 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
                 // W/O และ Forecast ของรายการนี้ (ถ้าไม่ได้ระบุ ใช้ของหัวใบ) — ฝ่ายผลิตขอให้เห็นทีละรายการ
                 + "<td><div class='b'>" + esc(it.jo || r.jo || "-") + "</div><div class='s'>" + esc(it.forecast || r.forecast || "-") + "</div></td>"
                 + "<td class='r'><div class='b'>" + esc(qty.trim() || "-") + "</div>" + (sub ? "<div class='s'>" + esc(sub) + "</div>" : "") + "</td>"
-                + "<td>" + esc(it.lotNo || "-") + "</td>"
+                // ช่อง LOT: ถ้าจ่ายแล้ว แสดง lot ที่จ่ายจริงทุกตัว พร้อมจำนวน/น้ำหนักของแต่ละ lot
+                + "<td>" + (iss.length
+                    ? iss.map(h => "<div class='b'>" + esc(h.lotNo || "-") + "</div><div class='s'>"
+                        + esc([h.pcs ? fmtQty(h.pcs) + " PCS" : "", h.coil ? fmtQty(h.coil) + " COIL" : "",
+                            h.m ? fmtQty(h.m, 1) + " M" : "", h.kgs ? fmtQty(h.kgs, 2) + " KGS" : ""].filter(Boolean).join(" · ")) + "</div>").join("")
+                    : esc(it.lotNo || "-")) + "</td>"
                 + "</tr>";
         }).join("");
         const info = (lb, v) => "<div class='f'><span class='fl'>" + esc(lb) + "</span><span class='fv'>" + esc(v || "-") + "</span></div>";
@@ -3691,7 +3721,7 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
             + "<div class='gr'>" + info("วันที่ขอเบิก", fmtDate(r.date)) + info("แผนก", r.dept) + info("ผู้เบิก", r.requester)
             + info("W/O No.", r.jo) + info("Forecast/PO", r.forecast) + info("ลูกค้า", r.customer) + "</div>"
             + "<table><thead><tr><th style='width:26px'>#</th><th>วัตถุดิบ / SIZE</th><th style='width:110px'>MAKER</th>"
-            + "<th style='width:118px'>PART NO. / ลูกค้า</th><th style='width:104px'>W/O No. / FORECAST</th><th style='width:88px' class='r'>จำนวน</th><th style='width:92px'>LOT NO.</th></tr></thead>"
+            + "<th style='width:106px'>PART NO. / ลูกค้า</th><th style='width:96px'>W/O No. / FORECAST</th><th style='width:92px' class='r'>จำนวน</th><th style='width:118px'>LOT NO. / จ่ายจริง</th></tr></thead>"
             + "<tbody>" + (rows || "<tr><td colspan='7' class='c'>- ไม่มีรายการ -</td></tr>") + "</tbody></table>"
             + "<div class='nt'><b>หมายเหตุ:</b> " + esc(r.note || "-") + "</div>"
             + "<div class='sgs'>" + sign("ผู้ขอเบิก", r.requester, (r.date || "").slice(0, 10))
