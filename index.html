@@ -1865,18 +1865,24 @@ function StoreFlow() {
         // ทำให้ "เบิกแล้วสต๊อกไม่ลด" ทั้งที่ยังมีของอยู่ในแถวที่ชื่อเดียวกัน
         // เทียบแบบไม่สนขีด/เว้นวรรค — Lot เดียวกันที่พิมพ์คนละสไตล์ต้องตัดสต๊อกได้
         const idxOfLot = no => ml.map((l, i) => (normLot(l.lotNo) === normLot(no) ? i : -1)).filter(i => i >= 0);
+        // จำนวนที่สโตร์สั่งตัดของแต่ละ Lot — ต้องเป็น "โควตารวมของเลข Lot นั้น"
+        // ถ้า Lot เดียวกันรับมาหลายครั้ง (หลายแถว) ให้ไล่ตัดจากแถวเก่าไปใหม่จนครบโควตา แล้วหยุด
+        // (เดิมใส่จำนวนเต็มให้ทุกแถวของ Lot เดียวกัน ทำให้ตัดเกินโควตาและกิน Lot อื่นที่สโตร์เลือกไว้)
+        const chosenBudget = {};
+        chosenLots.forEach(cl => { const k = normLot(cl.lotNo); chosenBudget[k] = (chosenBudget[k] || 0) + (parseFloat(cl.qty) || 0); });
         const processOrder = chosenLots.length > 0
-            ? chosenLots.flatMap(cl => idxOfLot(cl.lotNo).map(lotIdx => ({ lotIdx: lotIdx, fixedQty: cl.qty })))
-            : sortedByDate.flatMap(l => idxOfLot(l.lotNo).map(lotIdx => ({ lotIdx: lotIdx, fixedQty: null })))
+            ? chosenLots.flatMap(cl => idxOfLot(cl.lotNo).map(lotIdx => ({ lotIdx: lotIdx, grp: normLot(cl.lotNo) })))
+            : sortedByDate.flatMap(l => idxOfLot(l.lotNo).map(lotIdx => ({ lotIdx: lotIdx, grp: null })))
         const _seenIdx = new Set();
         // กันแถวเดิมถูกไล่ซ้ำ (เพราะ Lot ซ้ำ 2 แถวจะให้ index ชุดเดียวกันทั้งคู่)
         const processOrderU = processOrder.filter(x => { if (_seenIdx.has(x.lotIdx)) return false; _seenIdx.add(x.lotIdx); return true; });
 
         const changedIdx = new Set();
         const cuts = []; // บันทึก "การตัดจริง" ต่อ lot เพื่อให้ประวัติ (lot_no + จำนวน) ตรงกับสต๊อกที่ตัดออกจริง
-        for (const { lotIdx: i, fixedQty } of processOrderU) {
+        for (const { lotIdx: i, grp } of processOrderU) {
             if (rem <= 0) break;
-            const takeAmt = fixedQty != null ? Math.min(fixedQty, rem) : rem;
+            const takeAmt = grp ? Math.min(chosenBudget[grp] || 0, rem) : rem;
+            if (takeAmt <= 0) continue;   // โควตาของ Lot นี้ถูกตัดครบแล้ว
             const lotNo = ml[i].lotNo;
 
             if (unit === "M" || (ml[i].rem_m != null && ml[i].rem_pcs == null && ml[i].rem_kgs == null && ml[i].rem_coil == null)) {
@@ -1890,6 +1896,7 @@ function StoreFlow() {
                     ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - cutCoil) };
                 cuts.push({ lotNo, coil: cutCoil != null ? Math.round(cutCoil * 100) / 100 : null, kgs: null, pcs: null, m: take });
                 rem -= take;
+                if (grp) chosenBudget[grp] -= take;   // ตัดโควตาของ Lot นี้ลงด้วย
             } else if (unit === "COIL" || unit === "COIL+KGS" || (ml[i].rem_coil != null && ml[i].rem_pcs == null && ml[i].rem_kgs == null)) {
                 const take = Math.min(takeAmt, ml[i].rem_coil || 0);
                 if (take <= 0) continue;
@@ -1908,6 +1915,7 @@ function StoreFlow() {
                 ml[i] = cutM != null ? { ...ml[i], rem_m: Math.max(0, (ml[i].rem_m || 0) - cutM) } : ml[i];
                 cuts.push({ lotNo, coil: take, kgs: cutKgs, pcs: null, m: cutM != null ? Math.round(cutM * 100) / 100 : null });
                 rem -= take;
+                if (grp) chosenBudget[grp] -= take;   // ตัดโควตาของ Lot นี้ลงด้วย
             } else if (unit === "KGS" && ml[i].rem_kgs != null) {
                 // เบิกเป็น KGS → ต้องตัดจาก rem_kgs เสมอ
                 // (เดิมมีเงื่อนไข rem_pcs == null ทำให้ lot ที่มีทั้ง KGS+PCS (unit BOTH) ตกไปตัด PCS แทน = ตัดผิดช่อง)
@@ -1921,6 +1929,7 @@ function StoreFlow() {
                     ml[i] = { ...ml[i], rem_pcs: Math.max(0, (ml[i].rem_pcs || 0) - cutPcs) };
                 cuts.push({ lotNo, coil: null, kgs: take, pcs: cutPcs != null ? Math.round(cutPcs * 100) / 100 : null, m: null });
                 rem -= take;
+                if (grp) chosenBudget[grp] -= take;   // ตัดโควตาของ Lot นี้ลงด้วย
             } else {
                 const take = Math.min(takeAmt, ml[i].rem_pcs || 0);
                 if (take <= 0) continue;
@@ -1934,6 +1943,7 @@ function StoreFlow() {
                     ml[i] = { ...ml[i], rem_kgs: Math.max(0, (ml[i].rem_kgs || 0) - cutKgs) };
                 cuts.push({ lotNo, coil: null, kgs: cutKgs != null ? Math.round(cutKgs * 1000) / 1000 : null, pcs: take, m: null });
                 rem -= take;
+                if (grp) chosenBudget[grp] -= take;   // ตัดโควตาของ Lot นี้ลงด้วย
             }
             changedIdx.add(i);
         }
@@ -2543,14 +2553,22 @@ function StoreFlow() {
                     // แต่เลือก Lot แค่บางรายการ ระบบก็ปิดใบเป็น "จ่ายแล้ว" ยอดบนใบกับที่จ่ายจริงเลยไม่ตรง
                     const _r = requests.find(x => x.id === pendingIsId);
                     const miss = [];
+                    const over = [];   // เลือกเกินกว่าที่ฝ่ายผลิตขอ — ห้ามจ่าย ต้องให้ตรวจสอบก่อน
                     (_r && _r.items || []).forEach((it, idx) => {
                         const u = it.unit || "PCS";
                         const sel = ((selectedLots || {})[`${idx}_${it.matId}`] || []).reduce((s, x) => s + (parseFloat(x.qty) || 0), 0);
                         const need = parseFloat(it.qty) || 0;
                         const have = (lots[it.matId] || []).reduce((s, l) => s + availOfLotU(l, u), 0);
                         const must = Math.min(need, have);   // ของไม่พอ = เลือกเท่าที่มีก็ถือว่าครบ
-                        if (sel + 0.001 < must) miss.push({ name: sizeTxt(it.name), u, sel, need, must });
+                        if (sel > need + 0.001) over.push({ name: sizeTxt(it.name), u, sel, need });
+                        else if (sel + 0.001 < must) miss.push({ name: sizeTxt(it.name), u, sel, need, must });
                     });
+                    if (over.length) return React.createElement(Btn, { v: "danger", onClick: () => window.alert(
+                        "⛔ จ่ายเกินจำนวนที่ขอเบิก — กรุณาตรวจสอบข้อมูลอีกครั้ง\n\n"
+                        + over.map(m => "  • " + m.name + "\n      ใบเบิกขอ " + fmtQty(m.need, 2) + " " + m.u
+                            + " · เลือกไว้ " + fmtQty(m.sel, 2) + " " + m.u + " · เกิน " + fmtQty(m.sel - m.need, 2)).join("\n")
+                        + "\n\nแก้จำนวนในช่อง \"ตัด:\" ของแต่ละ Lot ให้รวมไม่เกินที่ขอเบิก\nถ้าฝ่ายผลิตต้องการมากกว่านี้ ให้แก้ไขใบเบิกก่อน") },
+                        "⛔ จ่ายเกินที่ขอ (" + over.length + " รายการ)");
                     if (miss.length) return React.createElement(Btn, { v: "warn", onClick: () => window.alert(
                         "⚠️ ยังเลือก Lot ไม่ครบ จ่ายไม่ได้\n\n"
                         + miss.map(m => "  • " + m.name + "\n      ขอเบิก " + fmtQty(m.need, 2) + " " + m.u
@@ -4426,9 +4444,26 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
                 !full && React.createElement("span", { style: { fontSize: 11, color: C.tx3, marginLeft: "auto" } }, "\u0E15\u0E49\u0E2D\u0E07\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E43\u0E2B\u0E49\u0E04\u0E23\u0E1A\u0E01\u0E48\u0E2D\u0E19\u0E08\u0E36\u0E07\u0E08\u0E30\u0E01\u0E14\u0E08\u0E48\u0E32\u0E22\u0E44\u0E14\u0E49"));
         })(),
         req.items.map((it, i) => {
-            const avail = [...(lots[it.matId] || [])]
+            const _availRaw = [...(lots[it.matId] || [])]
                 .filter(l => (l.rem_kgs || 0) > 0 || (l.rem_pcs || 0) > 0 || (l.rem_coil || 0) > 0 || (l.rem_m || 0) > 0)
                 .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+            // Lot เลขเดียวกันที่รับคนละวัน = ของกองเดียวกัน → รวมเป็นบรรทัดเดียว กันสโตร์สับสน
+            // ใช้วันที่เก่าสุดเป็นตัวแทน (FIFO) ส่วนตอนตัดจ่ายระบบตัดไล่จากใบรับเก่าไปใหม่ให้เอง
+            const avail = (() => {
+                const map = new Map();
+                _availRaw.forEach(l => {
+                    const k = normLot(l.lotNo);
+                    const cur = map.get(k);
+                    if (!cur) { map.set(k, Object.assign({}, l, { _n: 1, _dates: [l.date] })); return; }
+                    ["rem_kgs", "rem_pcs", "rem_coil", "rem_m", "kgs", "pcs", "coil", "m"].forEach(f => {
+                        if (l[f] != null) cur[f] = (cur[f] || 0) + l[f];
+                    });
+                    cur._n++;
+                    if (cur._dates.indexOf(l.date) < 0) cur._dates.push(l.date);
+                    if ((l.date || "") && (!cur.date || l.date < cur.date)) cur.date = l.date;
+                });
+                return [...map.values()].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+            })();
             const selKey = `${i}_${it.matId}`;
             const selList = getSelLots(selKey);
             const totalSel = selList.reduce((s, x) => s + (x.qty || 0), 0);
@@ -4569,7 +4604,10 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
                                         React.createElement("span", { style: { fontFamily: "monospace", fontSize: 11, color: isSel ? C.acc : C.tx, fontWeight: isSel ? 700 : 400 } }, lot.lotNo),
                                         lot.po && React.createElement("span", { style: { fontSize: 9, color: C.tx3, marginLeft: 6 } },
                                             "PO:",
-                                            lot.po)),
+                                            lot.po),
+                                        // บอกว่าลอตนี้มาจากใบรับหลายใบ (รวมยอดให้แล้ว) จะได้ไม่สงสัยว่าทำไมมีบรรทัดเดียว
+                                        lot._n > 1 && React.createElement("span", { style: { fontSize: 9, color: "#9a6700", marginLeft: 6, fontWeight: 700 } },
+                                            "· รวมจาก " + lot._n + " ครั้งรับ (" + (lot._dates || []).join(", ") + ")")),
                                     React.createElement("div", { style: { fontSize: 10, color: C.tx2, textAlign: "right", minWidth: 60 } },
                                         lot.rem_coil != null && lot.rem_coil > 0 && React.createElement("div", null,
                                             "\u0E21\u0E35 ",
