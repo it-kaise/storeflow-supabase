@@ -214,6 +214,19 @@ function availOfLotU(l, u) {
     if (u === "KGS" && l.rem_kgs != null) return l.rem_kgs || 0;
     return l.rem_pcs || 0;
 }
+// ชื่อหมวดวัตถุดิบสำหรับแสดงผล — ถ้าชื่อหมวดมีรหัสอยู่ในชื่ออยู่แล้ว ไม่ต้องเติมวงเล็บรหัสซ้ำ
+// (เช่น SHINBA (Supply) ต้องไม่กลายเป็น "SHINBA (Supply) (SHINBA)")
+function matTypeLabel(t) {
+    const lb = String((t && t.label) || ""), cd = String((t && t.code) || "");
+    if (!cd) return lb;
+    return lb.toUpperCase().indexOf(cd.toUpperCase()) >= 0 ? lb : (lb + " (" + cd + ")");
+}
+// รูปแบบ "รหัส — ชื่อ" ที่ใช้ในหน้าตั้งค่า
+function matTypeLabel2(t) {
+    const lb = String((t && t.label) || ""), cd = String((t && t.code) || "");
+    if (!cd) return lb;
+    return lb.toUpperCase().indexOf(cd.toUpperCase()) >= 0 ? lb : (cd + " — " + lb);
+}
 function fmtQty(n, dec) {
     if (n == null || n === "-" || n === "") return n;
     const v = Number(n);
@@ -356,7 +369,9 @@ function _scoreMats(part, list, exIds) {
         if (cat && m.type === cat) s += 10;
         s += _makerScore(part.vnd, m.maker);
         if (exIds && exIds[m.id]) s += 4;
-        if (key && _normSizeKey(m.size) === key) s += 2;
+        const _mk2 = _normSizeKey(m.size);
+        if (key && _mk2 === key) s += 2;
+        else if (key && key.length >= 4 && _mk2.indexOf(key) >= 0) s += 1;   // size อยู่ในชื่อของ (พาร์ทประกอบ)
         if (temper && m.temper && m.temper !== "-" && m.temper.toLowerCase().replace(/[^a-z0-9]/g, "") === temper) s += 1;
         return { m: m, s: s };
     }).sort((a, b) => b.s - a.s).map(x => x.m);
@@ -376,7 +391,10 @@ function findMatsForPart(part, materials) {
     (materials || []).forEach(m => {
         if (m.active === false) return;
         const linked = pnLow && (m.productPartNos || []).some(x => String(x == null ? "" : x).replace(/\s+/g, " ").trim().toLowerCase() === pnLow);
-        const sized = key && (!cat || m.type === cat) && _normSizeKey(m.size) === key;
+        // พาร์ทประกอบเก็บ size รวมกับชื่อของ เช่น "COPPER RING COPSIL 0(BCUP-2) size:1.6x7.75"
+        // เทียบแบบตรงเป๊ะจะไม่มีทางตรงกับทะเบียนที่เก็บแค่ "Size:1.6x7.75" → ยอมให้เป็นส่วนหนึ่งของกันได้
+        const _mk = _normSizeKey(m.size);
+        const sized = key && (!cat || m.type === cat) && (_mk === key || (key.length >= 4 && _mk.indexOf(key) >= 0));
         if (!linked && !sized) return;
         if (linked) exIds[m.id] = true;
         if (!seen[m.id]) { seen[m.id] = true; pool.push(m); }
@@ -3992,13 +4010,22 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                     const valLow = val.toLowerCase();
                     // ค้นหาจาก productPartNos (Part No. สินค้า)
                     let matched = materials.filter(m => m.active !== false && (m.productPartNos || []).some(pn => String(pn == null ? "" : pn).replace(/\s+/g, " ").trim().toLowerCase() === valLow));
+                    // ผู้ใช้เลือกหมวดไว้แล้ว = ยึดหมวดนั้นตั้งแต่ต้น
+                    // (Part No. เดียวกันมักผูกไว้ทั้งฝั่งวัตถุดิบและฝั่งพาร์ทประกอบ ถ้าไม่กรองตรงนี้
+                    //  จะเจอแต่ตัวของอีกหมวดแล้วเด้งหมวดทิ้ง — ถ้าเหลือ 0 เดี๋ยวไปหาต่อจากทะเบียน Part No. ด้านล่าง)
+                    if (it.type) matched = matched.filter(m => m.type === it.type);
                     // หาข้อมูล Part Name + ลูกค้า จากทะเบียนเสมอ (ไม่ว่าจะจับคู่ material ได้จากทางไหน)
                     // เพื่อเติมชื่อ+ลูกค้าให้อัตโนมัติ ไม่ต้องให้ผู้ใช้เลือกลูกค้าเอง
-                    const pe = (typeof PART_DB !== "undefined") ? PART_DB.find(p => (p.pn || "").toLowerCase() === valLow || (p.mdl || "").toLowerCase() === valLow) : null;
+                    // ทะเบียนอาจมี Part No. เดียวกันหลายแถว (คนละหมวด เช่น CU กับ PART ASSY)
+                    // ถ้าผู้ใช้เลือกหมวดไว้แล้ว ต้องหยิบแถวของหมวดนั้น ไม่ใช่แถวแรกที่เจอ
+                    const _peAll = (typeof PART_DB !== "undefined")
+                        ? PART_DB.filter(p => (p.pn || "").toLowerCase() === valLow || (p.mdl || "").toLowerCase() === valLow) : [];
+                    const pe = (it.type ? _peAll.find(p => (PART_CAT_MAP[p.cat] || p.cat) === it.type) : null) || _peAll[0] || null;
                     if (pe && pe.cust) n.customer = pe.cust;
                     // ถ้ายังไม่เจอ material → ลองจับคู่จากทะเบียน Part No. (PART_DB — แก้ไข/เพิ่มได้เอง)
                     if (!matched.length && pe) {
                         matched = findMatsForPart(pe, materials);
+                        if (it.type) matched = matched.filter(m => m.type === it.type);   // ยึดหมวดที่ผู้ใช้เลือกไว้
                         if (!matched.length && pe.cat && !it.type) n.type = PART_CAT_MAP[pe.cat] || pe.cat; // อย่างน้อยเลือกประเภทให้
                     }
                     // ถ้ายังไม่เจอ → ลองค้นจาก size (เผื่อพิมพ์ size แทน)
@@ -4013,6 +4040,13 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                         matched = _looksLikeSize
                             ? materials.filter(m => m.active !== false && _normSizeKey(m.size).indexOf(_vk) >= 0)
                             : [];
+                        if (it.type) matched = matched.filter(m => m.type === it.type);   // ยึดหมวดที่ผู้ใช้เลือกไว้
+                    }
+                    // Part No. เดียวกันอาจผูกไว้ทั้งหมวดวัตถุดิบและหมวดพาร์ทประกอบ (เช่น Model 3512-134-2211)
+                    // ถ้าผู้ใช้เลือกหมวดไว้ก่อนแล้ว ต้องยึดหมวดนั้น ไม่ใช่เด้งไปหมวดอื่นเอง
+                    if (it.type) {
+                        const sameType = matched.filter(m => m.type === it.type);
+                        if (sameType.length) matched = sameType;
                     }
                     // Part No. หนึ่งอาจผูกกับวัตถุดิบหลายตัว (สินค้า 1 ชิ้นใช้ทั้งท่อและลวดเชื่อม
                     // หรือ size เดียวกันมีหลาย Maker) — ถ้าทะเบียนระบุ Vendor ไว้ ให้ใช้ Vendor ตัดสิน
@@ -4020,7 +4054,7 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                     if (matched.length > 1 && pe && pe.vnd) {
                         const ranked = findMatsForPart(pe, materials);
                         const top = ranked[0];
-                        if (top && _makerScore(pe.vnd, top.maker) > 0) matched = [top];
+                        if (top && (!it.type || top.type === it.type) && _makerScore(pe.vnd, top.maker) > 0) matched = [top];
                     }
                     const uniqMakers = [...new Set(matched.map(m => m.maker).filter(Boolean))];
 
@@ -4118,7 +4152,7 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                     idx > 0 && React.createElement(Btn, { v: "ghost", sz: "xs", onClick: () => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) })) }, "\uD83D\uDDD1\uFE0F \u0E25\u0E1A")),
                 React.createElement(FGrid, { cols: 4, tpl: "0.85fr 1.05fr 1.55fr 0.85fr" },
                     React.createElement(FG, { label: "\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17" },
-                        React.createElement(Sel, { value: it.type, onChange: v => updateItem(idx, "type", v), options: [{ v: "", l: "-- เลือกประเภท --" }, ...master.matTypes.map(t => ({ v: t.code, l: `${t.label} (${t.code})` }))], placeholder: "-- \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17 --" })),
+                        React.createElement(Sel, { value: it.type, onChange: v => updateItem(idx, "type", v), options: [{ v: "", l: "-- เลือกประเภท --" }, ...master.matTypes.map(t => ({ v: t.code, l: matTypeLabel(t) }))], placeholder: "-- \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17 --" })),
                     React.createElement(FG, { label: "Part No. \u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32", note: "autofill Size+Maker" },
                         (() => {
                             const srcMats = it.matId ? (materials.filter(m => m.id === it.matId)) : it.type ? materials.filter(m => m.type === it.type && m.active !== false) : materials.filter(m => m.active !== false);
@@ -4700,7 +4734,7 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
     const slide = dx => { if (tblBox.current) tblBox.current.scrollBy({ left: dx, behavior: "smooth" }); };
     return React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "calc(100vh - 80px)" } },
         React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" } },
-            [["all", "ทั้งหมด"], ...master.matTypes.map(t => [t.code, `${t.label} (${t.code})`])].map(([f, l]) => (React.createElement("button", { key: f, onClick: () => setFilter(f), style: { padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", border: `1px solid ${filter === f ? C.acc : C.brd}`, background: filter === f ? C.acc : "transparent", color: filter === f ? "#fff" : C.tx2, fontFamily: "inherit" } }, l))),
+            [["all", "ทั้งหมด"], ...master.matTypes.map(t => [t.code, matTypeLabel(t)])].map(([f, l]) => (React.createElement("button", { key: f, onClick: () => setFilter(f), style: { padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", border: `1px solid ${filter === f ? C.acc : C.brd}`, background: filter === f ? C.acc : "transparent", color: filter === f ? "#fff" : C.tx2, fontFamily: "inherit" } }, l))),
             React.createElement("div", { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" } },
                 React.createElement("div", { style: { position: "relative" } },
                     React.createElement("input", { value: search, onChange: e => setSearch(e.target.value), placeholder: "\uD83D\uDD0D \u0E04\u0E49\u0E19\u0E2B\u0E32 Size / \u0E0A\u0E37\u0E48\u0E2D / Maker...", style: { background: C.sur2, border: `1px solid ${C.brd}`, borderRadius: 7, padding: "5px 10px", color: C.tx, fontFamily: "inherit", fontSize: 11, width: 220, outline: "none" } }),
@@ -5015,7 +5049,7 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
                     React.createElement(FG, { label: "Invoice No." },
                         React.createElement(Inp, { value: form.inv, onChange: v => setForm(f => ({ ...f, inv: v })), placeholder: "ว่างไว้ได้ ใส่ทีหลัง" })),
                     React.createElement(FG, { label: "\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A" },
-                        React.createElement(Sel, { value: form.type, onChange: v => setForm(f => ({ ...f, type: v, matId: "", maker: "", _sizeTxt: null })), options: [{ v: "", l: "-- เลือกประเภท --" }, ...master.matTypes.map(t => ({ v: t.code, l: `${t.label} (${t.code})` }))], placeholder: "-- \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17 --" })),
+                        React.createElement(Sel, { value: form.type, onChange: v => setForm(f => ({ ...f, type: v, matId: "", maker: "", _sizeTxt: null })), options: [{ v: "", l: "-- เลือกประเภท --" }, ...master.matTypes.map(t => ({ v: t.code, l: matTypeLabel(t) }))], placeholder: "-- \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17 --" })),
                     React.createElement(FG, { label: "\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A / Size" },
                         (() => {
                             // ช่อง Size แบบพิมพ์ค้นหาได้ + มีรายการให้เลือก (datalist)
@@ -6222,7 +6256,7 @@ function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, on
             React.createElement("strong", null, "\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17\u0E43\u0E2B\u0E21\u0E48"),
             " \u2192 \"\uD83D\uDDC2\uFE0F Master Data\""),
         React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" } },
-            [["all", "ทั้งหมด"], ...master.matTypes.map(t => [t.code, `${t.label} (${t.code})`])].map(([f, l]) => (React.createElement("button", { key: f, onClick: () => setFilter(f), style: { padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", border: `1px solid ${filter === f ? C.acc : C.brd}`, background: filter === f ? C.acc : "transparent", color: filter === f ? "#fff" : C.tx2, fontFamily: "inherit" } }, l))),
+            [["all", "ทั้งหมด"], ...master.matTypes.map(t => [t.code, matTypeLabel(t)])].map(([f, l]) => (React.createElement("button", { key: f, onClick: () => setFilter(f), style: { padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", border: `1px solid ${filter === f ? C.acc : C.brd}`, background: filter === f ? C.acc : "transparent", color: filter === f ? "#fff" : C.tx2, fontFamily: "inherit" } }, l))),
             React.createElement("div", { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" } },
                 React.createElement("div", { style: { position: "relative" } },
                     React.createElement(Inp, { value: q, onChange: setQ, placeholder: "🔍 ค้นหา Size / ชื่อ / Maker / Temper / Part No....", style: { width: 300, paddingRight: q ? 26 : 10 } }),
@@ -6298,7 +6332,7 @@ function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, error
         React.createElement(SecTitle, null, "\uD83C\uDFF7\uFE0F \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2B\u0E25\u0E31\u0E01"),
         React.createElement(FGrid, { cols: 3 },
             React.createElement(FG, { label: "\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A *", note: "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E14\u0E49\u0E17\u0E35\u0E48 Master Data" },
-                React.createElement(Sel, { value: form.type, onChange: v => { setForm(f => ({ ...f, type: v, maker: "", makerNew: "" })); clearErr && clearErr("type"); }, style: eb("type"), options: [{ v: "", l: "-- เลือกประเภท --" }, ...master.matTypes.map(t => ({ v: t.code, l: `${t.code} — ${t.label}` }))], placeholder: "-- \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17 --" }),
+                React.createElement(Sel, { value: form.type, onChange: v => { setForm(f => ({ ...f, type: v, maker: "", makerNew: "" })); clearErr && clearErr("type"); }, style: eb("type"), options: [{ v: "", l: "-- เลือกประเภท --" }, ...master.matTypes.map(t => ({ v: t.code, l: matTypeLabel2(t) }))], placeholder: "-- \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17 --" }),
                 ef("type")),
             React.createElement(FG, { label: "Type Material *", note: "\u0E23\u0E2B\u0E31\u0E2A\u0E0A\u0E19\u0E34\u0E14 material \u0E40\u0E0A\u0E48\u0E19 A3003, A6063, SUS304, NAS254N, C1220T" },
                 React.createElement("div", { style: eb("name") },
@@ -6503,7 +6537,7 @@ function PartNoPage({ partDb, onSave, master, materials, toast, onAddMat, onLink
         const headers = ["หมวด", "Part No./Drawing", "Part Name", "Customer", "Size", "Vendor"];
         exportXLSX([{ name: "Part No", headers, rows: filtered.map(p => [PART_CAT_MAP[p.cat] || p.cat || "", p.pn || "", p.nm || "", p.cust || "", p.sz || "", p.vnd || ""]) }], `PartNo_${new Date().toISOString().slice(0, 10)}.xlsx`);
     }
-    const catOpts = master.matTypes.map(t => ({ v: t.code, l: `${t.code} — ${t.label}` }));
+    const catOpts = master.matTypes.map(t => ({ v: t.code, l: matTypeLabel2(t) }));
     const lbl = t => React.createElement("div", { style: { fontSize: 10, color: C.tx2, marginBottom: 3 } }, t);
     const thS = { padding: "8px 11px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" };
     const tdS = { padding: "8px 11px", borderBottom: C.brd2 };
@@ -6729,7 +6763,7 @@ function MasterDataPage({ master, setMaster, toast }) {
         {
             title: "📋 ประเภทวัตถุดิบ (Material Types)",
             desc: "เพิ่มประเภทใหม่เช่น ทองเหลือง (BR), ไทเทเนียม (TI)",
-            items: master.matTypes.map(t => ({ key: t.code, label: `${t.code} — ${t.label}`, color: t.color })),
+            items: master.matTypes.map(t => ({ key: t.code, label: matTypeLabel2(t), color: t.color })),
             addForm: React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
                 React.createElement(Inp, { value: newType.code, onChange: v => setNewType(x => ({ ...x, code: v.toUpperCase() })), placeholder: "Code \u0E40\u0E0A\u0E48\u0E19 BR", style: { width: 80 } }),
                 React.createElement(Inp, { value: newType.label, onChange: v => setNewType(x => ({ ...x, label: v })), placeholder: "\u0E0A\u0E37\u0E48\u0E2D \u0E40\u0E0A\u0E48\u0E19 \u0E17\u0E2D\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E07", style: { width: 160 } }),
@@ -6745,7 +6779,7 @@ function MasterDataPage({ master, setMaster, toast }) {
             items: master.partNames.map(p => ({ key: p.name + "|" + p.partNo, label: p.name, sub: p.types.join(",") })),
             addForm: React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
                 React.createElement(Inp, { value: newPart.name, onChange: v => setNewPart(x => ({ ...x, name: v })), placeholder: "\u0E0A\u0E37\u0E48\u0E2D \u0E40\u0E0A\u0E48\u0E19 AL PIPE, BRASS TUBE", style: { width: 200 } }),
-                React.createElement(Sel, { value: newPart.type, onChange: v => setNewPart(x => ({ ...x, type: v })), options: [{ v: "", l: "ทุกประเภท" }, ...master.matTypes.map(t => ({ v: t.code, l: `${t.code} — ${t.label}` }))], style: { width: 160 } }),
+                React.createElement(Sel, { value: newPart.type, onChange: v => setNewPart(x => ({ ...x, type: v })), options: [{ v: "", l: "ทุกประเภท" }, ...master.matTypes.map(t => ({ v: t.code, l: matTypeLabel2(t) }))], style: { width: 160 } }),
                 React.createElement(Btn, { v: "success", sz: "sm", onClick: addPart }, "\u2795 \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E0A\u0E37\u0E48\u0E2D")),
             removeKey: "partNames", removeVal: p => p.name + "|" + p.partNo
         },
