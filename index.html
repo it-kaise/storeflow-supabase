@@ -216,6 +216,16 @@ function availOfLotU(l, u) {
 }
 // ชื่อหมวดวัตถุดิบสำหรับแสดงผล — ถ้าชื่อหมวดมีรหัสอยู่ในชื่ออยู่แล้ว ไม่ต้องเติมวงเล็บรหัสซ้ำ
 // (เช่น SHINBA (Supply) ต้องไม่กลายเป็น "SHINBA (Supply) (SHINBA)")
+// หน่วยเริ่มต้นตอนเขียนใบเบิก — งานม้วน (LWC / BOTH_KG_COIL) ต้องขึ้นเป็น COIL ให้เลย
+// เดิมขึ้นเป็น KGS ทำให้ฝ่ายผลิตลืมเปลี่ยนแล้วเบิก "2 KGS" ทั้งที่ตั้งใจเบิก 2 ม้วน
+function defaultUnitOf(m) {
+    if (!m) return "PCS";
+    if (m.unit === "COIL" || m.unit === "COIL+KGS") return "COIL";
+    if (m.unit === "PCS") return "PCS";
+    if (m.unit === "M") return "M";
+    if (m.unit === "BOTH_KG_COIL" || /LWC/i.test(String(m.size || ""))) return "COIL";
+    return "KGS";
+}
 function matTypeLabel(t) {
     const lb = String((t && t.label) || ""), cd = String((t && t.code) || "");
     if (!cd) return lb;
@@ -3987,7 +3997,7 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                         n.partNo = cand.partNo;
                         n._nextLot = nl ? nl.lotNo : "-";
                         n._kpp = cand.kpp || null;
-                        n.unit = cand.unit === "COIL" ? "COIL" : cand.unit === "PCS" ? "PCS" : "KGS";
+                        n.unit = defaultUnitOf(cand);
                     }
                     else {
                         n.matId = "";
@@ -4003,7 +4013,7 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                         n._nextLot = nl ? nl.lotNo : "-";
                         n._kpp = (m === null || m === void 0 ? void 0 : m.kpp) || null;
                         if (m)
-                            n.unit = m.unit === "COIL" ? "COIL" : m.unit === "PCS" ? "PCS" : "KGS";
+                            n.unit = defaultUnitOf(m);
                     }
                 }
                 if (field === "model" && val) {
@@ -4068,7 +4078,7 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                         n.partNo = m.partNo;
                         n._nextLot = nl ? nl.lotNo : "-";
                         n._kpp = m.kpp || null;
-                        n.unit = m.unit === "COIL" ? "COIL" : m.unit === "PCS" ? "PCS" : "KGS";
+                        n.unit = defaultUnitOf(m);
                         n._modelMatches = null;
                     }
                     else if (uniqMakers.length > 1) {
@@ -4090,7 +4100,7 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                     n._kpp = (m === null || m === void 0 ? void 0 : m.kpp) || null;
                     n._unit = (m === null || m === void 0 ? void 0 : m.unit) || "PCS";
                     if (m)
-                        n.unit = m.unit === "COIL" ? "COIL" : m.unit === "PCS" ? "PCS" : "KGS";
+                        n.unit = defaultUnitOf(m);
                 }
                 if (field === "qty" && it._kpp)
                     n.kgs = (parseFloat(val || 0) * it._kpp).toFixed(2);
