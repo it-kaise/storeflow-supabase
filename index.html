@@ -95,10 +95,26 @@ async function saveMasterData(master) {
     }
 }
 
+// ── โหลดข้อมูลแบบไล่ทีละชุดจนครบ ──────────────────────────
+// Supabase ส่งข้อมูลให้ครั้งละไม่เกิน 1,000 แถว ถ้าดึงรวดเดียวแล้วข้อมูลเกิน 1,000
+// แถวที่เหลือจะหายเงียบๆ (เคยทำให้สต๊อกของ lot ใหม่ขึ้นเป็น 0 ทั้งที่มีของจริง)
+// build ต้องคืน query ใหม่ทุกครั้ง เพราะ query เดิมใช้ .range ซ้ำไม่ได้
+async function selectAll(build) {
+    const PAGE = 1000;
+    let from = 0, out = [];
+    for (;;) {
+        const { data, error } = await build().range(from, from + PAGE - 1);
+        if (error) return { data: out, error: error };
+        out = out.concat(data || []);
+        if (!data || data.length < PAGE) break;
+        from += PAGE;
+    }
+    return { data: out, error: null };
+}
 // โหลด Lots (แยกตาม material_id)
 async function loadLots() {
     try {
-        const { data, error } = await sb.from('sf_lots').select('*').order('lot_date', { ascending: true });
+        const { data, error } = await selectAll(() => sb.from('sf_lots').select('*').order('lot_date', { ascending: true }));
         if (error) throw error;
         
         // ตรวจว่าตารางมีคอลัมน์หน่วยเมตรแล้วหรือยัง (เพิ่มภายหลังได้โดยไม่ต้องแก้โค้ด)
@@ -1383,7 +1399,7 @@ function StoreFlow() {
                 console.log('🔄 กำลังโหลดข้อมูลจาก Supabase...');
                 
                 // โหลด Users
-                const { data: usersData, error: usersError } = await sb.from('sf_users').select('*');
+                const { data: usersData, error: usersError } = await selectAll(() => sb.from('sf_users').select('*'));
                 if (usersError) throw usersError;
                 // แปลงชื่อคอลัมน์จาก snake_case เป็น camelCase
                 setUsers((usersData || []).map(u => ({
@@ -1428,7 +1444,7 @@ function StoreFlow() {
                 }
                 
                 // โหลด Materials
-                const { data: matsData, error: matsError } = await sb.from('sf_materials').select('*');
+                const { data: matsData, error: matsError } = await selectAll(() => sb.from('sf_materials').select('*'));
                 if (matsError) throw matsError;
                 const matsMapped = (matsData || []).map(m => matFromDb(m));
                 setMaterials(matsMapped);
@@ -1443,13 +1459,13 @@ function StoreFlow() {
                 console.log('✅ โหลด Lots:', lotCount, 'lots');
                 
                 // โหลด Requests
-                const { data: reqsData, error: reqsError } = await sb.from('sf_requests').select('*').order('request_date', { ascending: false });
+                const { data: reqsData, error: reqsError } = await selectAll(() => sb.from('sf_requests').select('*').order('request_date', { ascending: false }));
                 if (reqsError) throw reqsError;
                 setRequests((reqsData || []).map(reqFromDb));
                 console.log('✅ โหลด Requests:', reqsData?.length || 0, 'ใบเบิก');
                 
                 // โหลด Issue History
-                const { data: issueData, error: issueError } = await sb.from('sf_issuehist').select('*').order('issue_date', { ascending: false }).order('created_at', { ascending: false });
+                const { data: issueData, error: issueError } = await selectAll(() => sb.from('sf_issuehist').select('*').order('issue_date', { ascending: false }).order('created_at', { ascending: false }));
                 if (issueError) throw issueError;
                 ISSUEHIST_HAS_TEMPER = (issueData || []).some(h => Object.prototype.hasOwnProperty.call(h, 'temper'));
                 ISSUEHIST_HAS_M = (issueData || []).some(h => Object.prototype.hasOwnProperty.call(h, 'm'));
@@ -1475,7 +1491,7 @@ function StoreFlow() {
                 console.log('✅ โหลด Issue History:', issueData?.length || 0, 'รายการ');
                 
                 // โหลด Receive History
-                const { data: recvData, error: recvError } = await sb.from('sf_recvhist').select('*').order('receive_date', { ascending: false }).order('created_at', { ascending: false });
+                const { data: recvData, error: recvError } = await selectAll(() => sb.from('sf_recvhist').select('*').order('receive_date', { ascending: false }).order('created_at', { ascending: false }));
                 if (recvError) throw recvError;
                 RECVHIST_HAS_TEMPER = (recvData || []).some(h => Object.prototype.hasOwnProperty.call(h, 'temper'));
                 RECVHIST_HAS_M = (recvData || []).some(h => Object.prototype.hasOwnProperty.call(h, 'm'));
@@ -1565,8 +1581,8 @@ function StoreFlow() {
             try {
                 const [lotsData, reqsRes, matsRes] = await Promise.all([
                     loadLots(),
-                    sb.from('sf_requests').select('*').order('request_date', { ascending: false }),
-                    sb.from('sf_materials').select('*')
+                    selectAll(() => sb.from('sf_requests').select('*').order('request_date', { ascending: false })),
+                    selectAll(() => sb.from('sf_materials').select('*'))
                 ]);
                 setLots(lotsData);
                 if (!reqsRes.error) setRequests((reqsRes.data || []).map(reqFromDb));
