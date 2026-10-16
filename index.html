@@ -1721,6 +1721,16 @@ function StoreFlow() {
             if (it.matId && !it.qty && !it.kgs && !it.coil)
                 errs[`item_qty_${i}`] = `รายการที่ ${i + 1}: กรุณาระบุจำนวน`;
         });
+        // W/O No. บังคับกรอก — ใช้สืบย้อนกลับว่าของที่เบิกไปใช้กับงานไหน
+        // ใส่ที่หัวใบก็ได้ (ใช้ทั้งใบ) หรือจะใส่แยกรายบรรทัดก็ได้ แต่ต้องมีครบทุกบรรทัด
+        const _hdrJo = String(rqForm.jo || "").trim();
+        if (!_hdrJo) {
+            const noJo = [];
+            rqForm.items.forEach((it, i) => { if (it.matId && !String(it.jo || "").trim()) noJo.push(i + 1); });
+            if (noJo.length || !items.length)
+                errs.jo = "กรุณาใส่ Work Order No. / Trial Sheet No. เพื่อให้สืบย้อนกลับข้อมูลได้"
+                    + (noJo.length && items.length > 1 ? " (รายการที่ " + noJo.join(", ") + " ยังไม่ได้ใส่)" : "");
+        }
         if (Object.keys(errs).length > 0) {
             setRqErrors(errs);
             toast("❌ กรุณากรอกข้อมูลที่จำเป็นให้ครบ", "err");
@@ -1988,6 +1998,18 @@ function StoreFlow() {
                 cuts.push({ lotNo, coil: null, kgs: cutKgs != null ? Math.round(cutKgs * 1000) / 1000 : null, pcs: take, m: null });
                 rem -= take;
                 if (grp) chosenBudget[grp] -= take;   // ตัดโควตาของ Lot นี้ลงด้วย
+            }
+            // หน่วยหลักของ lot หมดแล้ว = ของในกองนั้นหมดจริง → ล้างหน่วยอื่นที่เหลือเป็นเศษทิ้งด้วย
+            // (เดิมตัดเส้นจนหมดแต่กิโลเหลือเศษค้าง เพราะกิโลต่อเส้นที่คำนวณไม่ตรงกับของจริงเป๊ะ
+            //  ทำให้หน้าคลังขึ้น "0 เส้น / 0.00 kg" แทนที่จะขึ้นว่าหมด)
+            const _L = ml[i];
+            const _pcsBase = (_L.pcs || 0) > 0, _coilBase = (_L.coil || 0) > 0;
+            if ((_pcsBase && (_L.rem_pcs || 0) <= 0) || (_coilBase && (_L.rem_coil || 0) <= 0)) {
+                ml[i] = { ...ml[i],
+                    rem_kgs: _L.rem_kgs != null ? 0 : _L.rem_kgs,
+                    rem_coil: _L.rem_coil != null ? 0 : _L.rem_coil,
+                    rem_pcs: _L.rem_pcs != null ? 0 : _L.rem_pcs,
+                    rem_m: _L.rem_m != null ? 0 : _L.rem_m };
             }
             changedIdx.add(i);
         }
@@ -4138,8 +4160,10 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                 React.createElement("div", { style: { display: "flex", gap: 5 } },
                     React.createElement(Sel, { value: form.forecast, onChange: v => setForm(f => ({ ...f, forecast: v })), options: fcopts, placeholder: "-- \u0E40\u0E14\u0E37\u0E2D\u0E19 --", style: { flex: 1 } }),
                     React.createElement(Inp, { value: form.po, onChange: v => setForm(f => ({ ...f, po: v })), placeholder: "PO No.", style: { flex: 1 } }))),
-            React.createElement(FG, { label: "Work Order / Trial Sheet No." },
-                React.createElement(Inp, { value: form.jo, onChange: v => setForm(f => ({ ...f, jo: v })), placeholder: "WO-2025-001 \u0E2B\u0E23\u0E37\u0E2D TS-001" })),
+            React.createElement(FG, { label: "Work Order / Trial Sheet No. *", note: "\u0E43\u0E2A\u0E48\u0E17\u0E35\u0E48\u0E19\u0E35\u0E48 = \u0E43\u0E0A\u0E49\u0E17\u0E31\u0E49\u0E07\u0E43\u0E1A" },
+                React.createElement("div", { style: eb("jo") },
+                    React.createElement(Inp, { value: form.jo, onChange: v => { setForm(f => ({ ...f, jo: v })); clearErr && clearErr("jo"); }, placeholder: "WO-2025-001 \u0E2B\u0E23\u0E37\u0E2D TS-001" })),
+                ef("jo")),
             React.createElement(FG, { label: "\u0E41\u0E1C\u0E19\u0E01 *", note: "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E14\u0E49" },
                 React.createElement("div", { style: eb("dept") },
                     React.createElement(SmartSelect, { value: form.dept, onChange: v => { setForm(f => ({ ...f, dept: v })); clearErr && clearErr("dept"); }, options: master.departments, onAddNew: v => { addDept(v); setForm(f => ({ ...f, dept: v })); clearErr && clearErr("dept"); }, addLabel: "\u2795 \u0E41\u0E1C\u0E19\u0E01\u0E43\u0E2B\u0E21\u0E48" })),
