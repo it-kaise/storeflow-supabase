@@ -234,13 +234,31 @@ function availOfLotU(l, u) {
 // (เช่น SHINBA (Supply) ต้องไม่กลายเป็น "SHINBA (Supply) (SHINBA)")
 // หน่วยเริ่มต้นตอนเขียนใบเบิก — งานม้วน (LWC / BOTH_KG_COIL) ต้องขึ้นเป็น COIL ให้เลย
 // เดิมขึ้นเป็น KGS ทำให้ฝ่ายผลิตลืมเปลี่ยนแล้วเบิก "2 KGS" ทั้งที่ตั้งใจเบิก 2 ม้วน
-function defaultUnitOf(m) {
+// size มีความยาวเป็นมิลลิเมตร (ตัวเลขชุดที่ 3 เช่น Ø9.0x1.0x3000) = ของเป็นเส้น ไม่ใช่กอง/ม้วน
+function hasLengthSize(size) {
+    const p = String(size == null ? "" : size).replace(/,/g, "").split(/[xX*]/);
+    if (p.length < 3) return false;
+    const last = parseFloat(String(p[p.length - 1]).replace(/[^0-9.]/g, ""));
+    return isFinite(last) && last >= 100;
+}
+function defaultUnitOf(m, ml) {
     if (!m) return "PCS";
     if (m.unit === "COIL" || m.unit === "COIL+KGS") return "COIL";
     if (m.unit === "PCS") return "PCS";
     if (m.unit === "M") return "M";
     if (m.unit === "BOTH_KG_COIL" || /LWC/i.test(String(m.size || ""))) return "COIL";
-    return "KGS";
+    // ฝ่ายผลิตเบิกเป็น "เส้น" เสมอ ยกเว้นงานม้วน (LWC) — เดิมขึ้น KGS ไว้ แล้วลืมเปลี่ยน
+    // กลายเป็นเบิก "100 กิโล" ทั้งที่ตั้งใจเบิก 100 เส้น
+    if (m.unit === "BOTH") return "PCS";
+    if (m.unit === "KGS") {
+        // KGS อย่างเดียว: ถ้าลอตมีการนับเส้นไว้จริง ให้ขึ้นเป็นเส้น (เช่น AL/ST/JFE ที่รับเป็นกิโลแต่นับเส้น)
+        // ถ้าลอตไม่มีจำนวนเส้นเลย (ของกอง เช่น ลวดเชื่อม/ฟลักซ์) ต้องคงเป็น KGS ไม่งั้นจะขึ้นว่าไม่มีสต๊อก
+        const arr = ml || [];
+        if (arr.some(l => (l.pcs != null && l.pcs > 0) || (l.rem_pcs != null && l.rem_pcs > 0))) return "PCS";
+        if (!arr.length && hasLengthSize(m.size)) return "PCS";
+        return "KGS";
+    }
+    return hasLengthSize(m.size) ? "PCS" : "KGS";
 }
 function matTypeLabel(t) {
     const lb = String((t && t.label) || ""), cd = String((t && t.code) || "");
@@ -1737,6 +1755,25 @@ function StoreFlow() {
             return;
         }
         setRqErrors({});
+        // กันลืมเปลี่ยนหน่วย — ของที่นับเป็นเส้น/ม้วน แต่หน่วยยังค้างเป็น KGS
+        // (เคยเกิดกับ CU 12.0x0.7xLWC ใบ 0078 / CU 7.0x0.41xLWC ใบ 0072 ที่ลืมเปลี่ยนเป็น COIL)
+        const _uw = { PCS: "เส้น", COIL: "ม้วน", KGS: "กิโล", M: "เมตร", "COIL+KGS": "ม้วน" };
+        const _uWarn = [];
+        rqForm.items.forEach((it, i) => {
+            if (!it.matId || !(it.qty || it.kgs || it.coil)) return;
+            const m = materials.find(x => x.id === it.matId);
+            if (!m) return;
+            const want = defaultUnitOf(m, lots[it.matId]);
+            const u = it.unit || "PCS";
+            if (u === want) return;
+            // เตือนเฉพาะกรณีที่มักผิดจริง: ใส่ KGS ทั้งที่ของนับเป็นเส้น/ม้วน หรือใส่เส้นทั้งที่เป็นงานม้วน
+            if (u === "KGS" || (u === "PCS" && want === "COIL"))
+                _uWarn.push("  • รายการที่ " + (i + 1) + " " + String(m.size || "").replace(/^size:/i, "")
+                    + " (" + m.maker + ")\n      ใส่ไว้ " + fmtQty(it.qty || it.kgs || it.coil, 2) + " " + u
+                    + " — ปกติของตัวนี้เบิกเป็น " + want + " (" + (_uw[want] || want) + ")");
+        });
+        if (_uWarn.length && !window.confirm("⚠️ ตรวจสอบหน่วยอีกครั้งก่อนส่งใบ\n\n" + _uWarn.join("\n")
+            + "\n\nถ้าหน่วยถูกต้องแล้ว กด OK เพื่อส่งใบ\nถ้าลืมเปลี่ยนหน่วย กด Cancel แล้วแก้ช่อง \"หน่วย\" ก่อน")) return;
         const builtItems = items.map(i => {
             const m = materials.find(x => x.id === i.matId);
             const nl = (lots[i.matId] || []).find(l => (l.rem_kgs || 0) > 0 || (l.rem_pcs || 0) > 0 || (l.rem_coil || 0) > 0 || (l.rem_m || 0) > 0);
@@ -4096,7 +4133,7 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                         n.partNo = cand.partNo;
                         n._nextLot = nl ? nl.lotNo : "-";
                         n._kpp = cand.kpp || null;
-                        n.unit = defaultUnitOf(cand);
+                        n.unit = defaultUnitOf(cand, lots[cand.id]);
                     }
                     else {
                         n.matId = "";
@@ -4112,7 +4149,7 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                         n._nextLot = nl ? nl.lotNo : "-";
                         n._kpp = (m === null || m === void 0 ? void 0 : m.kpp) || null;
                         if (m)
-                            n.unit = defaultUnitOf(m);
+                            n.unit = defaultUnitOf(m, lots[m.id]);
                     }
                 }
                 if (field === "model" && val) {
@@ -4182,7 +4219,7 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                         n.partNo = m.partNo;
                         n._nextLot = nl ? nl.lotNo : "-";
                         n._kpp = m.kpp || null;
-                        n.unit = defaultUnitOf(m);
+                        n.unit = defaultUnitOf(m, lots[m.id]);
                         n._modelMatches = null;
                     }
                     else if (matched.length > 1) {
@@ -4206,7 +4243,7 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                     n._kpp = (m === null || m === void 0 ? void 0 : m.kpp) || null;
                     n._unit = (m === null || m === void 0 ? void 0 : m.unit) || "PCS";
                     if (m)
-                        n.unit = defaultUnitOf(m);
+                        n.unit = defaultUnitOf(m, lots[val]);
                 }
                 if (field === "qty" && it._kpp)
                     n.kgs = (parseFloat(val || 0) * it._kpp).toFixed(2);
@@ -5477,6 +5514,72 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
         if (owning.length === 1) return clean(owning[0].temper);
         return ""; // ยังแยกไม่ได้ (lot ซ้ำ/ถูกลบ)
     };
+    // ── น้ำหนักกิโลต่อหน่วย สำหรับฝ่ายบัญชี (ซื้อเป็นกิโล แต่ฝ่ายผลิตเบิกเป็นเส้น/ม้วน) ──
+    // 1 เส้น / 1 ม้วน = กี่กิโล — ยึดสัดส่วนจริงของลอตนั้นก่อน (แม่นสุด เพราะแต่ละลอตน้ำหนักไม่เท่ากัน)
+    // ถ้าลอตไม่ได้บันทึกน้ำหนักไว้ ใช้ค่า kg/เส้น ที่ตั้งใน Material แล้วค่อยเฉลี่ยจากทุกลอตของ size นั้น
+    const matOfHist = r => {
+        const cand = (materials || []).filter(m => (m.name + " " + m.size) === r.name && (!r.maker || !m.maker || m.maker === r.maker));
+        if (cand.length <= 1) return cand[0] || null;
+        const owning = cand.filter(m => ((lots || {})[m.id] || []).some(l => normLot(l.lotNo) === normLot(r.lotNo)));
+        return owning[0] || cand[0];
+    };
+    // ถ้าไม่มีน้ำหนักบันทึกไว้เลย (ลอตรับมาเป็นเส้นล้วน) → คำนวณจากขนาดท่อตามทฤษฎี
+    // น้ำหนัก = π × (OD − t) × t × ความยาว × ความถ่วงจำเพาะ  (มิลลิเมตร → กิโลกรัม)
+    // ตรวจกับของจริงแล้ว CU Ø22.20x0.8x2080 = 1.000 kg/เส้น ตรงกับที่ชั่งจริง
+    const DENS = { CU: 8.94, AL: 2.70, SUS: 7.93, ST: 7.85, JFE430: 7.70, BRASS: 8.50 };
+    const theoKgPerPcs = m => {
+        if (!m) return 0;
+        const seg = String(m.size == null ? "" : m.size).replace(/,/g, "").replace(/^size:/i, "").split(/[xX*]/);
+        if (seg.length < 3) return 0;
+        const num1 = s => { const t = String(s).replace(/[Øøφ\s]/g, "").replace(/^t/i, ""); return /^\d+(\.\d+)?$/.test(t) ? parseFloat(t) : NaN; };
+        const od = num1(seg[0]), th = num1(seg[1]);
+        const lm = String(seg[2]).match(/^\s*(\d+(?:\.\d+)?)/);
+        const L = lm ? parseFloat(lm[1]) : NaN;
+        if (!(od > 0 && th > 0 && L >= 100 && od > th)) return 0;
+        const nm = String(m.name || "") + " " + String(m.type || "");
+        const d = /409|436|430/.test(nm) ? 7.70
+            : DENS[m.type] || (/SUS|304/i.test(nm) ? 7.93 : /COPPER|C1220|CU/i.test(nm) ? 8.94 : 0);
+        if (!d) return 0;
+        return Math.PI * (od - th) * th * L * d / 1e6;
+    };
+    const kgPerUnitOf = r => {
+        const u = r.unit || "PCS";
+        if (u === "KGS" || u === "M") return { per: 0, src: "" };
+        const m = matOfHist(r);
+        if (!m) return { per: 0, src: "" };
+        const ml = (lots || {})[m.id] || [];
+        const lot = ml.find(l => normLot(l.lotNo) === normLot(r.lotNo));
+        const div = (a, b) => (a > 0 && b > 0) ? a / b : 0;
+        const key = (u === "COIL" || u === "COIL+KGS") ? "coil" : "pcs";
+        const fromLot = lot ? div(lot.kgs || 0, lot[key] || 0) : 0;
+        if (fromLot > 0) return { per: fromLot, src: "lot" };
+        if (key === "pcs" && Number(m.kpp) > 0) return { per: Number(m.kpp), src: "kpp" };
+        const avg = div(ml.reduce((s, l) => s + (l.kgs || 0), 0), ml.reduce((s, l) => s + (l[key] || 0), 0));
+        if (avg > 0) return { per: avg, src: "avg" };
+        if (key === "pcs") { const th = theoKgPerPcs(m); if (th > 0) return { per: th, src: "theo" }; }
+        return { per: 0, src: "" };
+    };
+    const KGSRC = { act: "ชั่งจริงตอนจ่าย", lot: "คำนวณจากน้ำหนักจริงของลอตนั้น", kpp: "จากค่า kg/เส้น ที่ตั้งไว้ใน Material", avg: "เฉลี่ยจากทุกลอตของ size นี้", theo: "คำนวณจากขนาดท่อ (ทฤษฎี)" };
+    // น้ำหนักรวมของแถวนั้น — ถ้าตอนจ่ายไม่ได้บันทึกกิโลไว้ จะคำนวณให้ (แสดงเครื่องหมาย ≈)
+    const kgOfHist = r => {
+        const act = Number(r.kgs) || 0;
+        const qty = Number(r.pcs != null && r.pcs !== "" ? r.pcs : r.coil) || 0;
+        if (act > 0) return { kg: act, per: qty > 0 ? act / qty : 0, est: false, src: "act" };
+        const k = kgPerUnitOf(r);
+        return (k.per > 0 && qty > 0)
+            ? { kg: k.per * qty, per: k.per, est: true, src: k.src }
+            : { kg: 0, per: 0, est: false, src: "" };
+    };
+    // หัวตาราง + แถวสำหรับ export ประวัติเบิก — มีคอลัมน์กิโล/หน่วย ให้ฝ่ายบัญชีคิดต้นทุนได้เลย
+    const issueHeaders = ["วันที่", "เลขที่ใบเบิก", "วัตถุดิบ", "Temper", "Maker", "Lot No.", "QTY", "Unit", "KGS", "KGS/หน่วย", "ที่มาน้ำหนัก", "M", "Forecast/PO", "แผนก", "ผู้เบิก", "ผู้อนุมัติ", "ผู้จ่าย"];
+    const issueRow = r => {
+        const k = kgOfHist(r);
+        const rd = (v, d) => { const p = Math.pow(10, d); return Math.round(v * p) / p; };
+        return [r.date, r.reqId, r.name, histTemper(r) || "-", r.maker, r.lotNo,
+            (r.pcs != null ? r.pcs : r.coil) || "", r.unit || "PCS",
+            k.kg ? rd(k.kg, 2) : "", k.per ? rd(k.per, 3) : "", k.kg ? (KGSRC[k.src] || "") : "",
+            r.m || "", r.forecast || "", r.dept, r.requester, r.approver || "", r.issuedBy || ""];
+    };
     const [tab, setTab] = useState("issue");
     const [search, setSearch] = useState("");
     const [filterMonth, setFilterMonth] = useState("");
@@ -5854,12 +5957,10 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
     }
     const dt = new Date().toISOString().slice(0, 10);
     function exportIssue() {
-        const headers = ["วันที่", "เลขที่ใบเบิก", "วัตถุดิบ", "Temper", "Maker", "Lot No.", "QTY", "Unit", "KGS", "M", "Forecast/PO", "แผนก", "ผู้เบิก", "ผู้อนุมัติ", "ผู้จ่าย"];
-        exportCSV(filtered.map(r => [r.date, r.reqId, r.name, histTemper(r) || "-", r.maker, r.lotNo, (r.pcs != null ? r.pcs : r.coil) || "", r.unit || "PCS", r.kgs || "", r.m || "", r.forecast || "", r.dept, r.requester, r.approver || "", r.issuedBy || ""]), headers, `issue_history_${dt}.csv`);
+        exportCSV(filtered.map(issueRow), issueHeaders, `issue_history_${dt}.csv`);
     }
     function exportIssueXLSX() {
-        const headers = ["วันที่", "เลขที่ใบเบิก", "วัตถุดิบ", "Temper", "Maker", "Lot No.", "QTY", "Unit", "KGS", "M", "Forecast/PO", "แผนก", "ผู้เบิก", "ผู้อนุมัติ", "ผู้จ่าย"];
-        exportXLSX([{ name: "ประวัติเบิกจ่าย", headers, rows: filtered.map(r => [r.date, r.reqId, r.name, histTemper(r) || "-", r.maker, r.lotNo, (r.pcs != null ? r.pcs : r.coil) || "", r.unit || "PCS", r.kgs || "", r.m || "", r.forecast || "", r.dept, r.requester, r.approver || "", r.issuedBy || ""]) }], `ประวัติเบิก_${dt}.xlsx`);
+        exportXLSX([{ name: "ประวัติเบิกจ่าย", headers: issueHeaders, rows: filtered.map(issueRow) }], `ประวัติเบิก_${dt}.xlsx`);
     }
     function exportRecv() {
         const headers = ["วันที่", "PO No.", "Invoice", "วัตถุดิบ", "Temper", "Maker", "Lot No.", "PCS", "COIL", "KGS", "M", "ROHS"];
@@ -5876,7 +5977,7 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
     }
     function exportAllXLSX() {
         // Export ทั้งหมดในไฟล์ Excel เดียว 3 sheet
-        const issueMasters = ["วันที่", "เลขที่ใบเบิก", "วัตถุดิบ", "Temper", "Maker", "Lot No.", "QTY", "Unit", "KGS", "M", "Forecast/PO", "แผนก", "ผู้เบิก", "ผู้อนุมัติ", "ผู้จ่าย"];
+        const issueMasters = issueHeaders;
         const recvHeaders = ["วันที่", "PO No.", "Invoice", "วัตถุดิบ", "Temper", "Maker", "Lot No.", "PCS", "COIL", "KGS", "M", "ROHS"];
         const stkHeaders = ["ประเภท", "ชื่อ Material", "Maker", "Size", "Temper", "KGS คงเหลือ", "PCS คงเหลือ", "COIL คงเหลือ", "จำนวน Lot", "Status"];
         const stkRows = (materials || []).map(m => {
@@ -5889,7 +5990,7 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
         });
         exportXLSX([
             { name: "คลังวัตถุดิบ", headers: stkHeaders, rows: stkRows },
-            { name: "ประวัติเบิกจ่าย", headers: issueMasters, rows: issueHist.map(r => [r.date, r.reqId, r.name, histTemper(r) || "-", r.maker, r.lotNo, (r.pcs != null ? r.pcs : r.coil) || "", r.unit || "PCS", r.kgs || "", r.m || "", r.forecast || "", r.dept, r.requester, r.approver || "", r.issuedBy || ""]) },
+            { name: "ประวัติเบิกจ่าย", headers: issueMasters, rows: issueHist.map(issueRow) },
             { name: "ประวัติรับสินค้า", headers: recvHeaders, rows: (recvHist || []).map(r => [r.date, r.po || "", r.inv || "", r.name, histTemper(r) || "-", r.maker, r.lotNo, r.pcs || "", r.coil || "", r.kgs || "", r.m || "", r.rohs || ""]) }
         ], `StoreFlow_Report_${dt}.xlsx`);
     }
@@ -5981,7 +6082,9 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
                         const x = g[k];
                         x.rows.push(r);
                         if (String(r.date) < String(x.date)) x.date = r.date;
-                        x.kgs += Number(r.kgs) || 0; x.pcs += Number(r.pcs) || 0;
+                        // รวมกิโล: ถ้าแถวไหนไม่ได้บันทึกน้ำหนักไว้ ใช้ค่าที่คำนวณจากสัดส่วนลอต
+                        // (ฝ่ายบัญชีต้องได้ยอดกิโลรวมที่ใช้งานได้จริง ไม่ใช่ช่องว่าง)
+                        x.kgs += kgOfHist(r).kg || 0; x.pcs += Number(r.pcs) || 0;
                         x.coil += Number(r.coil) || 0; x.m += Number(r.m) || 0;
                         if (r.reqId) x.reqs.add(r.reqId);
                         if (r.dept) x.depts.add(r.dept);
@@ -6059,7 +6162,16 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace" } },
                                 _ed ? React.createElement("input", { type: "number", step: "0.01", value: editIsForm.kgs != null ? editIsForm.kgs : "", onChange: e => setEditIsForm(f => ({ ...f, kgs: e.target.value })),
                                     style: { width: 80, background: C.sur, border: "1px solid " + C.acc, borderRadius: 5, padding: "3px 6px", color: C.tx, fontFamily: "monospace", fontSize: 11, outline: "none", textAlign: "right" } })
-                                    : (r.kgs || "-")),
+                                    : (() => {
+                                        // ฝ่ายบัญชีต้องรู้ว่าเบิก 1 เส้น / 1 ม้วน = กี่กิโล (เพราะซื้อเข้ามาเป็นกิโล)
+                                        // ถ้าตอนจ่ายไม่ได้บันทึกกิโล จะคำนวณจากสัดส่วนของลอตให้ แล้วขึ้น ≈ กำกับไว้
+                                        const k = kgOfHist(r);
+                                        if (!k.kg) return "-";
+                                        const uw = (r.unit === "COIL" || r.unit === "COIL+KGS") ? "ม้วน" : "เส้น";
+                                        return React.createElement("span", { title: (KGSRC[k.src] || "") + " — " + fmtQty(k.per, 3) + " kg/" + uw },
+                                            React.createElement("span", { style: { fontWeight: 700, color: k.est ? "#9a6700" : C.tx } }, (k.est ? "≈ " : "") + fmtQty(k.kg, 2)),
+                                            k.per > 0 && React.createElement("div", { style: { fontSize: 9, color: C.tx3, fontFamily: "inherit" } }, fmtQty(k.per, 3) + " kg/" + uw));
+                                    })()),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace" } }, r.m != null && r.m !== "" ? fmtQty(r.m, 1) : "-"),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, color: C.acc3, fontSize: 11 } }, r.forecast || "-"),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2 } }, r.dept),
