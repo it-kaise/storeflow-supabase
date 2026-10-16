@@ -2629,6 +2629,27 @@ function StoreFlow() {
                         if (sel > need + 0.001) over.push({ name: sizeTxt(it.name), u, sel, need });
                         else if (sel + 0.001 < must) miss.push({ name: sizeTxt(it.name), u, sel, need, must });
                     });
+                    // รวมทุกบรรทัดที่ใช้ลอตเดียวกัน ต้องไม่เกินของที่มีในลอตนั้น
+                    // (กันเคสวัตถุดิบตัวเดียวกันอยู่หลายบรรทัด แล้วเลือกลอตเดียวกันซ้ำจนเกิน)
+                    const lotSum = {}, lotCap = {};
+                    (_r && _r.items || []).forEach((it, idx) => {
+                        const u = it.unit || "PCS";
+                        ((selectedLots || {})[`${idx}_${it.matId}`] || []).forEach(x => {
+                            const k = it.matId + "|" + normLot(x.lotNo) + "|" + u;
+                            lotSum[k] = (lotSum[k] || 0) + (parseFloat(x.qty) || 0);
+                            if (lotCap[k] == null) lotCap[k] = (lots[it.matId] || [])
+                                .filter(l => normLot(l.lotNo) === normLot(x.lotNo))
+                                .reduce((s, l) => s + availOfLotU(l, u), 0);
+                        });
+                    });
+                    const lotOver = Object.keys(lotSum).filter(k => lotSum[k] > (lotCap[k] || 0) + 0.001)
+                        .map(k => { const p = k.split("|"); return { lot: p[1], u: p[2], sel: lotSum[k], have: lotCap[k] || 0 }; });
+                    if (lotOver.length) return React.createElement(Btn, { v: "danger", onClick: () => window.alert(
+                        "⛔ เลือก Lot เกินของที่มีจริง — กรุณาตรวจสอบข้อมูลอีกครั้ง\n\n"
+                        + lotOver.map(x => "  • Lot " + x.lot + "\n      ในคลังมี " + fmtQty(x.have, 2) + " " + x.u
+                            + " · เลือกรวมทุกบรรทัด " + fmtQty(x.sel, 2) + " " + x.u + " · เกิน " + fmtQty(x.sel - x.have, 2)).join("\n")
+                        + "\n\nวัตถุดิบตัวเดียวกันที่อยู่หลายบรรทัด ใช้ของกองเดียวกัน\nกรุณาแบ่งจำนวนให้รวมกันไม่เกินที่มีในลอต") },
+                        "⛔ เลือก Lot เกินของจริง (" + lotOver.length + " lot)");
                     if (over.length) return React.createElement(Btn, { v: "danger", onClick: () => window.alert(
                         "⛔ จ่ายเกินจำนวนที่ขอเบิก — กรุณาตรวจสอบข้อมูลอีกครั้ง\n\n"
                         + over.map(m => "  • " + m.name + "\n      ใบเบิกขอ " + fmtQty(m.need, 2) + " " + m.u
@@ -3009,9 +3030,20 @@ function QuickCheckPage({ materials, lots, toast }) {
             m: ml.reduce((s, l) => s + (l.rem_m || 0), 0)
         };
     };
-    let results = [];
-    const regOnly = [];
-    if (ql.length >= 2) {
+    // ค้นได้หลาย size ในครั้งเดียว — คั่นด้วยลูกน้ำ เซมิโคลอน หรือขึ้นบรรทัดใหม่
+    // (วางทั้งคอลัมน์จาก Excel ลงไปได้เลย) ถ้าใส่คำเดียวก็ทำงานเหมือนเดิมทุกอย่าง
+    const terms = (() => {
+        const seen = {}, out = [];
+        String(q || "").split(/[\n,;]+/).forEach(s => {
+            const t = s.trim().toLowerCase();
+            if (t.length < 2 || seen[t]) return;
+            seen[t] = 1; out.push(t);
+        });
+        return out;
+    })();
+    function searchOne(ql) {
+        let results = [];
+        const regOnly = [];
         const matMap = {};
         const addM = (m, via) => {
             if (!matMap[m.id]) matMap[m.id] = { m: m, via: [] };
@@ -3043,7 +3075,16 @@ function QuickCheckPage({ materials, lots, toast }) {
         });
         results.sort((a, b) => ((b.st.kgs + b.st.pcs + b.st.coil) > 0 ? 1 : 0) - ((a.st.kgs + a.st.pcs + a.st.coil) > 0 ? 1 : 0));
         results = results.slice(0, 50);
+        return { results: results, regOnly: regOnly };
     }
+    // ผลแยกตามคำค้นแต่ละคำ (ไว้แสดงเป็นกลุ่ม) + รวมแบบไม่ซ้ำ (ไว้นับ/คัดลอก/Excel)
+    const groups = terms.map(t => Object.assign({ term: t }, searchOne(t)));
+    const results = [], regOnly = [];
+    const _sR = {}, _sG = {};
+    groups.forEach(g => {
+        g.results.forEach(x => { if (!_sR[x.m.id]) { _sR[x.m.id] = 1; results.push(x); } });
+        g.regOnly.forEach(p => { const k = p.pn || p.mdl; if (k && !_sG[k]) { _sG[k] = 1; regOnly.push(p); } });
+    });
     // ── สร้างข้อความสรุปสำหรับส่งต่อ (LINE/Email) ──
     function copyResults() {
         const now = new Date();
@@ -3080,28 +3121,8 @@ function QuickCheckPage({ materials, lots, toast }) {
         });
         exportXLSX([{ name: "เช็คสต๊อก", headers: headers, rows: rows }], "เช็คสต๊อก_" + new Date().toISOString().slice(0, 10) + ".xlsx");
     }
-    return React.createElement("div", { style: { maxWidth: 860, margin: "0 auto" } },
-        React.createElement("div", { style: { textAlign: "center", padding: "26px 0 6px" } },
-            React.createElement("div", { style: { fontSize: 34 } }, "🔍"),
-            React.createElement("div", { style: { fontSize: 19, fontWeight: 800, color: C.tx, marginTop: 4 } }, "เช็คสต๊อกวัตถุดิบด่วน"),
-            React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: C.acc2, letterSpacing: 2.5, marginTop: 2 } }, "QUICK STOCK CHECK"),
-            React.createElement("div", { style: { fontSize: 12.5, color: C.tx2, marginTop: 6 } }, "พิมพ์ Part No. / Model / Size / ชื่อวัตถุดิบ / ลูกค้า — ไม่ต้องเข้าสู่ระบบ")),
-        React.createElement("input", { autoFocus: true, value: q, onChange: e => setQ(e.target.value), placeholder: "เช่น 460-4010 หรือ 6.35x0.7 หรือ CORONA", style: { width: "100%", boxSizing: "border-box", padding: "14px 20px", fontSize: 17, fontFamily: "inherit", border: "2px solid " + C.acc2, borderRadius: 12, outline: "none", background: C.sur, color: C.tx, marginTop: 10, boxShadow: "0 2px 10px rgba(9,105,218,.08)" } }),
-        ql.length < 2
-            ? React.createElement("div", { style: { textAlign: "center", color: C.tx3, fontSize: 12.5, marginTop: 24, lineHeight: 2 } },
-                "ตัวอย่างการค้นหา:", React.createElement("br", null),
-                "• พิมพ์ Part No. เช่น SU00N685G19 → เห็นทุก size ที่ใช้กับงานนี้ พร้อมยอดคงเหลือ", React.createElement("br", null),
-                "• พิมพ์ Size เช่น 9.52x0.8 → เห็นวัตถุดิบทุก maker ของ size นี้", React.createElement("br", null),
-                "• พิมพ์ชื่อลูกค้า เช่น CORONA → เห็นวัตถุดิบทั้งหมดที่ใช้กับลูกค้ารายนี้")
-            : React.createElement("div", { style: { marginTop: 18 } },
-                React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 } },
-                    React.createElement("div", { style: { fontSize: 12.5, color: C.tx2, fontWeight: 600, flex: 1, minWidth: 160 } }, "พบ " + results.length + " รายการในคลัง" + (regOnly.length ? " · อีก " + regOnly.length + " รายการอยู่ในทะเบียนแต่ไม่พบวัตถุดิบในคลัง" : "")),
-                    results.length > 0 && React.createElement(React.Fragment, null,
-                        React.createElement(Btn, { v: "primary", sz: "xs", onClick: copyResults }, "📋 คัดลอกผล"),
-                        React.createElement(Btn, { v: "ghost", sz: "xs", onClick: shareLink }, "🔗 คัดลอกลิงก์"),
-                        React.createElement(Btn, { v: "ghost", sz: "xs", onClick: exportResults }, "📊 Excel"))),
-                results.length === 0 && regOnly.length === 0 && React.createElement("div", { style: { textAlign: "center", padding: 30, color: C.tx2, background: C.sur, border: "1px solid " + C.brd, borderRadius: 10 } }, "ไม่พบข้อมูลที่ตรงกับ \"" + q + "\""),
-                results.map(x => {
+    // การ์ดผลลัพธ์ 1 ใบ — ใช้ร่วมกันทั้งแบบคำเดียวและแบบค้นหลาย size
+    function qcCard(x) {
                     const m = x.m; const st = x.st;
                     const mkc = getMakerColor(null, m);
                     const has = st.kgs + st.pcs + st.coil + (st.m || 0) > 0;
@@ -3126,7 +3147,44 @@ function QuickCheckPage({ materials, lots, toast }) {
                                 ? React.createElement("div", { style: { fontFamily: "monospace", fontSize: 17, fontWeight: 800, color: low ? "#9a6700" : C.ok } }, parts.join(" · "))
                                 : React.createElement("div", { style: { fontSize: 15, fontWeight: 800, color: C.err } }, "หมด"),
                             low ? React.createElement("div", { style: { fontSize: 10.5, color: "#9a6700", fontWeight: 700 } }, "⚠ ต่ำกว่า Min (" + fmtQty(m.minStock) + ")") : null));
-                }),
+    }
+    return React.createElement("div", { style: { maxWidth: 860, margin: "0 auto" } },
+        React.createElement("div", { style: { textAlign: "center", padding: "26px 0 6px" } },
+            React.createElement("div", { style: { fontSize: 34 } }, "🔍"),
+            React.createElement("div", { style: { fontSize: 19, fontWeight: 800, color: C.tx, marginTop: 4 } }, "เช็คสต๊อกวัตถุดิบด่วน"),
+            React.createElement("div", { style: { fontSize: 11.5, fontWeight: 700, color: C.acc2, letterSpacing: 2.5, marginTop: 2 } }, "QUICK STOCK CHECK"),
+            React.createElement("div", { style: { fontSize: 12.5, color: C.tx2, marginTop: 6 } }, "พิมพ์ Part No. / Model / Size / ชื่อวัตถุดิบ / ลูกค้า — ไม่ต้องเข้าสู่ระบบ")),
+        // ใช้ textarea เพื่อให้ "วาง" ทั้งคอลัมน์จาก Excel ได้ (ขึ้นบรรทัดใหม่ = คนละ size)
+        // สูงขึ้นเองตามจำนวนบรรทัด · กด Enter ขึ้นบรรทัดใหม่เพื่อค้นหลาย size พร้อมกัน
+        React.createElement("textarea", { autoFocus: true, value: q, rows: Math.min(6, Math.max(1, String(q || "").split("\n").length)),
+            onChange: e => setQ(e.target.value),
+            placeholder: "เช่น 460-4010 หรือ 6.35x0.7 หรือ CORONA\nหลาย size พร้อมกัน: คั่นด้วย , หรือขึ้นบรรทัดใหม่ (วางจาก Excel ได้เลย)",
+            style: { width: "100%", boxSizing: "border-box", padding: "14px 20px", fontSize: 17, fontFamily: "inherit", border: "2px solid " + C.acc2, borderRadius: 12, outline: "none", background: C.sur, color: C.tx, marginTop: 10, boxShadow: "0 2px 10px rgba(9,105,218,.08)", resize: "vertical", lineHeight: 1.5 } }),
+        terms.length > 1 && React.createElement("div", { style: { fontSize: 12, color: C.acc2, fontWeight: 700, marginTop: 6 } },
+            "🔎 ค้นพร้อมกัน " + terms.length + " รายการ"),
+        terms.length === 0
+            ? React.createElement("div", { style: { textAlign: "center", color: C.tx3, fontSize: 12.5, marginTop: 24, lineHeight: 2 } },
+                "ตัวอย่างการค้นหา:", React.createElement("br", null),
+                "• พิมพ์ Part No. เช่น SU00N685G19 → เห็นทุก size ที่ใช้กับงานนี้ พร้อมยอดคงเหลือ", React.createElement("br", null),
+                "• พิมพ์ Size เช่น 9.52x0.8 → เห็นวัตถุดิบทุก maker ของ size นี้", React.createElement("br", null),
+                "• พิมพ์ชื่อลูกค้า เช่น CORONA → เห็นวัตถุดิบทั้งหมดที่ใช้กับลูกค้ารายนี้")
+            : React.createElement("div", { style: { marginTop: 18 } },
+                React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 } },
+                    React.createElement("div", { style: { fontSize: 12.5, color: C.tx2, fontWeight: 600, flex: 1, minWidth: 160 } }, "พบ " + results.length + " รายการในคลัง" + (regOnly.length ? " · อีก " + regOnly.length + " รายการอยู่ในทะเบียนแต่ไม่พบวัตถุดิบในคลัง" : "")),
+                    results.length > 0 && React.createElement(React.Fragment, null,
+                        React.createElement(Btn, { v: "primary", sz: "xs", onClick: copyResults }, "📋 คัดลอกผล"),
+                        React.createElement(Btn, { v: "ghost", sz: "xs", onClick: shareLink }, "🔗 คัดลอกลิงก์"),
+                        React.createElement(Btn, { v: "ghost", sz: "xs", onClick: exportResults }, "📊 Excel"))),
+                results.length === 0 && regOnly.length === 0 && React.createElement("div", { style: { textAlign: "center", padding: 30, color: C.tx2, background: C.sur, border: "1px solid " + C.brd, borderRadius: 10 } }, "ไม่พบข้อมูลที่ตรงกับ \"" + q + "\""),
+                (terms.length > 1
+                    ? groups.map(g => React.createElement("div", { key: g.term, style: { marginBottom: 14 } },
+                        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", marginBottom: 6, background: "rgba(9,105,218,.06)", border: "1px solid rgba(9,105,218,.25)", borderRadius: 8 } },
+                            React.createElement("span", { style: { fontFamily: "monospace", fontSize: 14, fontWeight: 800, color: C.acc } }, g.term),
+                            React.createElement("span", { style: { fontSize: 11.5, color: C.tx2, fontWeight: 700 } }, g.results.length ? "พบ " + g.results.length + " รายการ" : "ไม่พบในคลัง")),
+                        g.results.length
+                            ? g.results.map(qcCard)
+                            : React.createElement("div", { style: { padding: "10px 14px", color: C.tx2, fontSize: 12, background: C.sur, border: "1px dashed " + C.brd, borderRadius: 8 } }, "— ไม่พบวัตถุดิบที่ตรงกับคำนี้ —")))
+                    : results.map(qcCard)),
                 regOnly.length > 0 && React.createElement("div", { style: { marginTop: 6, padding: "11px 14px", background: "rgba(154,103,0,.07)", border: "1px solid rgba(154,103,0,.4)", borderRadius: 8, fontSize: 12, color: "#9a6700", lineHeight: 1.75 } },
                     React.createElement("div", { style: { fontWeight: 800, marginBottom: 3 } }, "⚠️ Part No. นี้ยังไม่ได้ผูกกับวัตถุดิบในคลัง"),
                     React.createElement("div", null, regOnly.map(p => (p.pn || "") + (p.sz ? " (" + String(p.sz).replace(/^size:/i, "") + ")" : "")).join(" · ")),
@@ -4028,7 +4086,10 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                 if (field === "maker") {
                     // ถ้ามาจากการเลือก Part No. ที่ตรงกันหลาย Maker → เปลี่ยน Maker แล้ว auto เข้า Size ตัวที่ตรงกับ Part No. นั้นทันที
                     // ไม่ต้องให้ผู้ใช้ไปเลือก Size ใหม่จากลิสต์ทั้งหมด (กันเลือกผิดตัว)
-                    const cand = (it._modelMatches || []).find(m => m.maker === val);
+                    // แต่ถ้า Maker นั้นมีหลายตัว (Part No. เดียวผูกไว้หลายความยาว) ห้ามเดา
+                    // ให้ปล่อยว่างไว้แล้วแสดงปุ่มให้เลือกความยาวเอง
+                    const _cands = (it._modelMatches || []).filter(m => m.maker === val);
+                    const cand = _cands.length === 1 ? _cands[0] : null;
                     if (cand) {
                         const nl = (lots[cand.id] || []).find(l => (l.rem_kgs || 0) > 0 || (l.rem_pcs || 0) > 0 || (l.rem_coil || 0) > 0 || (l.rem_m || 0) > 0);
                         n.matId = cand.id;
@@ -4099,15 +4160,20 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                     // Part No. หนึ่งอาจผูกกับวัตถุดิบหลายตัว (สินค้า 1 ชิ้นใช้ทั้งท่อและลวดเชื่อม
                     // หรือ size เดียวกันมีหลาย Maker) — ถ้าทะเบียนระบุ Vendor ไว้ ให้ใช้ Vendor ตัดสิน
                     // แล้วเติม Maker ให้เลย ไม่ต้องปล่อยว่างให้ผู้ใช้เดาเอง
-                    if (matched.length > 1 && pe && pe.vnd) {
+                    // แต่ให้ Vendor ตัดสินแค่ "Maker" เท่านั้น — ไม่ตัดเหลือตัวเดียว
+                    // (Maker เดียวกันมีหลายความยาว ถ้าตัดเหลือตัวเดียวจะได้ความยาวผิด)
+                    if (matched.length > 1 && pe && pe.vnd && [...new Set(matched.map(m => m.maker).filter(Boolean))].length > 1) {
                         const ranked = findMatsForPart(pe, materials);
                         const top = ranked[0];
-                        if (top && (!it.type || top.type === it.type) && _makerScore(pe.vnd, top.maker) > 0) matched = [top];
+                        if (top && (!it.type || top.type === it.type) && _makerScore(pe.vnd, top.maker) > 0) {
+                            const sameMk = matched.filter(m => m.maker === top.maker);
+                            matched = sameMk.length ? sameMk : [top];
+                        }
                     }
                     const uniqMakers = [...new Set(matched.map(m => m.maker).filter(Boolean))];
 
-                    if (matched.length >= 1 && uniqMakers.length <= 1) {
-                        // Part No. นี้มี Maker เดียว (หรือ material เดียว) → เติม Size+Maker ให้ครบอัตโนมัติ
+                    if (matched.length === 1) {
+                        // เจอตัวเดียวเท่านั้น → เติม Size+Maker ให้ครบอัตโนมัติ
                         const m = matched[0];
                         const nl = (lots[m.id] || []).find(l => (l.rem_kgs || 0) > 0 || (l.rem_pcs || 0) > 0 || (l.rem_coil || 0) > 0 || (l.rem_m || 0) > 0);
                         n.type = m.type;
@@ -4119,11 +4185,13 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                         n.unit = defaultUnitOf(m);
                         n._modelMatches = null;
                     }
-                    else if (uniqMakers.length > 1) {
-                        // Size เดียวกัน แต่มีหลาย Maker → เติมแค่ประเภทให้ ปล่อยให้เลือก Maker เอง
-                        // (กันเลือกผิดตัวแบบเดียวกับที่เคยเกิดตอนรับของ — ต้องให้คนเลือก ไม่ auto เดา)
+                    else if (matched.length > 1) {
+                        // เจอมากกว่า 1 ตัว → ห้ามเดา ให้คนเลือก
+                        //  - หลาย Maker → เติมแค่ประเภท ปล่อยให้เลือก Maker เอง
+                        //  - Maker เดียวแต่หลายความยาว (Part No. ของ SANKIN ผูกครอบทุกความยาว)
+                        //    → เติม Maker ให้ แล้วแสดงปุ่มความยาว+ยอดคงเหลือให้กดเลือก
                         if (!it.type) n.type = matched[0].type;   // ไม่ทับหมวดที่ผู้ใช้เลือกไว้เอง
-                        n.maker = "";
+                        n.maker = uniqMakers.length === 1 ? uniqMakers[0] : "";
                         n.matId = "";
                         n.partNo = matched[0].partNo;
                         n._nextLot = "";
@@ -4248,7 +4316,30 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                                         rel.length > 4 ? React.createElement("span", { style: { color: C.tx3 } }, "+" + (rel.length - 4) + " รายการ") : null);
                                 })());
                         })(),
-                        !it.matId && it._modelMatches && it._modelMatches.length > 1 && React.createElement("div", { style: { fontSize: 10.5, color: "#9a6700", marginTop: 3, fontWeight: 600 } },
+                        !it.matId && it._modelMatches && it._modelMatches.length > 1 && [...new Set(it._modelMatches.map(m => m.maker).filter(Boolean))].length === 1 && (() => {
+                            // Part No. เดียวผูกไว้หลายความยาว (SANKIN size เดียวมีหลายความยาว)
+                            // → ห้ามเดาตัวแรก ให้กดเลือกความยาว พร้อมโชว์ยอดคงเหลือให้เห็นก่อนตัดสินใจ
+                            const cut = s => String(s == null ? "" : s).replace(/^size:/i, "").replace(/mm\s*$/i, "").replace(/,/g, "").trim();
+                            const lastOf = m => parseFloat(cut(m.size).split(/[xX]/).pop()) || 0;
+                            const headOf = m => cut(m.size).split(/[xX]/).slice(0, -1).join("x");
+                            const mm = it._modelMatches.slice().sort((a, b) => lastOf(a) - lastOf(b));
+                            const sameHead = cut(mm[0].size).split(/[xX]/).length >= 2 && mm.every(m => headOf(m) === headOf(mm[0]));
+                            return React.createElement("div", { style: { marginTop: 4 } },
+                                React.createElement("div", { style: { fontSize: 10.5, color: "#9a6700", fontWeight: 600 } },
+                                    "⚠️ Part No. นี้ผูกไว้ " + mm.length + " รายการ — กดเลือกความยาวที่จะเบิก"),
+                                React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 4, marginTop: 3 } },
+                                    mm.map(m => {
+                                        const st = stockSummary(m.id).text;
+                                        const p = cut(m.size).split(/[xX]/);
+                                        return React.createElement("button", { key: m.id, type: "button",
+                                            onClick: () => updateItem(idx, "matId", m.id),
+                                            title: cut(m.size) + (m.temper && m.temper !== "-" ? " (" + m.temper + ")" : "") + " · " + m.maker + " · " + st,
+                                            style: { background: "rgba(130,80,223,.07)", border: "1px solid rgba(130,80,223,.3)", borderRadius: 5, color: "#8250df", cursor: "pointer", padding: "2px 7px", fontSize: 10.5, fontWeight: 700, fontFamily: "inherit" } },
+                                            sameHead ? "x" + p[p.length - 1] : cut(m.size),
+                                            React.createElement("span", { style: { fontWeight: 600, opacity: .8 } }, " (" + st + ")"));
+                                    })));
+                        })(),
+                        !it.matId && it._modelMatches && it._modelMatches.length > 1 && [...new Set(it._modelMatches.map(m => m.maker).filter(Boolean))].length > 1 && React.createElement("div", { style: { fontSize: 10.5, color: "#9a6700", marginTop: 3, fontWeight: 600 } },
                             "\u26a0\ufe0f Size \u0e19\u0e35\u0e49\u0e21\u0e35 ", it._modelMatches.length, " Maker \u2014 \u0e40\u0e25\u0e37\u0e2d\u0e01 Maker \u0e17\u0e32\u0e07\u0e02\u0e27\u0e32\u0e40\u0e1e\u0e37\u0e48\u0e2d\u0e23\u0e30\u0e1a\u0e38\u0e43\u0e2b\u0e49\u0e0a\u0e31\u0e14\u0e40\u0e08\u0e19")),
                     React.createElement(FG, { label: "Size" }, filtMats.length === 0 && it.type
                         ? React.createElement("div", { style: { ...roBoxStyle, background: "rgba(248,81,73,.08)", border: "1px solid rgba(248,81,73,.3)", color: "#cf222e" } }, "\u26D4 \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2A\u0E15\u0E4A\u0E2D\u0E01")
@@ -4328,9 +4419,10 @@ function ReqForm({ form, setForm, materials, lots, master, addCustomer, addDept,
                                         }));
                                 })());
                         })()),
-                    React.createElement(FG, { label: "Maker", note: it._modelMatches && it._modelMatches.length > 1 ? "Size นี้มีหลาย Maker — เลือกให้ตรง" : "กรองให้เหลือเฉพาะ Size ของ Maker นี้" }, (() => {
-                        if (it._modelMatches && it._modelMatches.length > 1) {
-                            const mmOpts = [...new Set(it._modelMatches.map(m => m.maker).filter(Boolean))];
+                    React.createElement(FG, { label: "Maker", note: it._modelMatches && [...new Set(it._modelMatches.map(m => m.maker).filter(Boolean))].length > 1 ? "Size นี้มีหลาย Maker — เลือกให้ตรง" : "กรองให้เหลือเฉพาะ Size ของ Maker นี้" }, (() => {
+                        // Part No. ตรงหลายตัวแต่ Maker เดียว = ไม่ใช่ปัญหา Maker (เป็นเรื่องความยาว) → ใช้ช่องปกติ
+                        const mmOpts = it._modelMatches ? [...new Set(it._modelMatches.map(m => m.maker).filter(Boolean))] : [];
+                        if (mmOpts.length > 1) {
                             return React.createElement(Sel, { value: it.maker || "", onChange: v => updateItem(idx, "maker", v), options: [{ v: "", l: "-- เลือก Maker (" + mmOpts.length + " ตัวเลือก) --" }, ...mmOpts.map(mk => ({ v: mk, l: mk }))], placeholder: "-- Maker --", style: { border: "1.5px solid " + C.warn } });
                         }
                         // หา makers ที่มีสต๊อกของ type+size ที่เลือก
@@ -4531,6 +4623,17 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
             const _availRaw = [...(lots[it.matId] || [])]
                 .filter(l => (l.rem_kgs || 0) > 0 || (l.rem_pcs || 0) > 0 || (l.rem_coil || 0) > 0 || (l.rem_m || 0) > 0)
                 .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+            // ใบเดียวกันอาจมีวัตถุดิบตัวเดียวกันหลายบรรทัด (คนละ W/O) — ของในลอตเป็นกองเดียวกัน
+            // ถ้าบรรทัดอื่นจองลอตนี้ไว้แล้ว ต้องหักออกก่อน ไม่งั้นเลือกรวมกันเกินของจริง
+            // แล้วตอนกดจ่ายระบบตัดได้ไม่ครบ (เคยเกิดกับ Ø22.20x0.8x2080 เลือก 351 แต่ตัดได้ 299)
+            const _resv = {};
+            (req.items || []).forEach((o, oi) => {
+                if (oi === i || o.matId !== it.matId || (o.unit || "PCS") !== (it.unit || "PCS")) return;
+                getSelLots(`${oi}_${o.matId}`).forEach(x => {
+                    const k = normLot(x.lotNo);
+                    _resv[k] = (_resv[k] || 0) + (parseFloat(x.qty) || 0);
+                });
+            });
             // Lot เลขเดียวกันที่รับคนละวัน = ของกองเดียวกัน → รวมเป็นบรรทัดเดียว กันสโตร์สับสน
             // ใช้วันที่เก่าสุดเป็นตัวแทน (FIFO) ส่วนตอนตัดจ่ายระบบตัดไล่จากใบรับเก่าไปใหม่ให้เอง
             const avail = (() => {
@@ -4546,7 +4649,20 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
                     if (cur._dates.indexOf(l.date) < 0) cur._dates.push(l.date);
                     if ((l.date || "") && (!cur.date || l.date < cur.date)) cur.date = l.date;
                 });
-                return [...map.values()].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+                // หักจำนวนที่บรรทัดอื่นในใบเดียวกันจองลอตนี้ไว้แล้ว
+                const out = [];
+                map.forEach((v, k) => {
+                    const hold = _resv[k] || 0;
+                    if (hold > 0) {
+                        v._held = hold;
+                        ["rem_kgs", "rem_pcs", "rem_coil", "rem_m"].forEach(f => {
+                            if (v[f] != null) v[f] = Math.max(0, v[f] - hold);
+                        });
+                    }
+                    const left = (v.rem_kgs || 0) + (v.rem_pcs || 0) + (v.rem_coil || 0) + (v.rem_m || 0);
+                    if (left > 0) out.push(v);
+                });
+                return out.sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
             })();
             const selKey = `${i}_${it.matId}`;
             const selList = getSelLots(selKey);
