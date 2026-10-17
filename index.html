@@ -234,6 +234,17 @@ function availOfLotU(l, u) {
 // (เช่น SHINBA (Supply) ต้องไม่กลายเป็น "SHINBA (Supply) (SHINBA)")
 // หน่วยเริ่มต้นตอนเขียนใบเบิก — งานม้วน (LWC / BOTH_KG_COIL) ต้องขึ้นเป็น COIL ให้เลย
 // เดิมขึ้นเป็น KGS ทำให้ฝ่ายผลิตลืมเปลี่ยนแล้วเบิก "2 KGS" ทั้งที่ตั้งใจเบิก 2 ม้วน
+// แยก "ชื่อวัตถุดิบ" กับ "ขนาด" ออกจากข้อความชื่อเดียวกัน เพื่อให้ใบเบิกโชว์ขนาดตัวใหญ่ชัดๆ
+// ชื่อในระบบมี 2 แบบ: มีคำว่า "size:" คั่น (ลวดเชื่อม/แหวน) และไม่มีคั่นแต่ต่อท้ายด้วยขนาด (ท่อทุกชนิด)
+// ถ้าหาขนาดไม่เจอ คืนชื่อไว้ในช่องขนาด (บรรทัดใหญ่) เพื่อไม่ให้ขึ้นขีด "-" ให้งง
+function splitNameSize(name) {
+    const s = String(name == null ? "" : name).trim();
+    const i = s.toLowerCase().indexOf("size:");
+    if (i >= 0) return { name: s.slice(0, i).trim(), size: s.slice(i + 5).trim() };
+    const m = s.match(/[Øøφ]\s*[\d.].*$/) || s.match(/\b\d+(?:\.\d+)?\s*[xX].*$/);
+    if (m && m.index > 0) return { name: s.slice(0, m.index).trim(), size: s.slice(m.index).trim() };
+    return { name: "", size: s };
+}
 // size มีความยาวเป็นมิลลิเมตร (ตัวเลขชุดที่ 3 เช่น Ø9.0x1.0x3000) = ของเป็นเส้น ไม่ใช่กอง/ม้วน
 function hasLengthSize(size) {
     const p = String(size == null ? "" : size).replace(/,/g, "").split(/[xX*]/);
@@ -2000,11 +2011,13 @@ function StoreFlow() {
                     : (ml[i].coil && ml[i].kgs) ? (ml[i].kgs / ml[i].coil)
                     : (reqKgs > 0 && reqCoil > 0) ? (reqKgs / reqCoil) : 0;
                 const cutKgs = ml[i].rem_kgs != null ? Math.min(ml[i].rem_kgs || 0, take * kgsPerCoil) : null;
+                // ประวัติลงน้ำหนักจริงของม้วนที่จ่าย ไม่ถูกจำกัดด้วยกิโลคงเหลือ (ดูเหตุผลที่สาขา PCS)
+                const histKgsC = kgsPerCoil > 0 ? take * kgsPerCoil : cutKgs;
                 const mPerCoil2 = (ml[i].coil && ml[i].m) ? (ml[i].m / ml[i].coil) : 0;
                 const cutM = (ml[i].rem_m != null && mPerCoil2 > 0) ? Math.min(ml[i].rem_m, take * mPerCoil2) : null;
                 ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (cutKgs || 0)) : ml[i].rem_kgs };
                 ml[i] = cutM != null ? { ...ml[i], rem_m: Math.max(0, (ml[i].rem_m || 0) - cutM) } : ml[i];
-                cuts.push({ lotNo, coil: take, kgs: cutKgs, pcs: null, m: cutM != null ? Math.round(cutM * 100) / 100 : null });
+                cuts.push({ lotNo, coil: take, kgs: histKgsC != null ? Math.round(histKgsC * 1000) / 1000 : null, pcs: null, m: cutM != null ? Math.round(cutM * 100) / 100 : null });
                 rem -= take;
                 if (grp) chosenBudget[grp] -= take;   // ตัดโควตาของ Lot นี้ลงด้วย
             } else if (unit === "KGS" && ml[i].rem_kgs != null) {
@@ -2029,10 +2042,14 @@ function StoreFlow() {
                 const kgsPerPcs = (realKgTotal > 0 && totalPcsReq > 0) ? (realKgTotal / totalPcsReq)
                     : (ml[i].kgs && ml[i].pcs) ? (ml[i].kgs / ml[i].pcs) : ((matInfo && matInfo.kpp) ? matInfo.kpp : 0);
                 const cutKgs = (ml[i].rem_kgs != null && kgsPerPcs > 0) ? Math.min(ml[i].rem_kgs, take * kgsPerPcs) : null;
+                // น้ำหนักที่ลงประวัติ = น้ำหนักจริงของจำนวนที่จ่ายออก (ไม่ถูกจำกัดด้วยกิโลคงเหลือในลอต)
+                // เดิมลงเท่าที่ตัดได้ ถ้าช่องกิโลของลอตเหลือน้อยกว่าความจริง ประวัติจะได้กิโลน้อยผิดปกติ
+                // (เคยเกิด 10/10/2026 — 200 เส้น ลงไว้ 0.15 kg) ฝ่ายบัญชีจึงคิดต้นทุนไม่ได้
+                const histKgs = kgsPerPcs > 0 ? take * kgsPerPcs : cutKgs;
                 ml[i] = { ...ml[i], rem_pcs: Math.max(0, (ml[i].rem_pcs || 0) - take) };
                 if (cutKgs != null)
                     ml[i] = { ...ml[i], rem_kgs: Math.max(0, (ml[i].rem_kgs || 0) - cutKgs) };
-                cuts.push({ lotNo, coil: null, kgs: cutKgs != null ? Math.round(cutKgs * 1000) / 1000 : null, pcs: take, m: null });
+                cuts.push({ lotNo, coil: null, kgs: histKgs != null ? Math.round(histKgs * 1000) / 1000 : null, pcs: take, m: null });
                 rem -= take;
                 if (grp) chosenBudget[grp] -= take;   // ตัดโควตาของ Lot นี้ลงด้วย
             }
@@ -2681,6 +2698,34 @@ function StoreFlow() {
                     });
                     const lotOver = Object.keys(lotSum).filter(k => lotSum[k] > (lotCap[k] || 0) + 0.001)
                         .map(k => { const p = k.split("|"); return { lot: p[1], u: p[2], sel: lotSum[k], have: lotCap[k] || 0 }; });
+                    // น้ำหนักที่ชั่งมาเพี้ยนจากปกติเกิน 25% = น่าจะใส่ผิด (เคยเกิด 10/10/2026 ใส่ 0.15 kg ให้ 200 เส้น)
+                    // ช่องนี้คือ "น้ำหนักรวมทั้งรายการ" ไม่ใช่น้ำหนักต่อเส้น
+                    const kgOff = [];
+                    (_r && _r.items || []).forEach((it, idx) => {
+                        const u = it.unit || "PCS";
+                        if (u === "KGS" || u === "M") return;
+                        const typed = parseFloat(((realKgs || {})[`${idx}_${it.matId}`]) || "") || 0;
+                        if (typed <= 0) return;
+                        const sel = ((selectedLots || {})[`${idx}_${it.matId}`] || []);
+                        const qty = sel.reduce((s, x) => s + (parseFloat(x.qty) || 0), 0) || (parseFloat(it.qty) || 0);
+                        if (qty <= 0) return;
+                        const ml = lots[it.matId] || [];
+                        const key = (u === "COIL" || u === "COIL+KGS") ? "coil" : "pcs";
+                        const sumOf = k => ml.reduce((s, l) => s + (Number(l[k]) || 0), 0);
+                        const ref = (sumOf("kgs") > 0 && sumOf(key) > 0) ? sumOf("kgs") / sumOf(key) : 0;
+                        if (!ref) return;
+                        const got = typed / qty;
+                        if (Math.abs(got - ref) / ref > 0.25)
+                            kgOff.push({ name: sizeTxt(it.name), typed, qty, u, got, ref, exp: qty * ref,
+                                w: (u === "COIL" || u === "COIL+KGS") ? "ม้วน" : "เส้น" });
+                    });
+                    if (kgOff.length) return React.createElement(Btn, { v: "danger", onClick: () => window.alert(
+                        "⛔ น้ำหนักที่ชั่งมาไม่สมเหตุสมผล — กรุณาตรวจสอบช่อง \"น้ำหนักจริงที่ชั่งได้\"\n\n"
+                        + kgOff.map(x => "  • " + x.name + "\n      ใส่ไว้ " + fmtQty(x.typed, 2) + " kg สำหรับ " + fmtQty(x.qty, 0) + " " + x.u
+                            + " = " + fmtQty(x.got, 3) + " kg/" + x.w
+                            + "\n      ปกติของ size นี้ " + fmtQty(x.ref, 3) + " kg/" + x.w + " → ควรประมาณ " + fmtQty(x.exp, 2) + " kg").join("\n")
+                        + "\n\nช่องนี้ให้ใส่ \"น้ำหนักรวมทั้งรายการ\" ไม่ใช่น้ำหนักต่อเส้น\nถ้าไม่ได้ชั่ง เว้นว่างไว้ ระบบจะคำนวณให้เอง") },
+                        "⛔ น้ำหนักที่ใส่ผิดปกติ (" + kgOff.length + " รายการ)");
                     if (lotOver.length) return React.createElement(Btn, { v: "danger", onClick: () => window.alert(
                         "⛔ เลือก Lot เกินของที่มีจริง — กรุณาตรวจสอบข้อมูลอีกครั้ง\n\n"
                         + lotOver.map(x => "  • Lot " + x.lot + "\n      ในคลังมี " + fmtQty(x.have, 2) + " " + x.u
@@ -3825,6 +3870,9 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
         // ไม่งั้นทุกบรรทัดจะโชว์ lot ซ้ำกันหมดและน้ำหนักถูกนับซ้ำ
         const issQ = {};
         (issueHist || []).filter(h => h.reqId === r.id).forEach(h => { (issQ[h.name] = issQ[h.name] || []).push(h); });
+        // เรียงตามลำดับที่บันทึกจริง (_dbId) — ตัวโหลดเรียงใหม่→เก่า ถ้าไม่เรียงกลับ
+        // บรรทัดแรกจะไปคว้าแถวของบรรทัดอื่นมาแสดง (เคยทำให้ใบ 0070-R01 บรรทัดที่ 1 ขอ 240 แต่โชว์จ่ายจริง 660)
+        Object.keys(issQ).forEach(k => issQ[k].sort((a, b) => (a._dbId || 0) - (b._dbId || 0)));
         const dupName = {};
         (r.items || []).forEach(x => { dupName[x.name] = (dupName[x.name] || 0) + 1; });
         const issuedOf = (it) => {
@@ -3835,26 +3883,48 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
             const fld = u === "KGS" ? "kgs" : u.indexOf("COIL") === 0 ? "coil" : u === "M" ? "m" : "pcs";
             const want = parseFloat(it.qty) || 0;
             const out = []; let got = 0;
-            while (q.length && got < want - 0.001) { const h = q.shift(); out.push(h); got += parseFloat(h[fld]) || 0; }
+            // แบ่งทีละแถว และถ้าแถวนั้นมากกว่าที่บรรทัดนี้ขอ ให้ "ผ่าแถว" เก็บส่วนเกินไว้ให้บรรทัดถัดไป
+            // (ห้ามยกแถวทั้งก้อนมาใส่บรรทัดที่ขอน้อยกว่า ไม่งั้นตัวเลขจ่ายจริงจะเกินที่ขอบนกระดาษ)
+            while (q.length && got < want - 0.001) {
+                const h = q[0];
+                const hv = parseFloat(h[fld]) || 0;
+                const left = want - got;
+                if (hv <= left + 0.001) { out.push(h); got += hv; q.shift(); continue; }
+                const ratio = hv > 0 ? left / hv : 0;
+                const part = Object.assign({}, h), rest = Object.assign({}, h);
+                ["pcs", "kgs", "coil", "m"].forEach(f => {
+                    const v = parseFloat(h[f]) || 0;
+                    if (!v) return;
+                    const take = f === fld ? left : Math.round(v * ratio * 1000) / 1000;
+                    part[f] = take;
+                    rest[f] = Math.round((v - take) * 1000) / 1000;
+                });
+                out.push(part); q[0] = rest; got += left;
+            }
             return out;
         };
         const rows = (r.items || []).map((it, i) => {
-            const szIdx = (it.name || "").toLowerCase().indexOf("size:");
-            const nm = szIdx >= 0 ? it.name.slice(0, szIdx).trim() : (it.name || "");
-            const sz = szIdx >= 0 ? it.name.slice(szIdx + 5).trim() : "";
+            // ขนาดต้องเป็นตัวใหญ่สุดในช่องนี้ สโตร์/ฝ่ายผลิตอ่านจากขนาดเป็นหลัก
+            const _ns = splitNameSize(it.name);
+            const nm = _ns.name, sz = _ns.size;
             const tp = itemTemper(it);
             const qty = (it.qty != null ? fmtQty(it.qty) : "") + " " + (it.unit || "");
             const iss = issuedOf(it);
             const sumF = f => iss.reduce((s, h) => s + (parseFloat(h[f]) || 0), 0);
             const issKg = sumF("kgs"), issPcs = sumF("pcs"), issCoil = sumF("coil"), issM = sumF("m");
             // บรรทัดรองในช่องจำนวน: ก่อนจ่าย = น้ำหนักประมาณการ · จ่ายแล้ว = น้ำหนักจ่ายจริง
+            // จ่ายไม่ครบตามที่ขอ ต้องเห็นบนกระดาษด้วย ไม่ใช่รู้ทีหลังตอนของไม่พอหน้างาน
+            const _u2 = (it.unit || "PCS").toUpperCase();
+            const _issU = _u2 === "KGS" ? issKg : _u2.indexOf("COIL") === 0 ? issCoil : _u2 === "M" ? issM : issPcs;
+            const _lack = (parseFloat(it.qty) || 0) - _issU;
             const sub = iss.length
                 ? ("จ่ายจริง " + [issPcs ? fmtQty(issPcs) + " PCS" : "", issCoil ? fmtQty(issCoil) + " COIL" : "",
-                    issM ? fmtQty(issM, 1) + " M" : "", issKg ? fmtQty(issKg, 2) + " KGS" : ""].filter(Boolean).join(" · "))
+                    issM ? fmtQty(issM, 1) + " M" : "", issKg ? fmtQty(issKg, 2) + " KGS" : ""].filter(Boolean).join(" · ")
+                    + (_lack > 0.001 ? " · ขาด " + fmtQty(_lack, 2) + " " + (it.unit || "") : ""))
                 : [it.kgs ? "≈ " + fmtQty(it.kgs, 2) + " KGS" : "", it.m ? fmtQty(it.m, 1) + " M" : ""].filter(Boolean).join(" · ");
             return "<tr>"
                 + "<td class='c'>" + (i + 1) + "</td>"
-                + "<td><div class='b'>" + esc(sz || nm) + "</div>" + (sz ? "<div class='s'>" + esc(nm) + "</div>" : "") + (tp ? "<div class='s'>Temper: " + esc(tp) + "</div>" : "") + "</td>"
+                + "<td><div class='sz'>" + esc(sz || nm) + "</div>" + (sz && nm ? "<div class='s'>" + esc(nm) + "</div>" : "") + (tp ? "<div class='s'>Temper: " + esc(tp) + "</div>" : "") + "</td>"
                 + "<td>" + esc(it.maker || "-") + "</td>"
                 + "<td><div class='b'>" + esc(it.model || "-") + "</div>" + (it.customer ? "<div class='s'>" + esc(it.customer) + "</div>" : "") + "</td>"
                 // W/O และ Forecast ของรายการนี้ (ถ้าไม่ได้ระบุ ใช้ของหัวใบ) — ฝ่ายผลิตขอให้เห็นทีละรายการ
@@ -3886,6 +3956,8 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
             + "th{background:#e9edf2;border:1px solid #999;padding:5px 6px;text-align:left;font-size:10.5px;font-weight:800;letter-spacing:.3px}"
             + "td{border:1px solid #999;padding:5px 6px;vertical-align:top}"
             + ".c{text-align:center}.r{text-align:right}.b{font-weight:700}.s{font-size:10px;color:#555;margin-top:1px}"
+            // ขนาดวัตถุดิบ: ตัวใหญ่กว่าบรรทัดอื่นในช่อง เพื่อให้มองเห็นว่าเบิก size ไหนทันที
+            + ".sz{font-size:14px;font-weight:800;letter-spacing:.2px;line-height:1.25}"
             + ".nt{border:1px solid #999;border-top:none;padding:6px 8px;font-size:11px;min-height:26px}"
             + ".sgs{display:flex;justify-content:space-between;gap:16px;margin-top:26px}"
             + ".sg{flex:1;text-align:center}.sl{border-bottom:1px dotted #333;height:30px}"
@@ -4026,16 +4098,16 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
                             [["MATERIAL / SIZE", "left", "8px 14px"], ["MAKER", "left", "8px 10px"], ["PART NO. / CUSTOMER", "left", "8px 10px"], ["Q'TY", "right", "8px 14px"], ["NEXT LOT (FIFO)", "left", "8px 14px"]].map((h, hi) =>
                                 React.createElement("th", { key: h[0], style: { textAlign: h[1], padding: h[2], fontSize: 10.5, color: "#4a5560", fontWeight: 800, letterSpacing: 0.6, whiteSpace: "nowrap", borderBottom: "1px solid #1b1f24", borderRight: hi < 4 ? "1px solid #6e7781" : "none" } }, h[0])))),
                     React.createElement("tbody", null, r.items.map((it, i) => {
-                        const szIdx = (it.name || "").toLowerCase().indexOf("size:");
-                        const matName = szIdx >= 0 ? it.name.slice(0, szIdx).trim() : (it.name || "");
-                        const matSize = szIdx >= 0 ? it.name.slice(szIdx + 5).trim() : "";
+                        // แยกชื่อ/ขนาด แล้วโชว์ "ขนาด" เป็นบรรทัดใหญ่ (เดิมท่อจะขึ้นขีด "-" เพราะชื่อไม่มีคำว่า size:)
+                        const _ns = splitNameSize(it.name);
+                        const matName = _ns.name, matSize = _ns.size;
                         const mkc = getMakerColor(null, { maker: it.maker });
                         const bb = i < r.items.length - 1 ? "1px solid #6e7781" : "none";
                         const br = "1px solid #6e7781";
                         return React.createElement("tr", { key: i },
                             React.createElement("td", { style: { padding: "10px 14px", borderBottom: bb, borderRight: br } },
-                                React.createElement("div", { style: { fontSize: 11.5, color: C.tx2, fontWeight: 600 } }, matName),
-                                React.createElement("div", { style: { fontFamily: "monospace", fontSize: 17, fontWeight: 800, color: C.tx } }, matSize || "-"),
+                                matName ? React.createElement("div", { style: { fontSize: 11.5, color: C.tx2, fontWeight: 600 } }, matName) : null,
+                                React.createElement("div", { style: { fontFamily: "monospace", fontSize: 19, fontWeight: 800, color: C.tx, lineHeight: 1.25 } }, matSize),
                                 (() => { const tp = itemTemper(it); return tp ? React.createElement("div", { style: { marginTop: 3 } }, React.createElement("span", { style: { fontSize: 11, fontWeight: 800, color: "#8250df", background: "rgba(130,80,223,.1)", border: "1px solid rgba(130,80,223,.3)", borderRadius: 5, padding: "1px 8px", whiteSpace: "nowrap" } }, "Temper: " + tp)) : null; })()),
                             React.createElement("td", { style: { padding: 10, borderBottom: bb, borderRight: br } },
                                 React.createElement(Tag, { color: mkc.text, bg: mkc.bg, brd: mkc.border }, it.maker || "-")),
@@ -4778,13 +4850,28 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
                 // น้ำหนักจริงที่ชั่งได้ตอนจ่าย — ของเส้น/ม้วนน้ำหนักไม่เท่ากันทุกเส้น ถ้าชั่งแล้วใส่ตัวเลขจริงได้ ยอดกิโลจะแม่นกว่า
                 // ไม่ใส่ก็ได้ ระบบจะคำนวณจากสัดส่วนของ lot เหมือนเดิม
                 (avail.some(l => l.rem_kgs != null) && _u !== "KGS") ? React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, margin: "0 0 10px", padding: "7px 10px", background: "rgba(130,80,223,.05)", border: "1px solid rgba(130,80,223,.25)", borderRadius: 7, flexWrap: "wrap" } },
-                    React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: "#8250df" } }, "⚖️ น้ำหนักจริงที่ชั่งได้ (KGS)"),
+                    React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: "#8250df" } }, "⚖️ น้ำหนักจริงที่ชั่งได้ — รวมทั้งรายการ (KGS)"),
                     React.createElement("input", { type: "number", min: "0", step: "0.01",
                         value: (realKgs && realKgs[selKey]) || "",
                         onChange: e => setRealKgs && setRealKgs(s => ({ ...s, [selKey]: e.target.value })),
                         placeholder: "ไม่ใส่ก็ได้ — ระบบจะคำนวณให้เอง",
                         style: { width: 130, background: C.sur, border: "1px solid " + C.brd, borderRadius: 6, padding: "5px 10px", color: C.tx, fontFamily: "monospace", fontSize: 12, outline: "none", textAlign: "right" } }),
-                    React.createElement("span", { style: { fontSize: 10, color: C.tx3 } }, "ใส่แล้วตัดกิโลตามนี้ และประวัติเบิกจะบันทึกน้ำหนักนี้")) : null,
+                    (() => {
+                        // บอกน้ำหนักที่ควรจะเป็นไว้ข้างช่อง และเตือนทันทีถ้าตัวเลขที่ใส่เพี้ยนเกิน 25%
+                        // (ช่องนี้เคยถูกใส่เป็น "น้ำหนักต่อเส้น" ทำให้ประวัติกิโลเพี้ยน)
+                        const ml = (lots[it.matId] || []);
+                        const key = (_u === "COIL" || _u === "COIL+KGS") ? "coil" : "pcs";
+                        const sumOf = k => ml.reduce((s, l) => s + (Number(l[k]) || 0), 0);
+                        const ref = (sumOf("kgs") > 0 && sumOf(key) > 0) ? sumOf("kgs") / sumOf(key) : 0;
+                        const w = key === "coil" ? "ม้วน" : "เส้น";
+                        const qty = totalSel || targetQty;
+                        const typed = parseFloat((realKgs && realKgs[selKey]) || "") || 0;
+                        if (!ref || qty <= 0) return React.createElement("span", { style: { fontSize: 10, color: C.tx3 } }, "ใส่แล้วประวัติเบิกจะบันทึกน้ำหนักนี้");
+                        const off = typed > 0 && Math.abs(typed / qty - ref) / ref > 0.25;
+                        return React.createElement("span", { style: { fontSize: 10, color: off ? "#cf222e" : C.tx3, fontWeight: off ? 700 : 400 } },
+                            off ? "⛔ " + fmtQty(typed / qty, 3) + " kg/" + w + " ผิดปกติ — ปกติ " + fmtQty(ref, 3) + " kg/" + w + " (" + fmtQty(qty, 0) + " " + w + " ≈ " + fmtQty(qty * ref, 2) + " kg)"
+                                : fmtQty(qty, 0) + " " + w + " ≈ " + fmtQty(qty * ref, 2) + " kg (" + fmtQty(ref, 3) + " kg/" + w + ")");
+                    })()) : null,
                 avail.length === 0
                     ? React.createElement("div", { style: { color: C.err, fontSize: 12, padding: "8px 0" } }, "\u26A0\uFE0F \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2A\u0E15\u0E4A\u0E2D\u0E01")
                     : React.createElement("div", null,
@@ -5564,11 +5651,16 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
     const kgOfHist = r => {
         const act = Number(r.kgs) || 0;
         const qty = Number(r.pcs != null && r.pcs !== "" ? r.pcs : r.coil) || 0;
-        if (act > 0) return { kg: act, per: qty > 0 ? act / qty : 0, est: false, src: "act" };
-        const k = kgPerUnitOf(r);
+        const k = kgPerUnitOf(r);   // ค่าอ้างอิง (กิโล/หน่วย) ของ size นี้
+        if (act > 0) {
+            const per = qty > 0 ? act / qty : 0;
+            // น้ำหนักที่บันทึกไว้เพี้ยนจากค่าปกติเกิน 25% = น่าจะใส่ผิดตอนจ่าย → ขึ้นเตือนให้ตรวจ
+            const susp = k.per > 0 && per > 0 && Math.abs(per - k.per) / k.per > 0.25;
+            return { kg: act, per: per, est: false, src: "act", ref: k.per, susp: susp, exp: qty * k.per };
+        }
         return (k.per > 0 && qty > 0)
-            ? { kg: k.per * qty, per: k.per, est: true, src: k.src }
-            : { kg: 0, per: 0, est: false, src: "" };
+            ? { kg: k.per * qty, per: k.per, est: true, src: k.src, ref: k.per, susp: false, exp: k.per * qty }
+            : { kg: 0, per: 0, est: false, src: "", ref: 0, susp: false, exp: 0 };
     };
     // หัวตาราง + แถวสำหรับ export ประวัติเบิก — มีคอลัมน์กิโล/หน่วย ให้ฝ่ายบัญชีคิดต้นทุนได้เลย
     const issueHeaders = ["วันที่", "เลขที่ใบเบิก", "วัตถุดิบ", "Temper", "Maker", "Lot No.", "QTY", "Unit", "KGS", "KGS/หน่วย", "ที่มาน้ำหนัก", "M", "Forecast/PO", "แผนก", "ผู้เบิก", "ผู้อนุมัติ", "ผู้จ่าย"];
@@ -5577,7 +5669,8 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
         const rd = (v, d) => { const p = Math.pow(10, d); return Math.round(v * p) / p; };
         return [r.date, r.reqId, r.name, histTemper(r) || "-", r.maker, r.lotNo,
             (r.pcs != null ? r.pcs : r.coil) || "", r.unit || "PCS",
-            k.kg ? rd(k.kg, 2) : "", k.per ? rd(k.per, 3) : "", k.kg ? (KGSRC[k.src] || "") : "",
+            k.kg ? rd(k.kg, 2) : "", k.per ? rd(k.per, 3) : "",
+            k.kg ? ((KGSRC[k.src] || "") + (k.susp ? " ⚠️ น่าจะผิด — ปกติ " + rd(k.ref, 3) + " kg/หน่วย ≈ " + rd(k.exp, 2) + " kg" : "")) : "",
             r.m || "", r.forecast || "", r.dept, r.requester, r.approver || "", r.issuedBy || ""];
     };
     const [tab, setTab] = useState("issue");
@@ -6168,9 +6261,14 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
                                         const k = kgOfHist(r);
                                         if (!k.kg) return "-";
                                         const uw = (r.unit === "COIL" || r.unit === "COIL+KGS") ? "ม้วน" : "เส้น";
-                                        return React.createElement("span", { title: (KGSRC[k.src] || "") + " — " + fmtQty(k.per, 3) + " kg/" + uw },
-                                            React.createElement("span", { style: { fontWeight: 700, color: k.est ? "#9a6700" : C.tx } }, (k.est ? "≈ " : "") + fmtQty(k.kg, 2)),
-                                            k.per > 0 && React.createElement("div", { style: { fontSize: 9, color: C.tx3, fontFamily: "inherit" } }, fmtQty(k.per, 3) + " kg/" + uw));
+                                        const tip = k.susp
+                                            ? "⛔ น้ำหนักที่บันทึกไว้น่าจะผิด — ปกติ " + fmtQty(k.ref, 3) + " kg/" + uw + " → ควรประมาณ " + fmtQty(k.exp, 2) + " kg"
+                                            : (KGSRC[k.src] || "") + " — " + fmtQty(k.per, 3) + " kg/" + uw;
+                                        return React.createElement("span", { title: tip },
+                                            React.createElement("span", { style: { fontWeight: 700, color: k.susp ? "#cf222e" : k.est ? "#9a6700" : C.tx } },
+                                                (k.susp ? "⚠️ " : k.est ? "≈ " : "") + fmtQty(k.kg, 2)),
+                                            k.per > 0 && React.createElement("div", { style: { fontSize: 9, color: k.susp ? "#cf222e" : C.tx3, fontFamily: "inherit" } },
+                                                fmtQty(k.per, 3) + " kg/" + uw + (k.susp ? " (ปกติ " + fmtQty(k.ref, 3) + ")" : "")));
                                     })()),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace" } }, r.m != null && r.m !== "" ? fmtQty(r.m, 1) : "-"),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, color: C.acc3, fontSize: 11 } }, r.forecast || "-"),
