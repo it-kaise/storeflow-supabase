@@ -1107,7 +1107,7 @@ function LotDetailModal({ open, onClose, mat, lots, setLots, master, onNG, logAu
                                     : cand[0]) || {};
                                 return React.createElement("td", { style: { padding: "11px 14px", fontFamily: "monospace", fontSize: 11, color: r.inv ? "#57606a" : "#8c959f", borderBottom: "1px solid rgba(208,215,222,.7)", whiteSpace: "nowrap" } }, r.inv || "-");
                             })(),
-                            (() => { const lp = lotPriceOf(lotPriceMap, mat.id, lot.lotNo); return React.createElement("td", { style: { padding: "11px 14px", fontFamily: "monospace", fontSize: 12, fontWeight: lp ? 700 : 400, color: lp ? "#1a7f37" : "#8c959f", borderBottom: "1px solid rgba(208,215,222,.7)", whiteSpace: "nowrap" } }, lp ? "฿ " + fmtQty(lp.p) + (lp.u ? " /" + priceUnitLabel(lp.u) : "") : "-"); })(),
+                            (() => { const lp = lotPriceOf(lotPriceMap, mat.id, lot.lotNo); return React.createElement("td", { style: { padding: "11px 14px", fontFamily: "monospace", fontSize: 12, fontWeight: lp ? 700 : 400, color: lp ? "#1a7f37" : "#8c959f", borderBottom: "1px solid rgba(208,215,222,.7)", whiteSpace: "nowrap" } }, lp ? "฿ " + fmtQty(lp.p, 2) + (lp.u ? " /" + priceUnitLabel(lp.u) : "") : "-"); })(),
                             ...uCols.map(c => { const k = c[0];
                                 const v = k === "kgs" ? lot.kgs : k === "pcs" ? lot.pcs : k === "coil" ? lot.coil : lot.m;
                                 return React.createElement("td", { key: "in-" + k, style: { padding: "11px 14px", fontFamily: "monospace", color: "#57606a", borderBottom: "1px solid rgba(208,215,222,.7)" } }, v != null ? fmtQty(v, c[2]) : "-");
@@ -2061,7 +2061,7 @@ function StoreFlow() {
                 const cutM = (ml[i].rem_m != null && mPerCoil2 > 0) ? Math.min(ml[i].rem_m, take * mPerCoil2) : null;
                 ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (cutKgs || 0)) : ml[i].rem_kgs };
                 ml[i] = cutM != null ? { ...ml[i], rem_m: Math.max(0, (ml[i].rem_m || 0) - cutM) } : ml[i];
-                cuts.push({ lotNo, coil: take, kgs: histKgsC != null ? Math.round(histKgsC * 1000) / 1000 : null, pcs: null, m: cutM != null ? Math.round(cutM * 100) / 100 : null });
+                cuts.push({ lotNo, coil: take, kgs: histKgsC != null ? Math.round(histKgsC * 100) / 100 : null, pcs: null, m: cutM != null ? Math.round(cutM * 100) / 100 : null });
                 rem -= take;
                 if (grp) chosenBudget[grp] -= take;   // ตัดโควตาของ Lot นี้ลงด้วย
             } else if (unit === "KGS" && ml[i].rem_kgs != null) {
@@ -2093,7 +2093,7 @@ function StoreFlow() {
                 ml[i] = { ...ml[i], rem_pcs: Math.max(0, (ml[i].rem_pcs || 0) - take) };
                 if (cutKgs != null)
                     ml[i] = { ...ml[i], rem_kgs: Math.max(0, (ml[i].rem_kgs || 0) - cutKgs) };
-                cuts.push({ lotNo, coil: null, kgs: histKgs != null ? Math.round(histKgs * 1000) / 1000 : null, pcs: take, m: null });
+                cuts.push({ lotNo, coil: null, kgs: histKgs != null ? Math.round(histKgs * 100) / 100 : null, pcs: take, m: null });
                 rem -= take;
                 if (grp) chosenBudget[grp] -= take;   // ตัดโควตาของ Lot นี้ลงด้วย
             }
@@ -2469,7 +2469,7 @@ function StoreFlow() {
                 const av = Number(l[fld]) || 0;
                 if (av <= 0) continue;
                 const take = Math.min(av, rem);
-                l[fld] = Math.round((av - take) * 1000) / 1000;
+                l[fld] = Math.round((av - take) * 100) / 100;
                 rem -= take;
                 if (l._dbId) await updateLot(l._dbId, { [fld]: l[fld] });
                 const rec = { issue_date: today, req_id: r.id, material_name: it.name, maker: it.maker || "",
@@ -2520,7 +2520,7 @@ function StoreFlow() {
             const av = Number(l[fld]) || 0;
             if (av <= 0) continue;
             const take = Math.min(av, rem);
-            l[fld] = Math.round((av - take) * 1000) / 1000;
+            l[fld] = Math.round((av - take) * 100) / 100;
             rem -= take;
             cuts.push({ lot: l, take: take });
             if (l._dbId) await updateLot(l._dbId, { [fld]: l[fld] });
@@ -2891,8 +2891,8 @@ function StoreFlow() {
                     if (kgOff.length) return React.createElement(Btn, { v: "danger", onClick: () => window.alert(
                         "⛔ น้ำหนักที่ชั่งมาไม่สมเหตุสมผล — กรุณาตรวจสอบช่อง \"น้ำหนักจริงที่ชั่งได้\"\n\n"
                         + kgOff.map(x => "  • " + x.name + "\n      ใส่ไว้ " + fmtQty(x.typed, 2) + " kg สำหรับ " + fmtQty(x.qty, 0) + " " + x.u
-                            + " = " + fmtQty(x.got, 3) + " kg/" + x.w
-                            + "\n      ปกติของ size นี้ " + fmtQty(x.ref, 3) + " kg/" + x.w + " → ควรประมาณ " + fmtQty(x.exp, 2) + " kg").join("\n")
+                            + " = " + fmtQty(x.got, 2) + " kg/" + x.w
+                            + "\n      ปกติของ size นี้ " + fmtQty(x.ref, 2) + " kg/" + x.w + " → ควรประมาณ " + fmtQty(x.exp, 2) + " kg").join("\n")
                         + "\n\nช่องนี้ให้ใส่ \"น้ำหนักรวมทั้งรายการ\" ไม่ใช่น้ำหนักต่อเส้น\nถ้าไม่ได้ชั่ง เว้นว่างไว้ ระบบจะคำนวณให้เอง") },
                         "⛔ น้ำหนักที่ใส่ผิดปกติ (" + kgOff.length + " รายการ)");
                     if (lotOver.length) return React.createElement(Btn, { v: "danger", onClick: () => window.alert(
@@ -3800,11 +3800,11 @@ function DashPage({ requests, materials, lots, role, master, onAp, onIs, goto, i
                                         if (lpi.ps.length && lpi.miss === 0)
                                             return React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2, whiteSpace: "nowrap" } },
                                                 React.createElement("div", { style: { fontFamily: "monospace", fontWeight: 700, fontSize: 12.5, color: "#1a7f37" } },
-                                                    lpi.min === lpi.max ? "฿ " + fmtQty(lpi.min) : "฿ " + fmtQty(lpi.min) + "–" + fmtQty(lpi.max)),
+                                                    lpi.min === lpi.max ? "฿ " + fmtQty(lpi.min, 2) : "฿ " + fmtQty(lpi.min, 2) + "–" + fmtQty(lpi.max, 2)),
                                                 React.createElement("div", { style: { fontSize: 9, color: C.tx3 } }, (lpi.ps.length > 1 && lpi.min !== lpi.max ? "ต่อ lot (" + lpi.ps.length + " lot)" : "ต่อ lot") + " · " + (lpi.units.length === 1 ? "฿/" + priceUnitLabel(lpi.units[0]) : "หลายหน่วย")));
                                         const pmv = (priceMap && priceMap[m.id] != null) ? priceMap[m.id] : null;
                                         if (!onSavePrice)
-                                            return React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2, whiteSpace: "nowrap", fontFamily: "monospace", fontSize: 12.5, color: pmv != null ? C.tx : C.tx3 } }, pmv != null ? "฿ " + fmtQty(pmv) + " /" + priceUnitLbl(m) : "—");
+                                            return React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2, whiteSpace: "nowrap", fontFamily: "monospace", fontSize: 12.5, color: pmv != null ? C.tx : C.tx3 } }, pmv != null ? "฿ " + fmtQty(pmv, 2) + " /" + priceUnitLbl(m) : "—");
                                         return React.createElement("td", { style: { padding: "9px 12px", borderBottom: C.brd2, whiteSpace: "nowrap" } },
                                             React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 3 } },
                                                 React.createElement("input", { type: "number", value: pmv != null ? pmv : "", onChange: e => onSavePrice(m.id, e.target.value), placeholder: "0", style: { width: 72, padding: "4px 6px", background: C.bg, border: "1px solid " + C.brd, borderRadius: 5, color: C.tx, fontFamily: "monospace", fontSize: 12, outline: "none" } }),
@@ -4071,9 +4071,9 @@ function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryM
                 ["pcs", "kgs", "coil", "m"].forEach(f => {
                     const v = parseFloat(h[f]) || 0;
                     if (!v) return;
-                    const take = f === fld ? left : Math.round(v * ratio * 1000) / 1000;
+                    const take = f === fld ? left : Math.round(v * ratio * 100) / 100;
                     part[f] = take;
-                    rest[f] = Math.round((v - take) * 1000) / 1000;
+                    rest[f] = Math.round((v - take) * 100) / 100;
                 });
                 out.push(part); q[0] = rest; got += left;
             }
@@ -5146,8 +5146,8 @@ function IsBody({ req, lots, selectedLots, setSelectedLots, realLots, setRealLot
                         if (!ref || qty <= 0) return React.createElement("span", { style: { fontSize: 10, color: C.tx3 } }, "ใส่แล้วประวัติเบิกจะบันทึกน้ำหนักนี้");
                         const off = typed > 0 && Math.abs(typed / qty - ref) / ref > 0.25;
                         return React.createElement("span", { style: { fontSize: 10, color: off ? "#cf222e" : C.tx3, fontWeight: off ? 700 : 400 } },
-                            off ? "⛔ " + fmtQty(typed / qty, 3) + " kg/" + w + " ผิดปกติ — ปกติ " + fmtQty(ref, 3) + " kg/" + w + " (" + fmtQty(qty, 0) + " " + w + " ≈ " + fmtQty(qty * ref, 2) + " kg)"
-                                : fmtQty(qty, 0) + " " + w + " ≈ " + fmtQty(qty * ref, 2) + " kg (" + fmtQty(ref, 3) + " kg/" + w + ")");
+                            off ? "⛔ " + fmtQty(typed / qty, 2) + " kg/" + w + " ผิดปกติ — ปกติ " + fmtQty(ref, 2) + " kg/" + w + " (" + fmtQty(qty, 0) + " " + w + " ≈ " + fmtQty(qty * ref, 2) + " kg)"
+                                : fmtQty(qty, 0) + " " + w + " ≈ " + fmtQty(qty * ref, 2) + " kg (" + fmtQty(ref, 2) + " kg/" + w + ")");
                     })()) : null,
                 avail.length === 0
                     ? React.createElement("div", { style: { color: C.err, fontSize: 12, padding: "8px 0" } }, "\u26A0\uFE0F \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2A\u0E15\u0E4A\u0E2D\u0E01")
@@ -5926,7 +5926,7 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
                             if (!liq) return React.createElement(Inp, { type: "number", value: l.pcs, onChange: v => updLot(i, "pcs", v), placeholder: "0" });
                             const pk = packSizeOf(lm);
                             return React.createElement(Inp, { type: "number", value: l._packs != null ? l._packs : "", placeholder: "0",
-                                onChange: v => { updLot(i, "_packs", v); updLot(i, "kgs", pk > 0 && v !== "" ? Math.round((parseFloat(v) || 0) * pk * 1000) / 1000 : ""); } });
+                                onChange: v => { updLot(i, "_packs", v); updLot(i, "kgs", pk > 0 && v !== "" ? Math.round((parseFloat(v) || 0) * pk * 100) / 100 : ""); } });
                         })(),
                         React.createElement(Inp, { type: "number", value: l.coil, onChange: v => updLot(i, "coil", v), placeholder: "0" }),
                         React.createElement(Inp, { type: "number", value: l.kgs, onChange: v => { updLot(i, "kgs", v); }, placeholder: "0.00" }),
@@ -6018,8 +6018,8 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
     // แสดงเฉพาะคอลัมน์หน่วยที่มีข้อมูลจริงในรายการที่กำลังแสดง (ไม่มี COIL/M ก็ไม่ต้องโชว์ให้รก)
     const unitColsOf = rows => {
         const has = k => (rows || []).some(r => { const v = r[k]; return v != null && v !== "" && Number(v) > 0; });
-        const out = [["pcs", "PCS", 0], ["coil", "COIL", 0], ["kgs", "KGS", 1], ["m", "M", 1]].filter(c => has(c[0]));
-        return out.length ? out : [["kgs", "KGS", 1]];
+        const out = [["pcs", "PCS", 0], ["coil", "COIL", 0], ["kgs", "KGS", 2], ["m", "M", 1]].filter(c => has(c[0]));
+        return out.length ? out : [["kgs", "KGS", 2]];
     };
     // หา Temper ของรายการรับ (recvhist ไม่ได้เก็บ temper ไว้ตรงๆ)
     // ชื่อ+size+maker เดียวกันอาจมีหลาย temper (เช่น SUS 14x1.0x4000 มีทั้ง AP/ASW)
@@ -6102,8 +6102,8 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
         const rd = (v, d) => { const p = Math.pow(10, d); return Math.round(v * p) / p; };
         return [r.date, r.reqId, r.name, histTemper(r) || "-", r.maker, r.lotNo,
             (r.pcs != null ? r.pcs : r.coil) || "", r.unit || "PCS",
-            k.kg ? rd(k.kg, 2) : "", k.per ? rd(k.per, 3) : "",
-            k.kg ? ((KGSRC[k.src] || "") + (k.susp ? " ⚠️ น่าจะผิด — ปกติ " + rd(k.ref, 3) + " kg/หน่วย ≈ " + rd(k.exp, 2) + " kg" : "")) : "",
+            k.kg ? rd(k.kg, 2) : "", k.per ? rd(k.per, 2) : "",
+            k.kg ? ((KGSRC[k.src] || "") + (k.susp ? " ⚠️ น่าจะผิด — ปกติ " + rd(k.ref, 2) + " kg/หน่วย ≈ " + rd(k.exp, 2) + " kg" : "")) : "",
             r.m || "", r.forecast || "", r.dept, r.requester, r.approver || "", r.issuedBy || ""];
     };
     const [tab, setTab] = useState("issue");
@@ -6165,7 +6165,7 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
     }
     // บวกยอดกลับเข้า lot (ค่าบวก = คืนของเข้าคลัง, ค่าลบ = ตัดออกเพิ่ม)
     async function _bumpLot(matId, lot, d) {
-        const nk = lot.rem_kgs != null ? Math.max(0, Math.round(((lot.rem_kgs || 0) + (d.kgs || 0)) * 1000) / 1000) : lot.rem_kgs;
+        const nk = lot.rem_kgs != null ? Math.max(0, Math.round(((lot.rem_kgs || 0) + (d.kgs || 0)) * 100) / 100) : lot.rem_kgs;
         const np = lot.rem_pcs != null ? Math.max(0, (lot.rem_pcs || 0) + (d.pcs || 0)) : lot.rem_pcs;
         const nc = lot.rem_coil != null ? Math.max(0, (lot.rem_coil || 0) + (d.coil || 0)) : lot.rem_coil;
         const nm = lot.rem_m != null ? Math.max(0, (lot.rem_m || 0) + (d.m || 0)) : lot.rem_m;
@@ -6698,13 +6698,13 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
                                         if (!k.kg) return "-";
                                         const uw = (r.unit === "COIL" || r.unit === "COIL+KGS") ? "ม้วน" : "เส้น";
                                         const tip = k.susp
-                                            ? "⛔ น้ำหนักที่บันทึกไว้น่าจะผิด — ปกติ " + fmtQty(k.ref, 3) + " kg/" + uw + " → ควรประมาณ " + fmtQty(k.exp, 2) + " kg"
-                                            : (KGSRC[k.src] || "") + " — " + fmtQty(k.per, 3) + " kg/" + uw;
+                                            ? "⛔ น้ำหนักที่บันทึกไว้น่าจะผิด — ปกติ " + fmtQty(k.ref, 2) + " kg/" + uw + " → ควรประมาณ " + fmtQty(k.exp, 2) + " kg"
+                                            : (KGSRC[k.src] || "") + " — " + fmtQty(k.per, 2) + " kg/" + uw;
                                         return React.createElement("span", { title: tip },
                                             React.createElement("span", { style: { fontWeight: 700, color: k.susp ? "#cf222e" : k.est ? "#9a6700" : C.tx } },
                                                 (k.susp ? "⚠️ " : k.est ? "≈ " : "") + fmtQty(k.kg, 2)),
                                             k.per > 0 && React.createElement("div", { style: { fontSize: 9, color: k.susp ? "#cf222e" : C.tx3, fontFamily: "inherit" } },
-                                                fmtQty(k.per, 3) + " kg/" + uw + (k.susp ? " (ปกติ " + fmtQty(k.ref, 3) + ")" : "")));
+                                                fmtQty(k.per, 2) + " kg/" + uw + (k.susp ? " (ปกติ " + fmtQty(k.ref, 2) + ")" : "")));
                                     })()),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace" } }, r.m != null && r.m !== "" ? fmtQty(r.m, 1) : "-"),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, color: C.acc3, fontSize: 11 } }, r.forecast || "-"),
