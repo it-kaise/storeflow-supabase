@@ -1816,9 +1816,37 @@ function StoreFlow() {
                 errs.jo = "กรุณาใส่ Work Order No. / Trial Sheet No. เพื่อให้สืบย้อนกลับข้อมูลได้"
                     + (noJo.length && items.length > 1 ? " (รายการที่ " + noJo.join(", ") + " ยังไม่ได้ใส่)" : "");
         }
+        // ── กันเบิกเกินของที่มีจริงในคลัง ───────────────────────────────
+        // ฝ่ายผลิตเคยพิมพ์เลข 0 เกินมาตัวหนึ่ง 40,000 → 400,000 (27/10/2026)
+        // ตกลงกันว่าถ้าขอเกินยอดคงเหลือ ห้ามส่งใบ ให้กลับไปตรวจตัวเลขก่อน
+        const _remFld = { PCS: "rem_pcs", COIL: "rem_coil", "COIL+KGS": "rem_coil", KGS: "rem_kgs", M: "rem_m" };
+        const _over = [];
+        rqForm.items.forEach((it, i) => {
+            if (!it.matId) return;
+            const q = parseFloat(it.qty || it.kgs || it.coil) || 0;
+            if (q <= 0) return;
+            const m = materials.find(x => x.id === it.matId);
+            if (!m) return;
+            const sup = isSupplyType(m.type);
+            const u = it.unit || "PCS";
+            const fld = sup ? ("rem_" + supplyField(m.type)) : (_remFld[u] || "rem_pcs");
+            const uw = sup ? unitWordOf(m.type, m.unit, m.size) : u;
+            const rem = (lots[it.matId] || []).reduce((s, l) => s + (Number(l[fld]) || 0), 0);
+            if (q > rem + 0.001) {
+                errs[`item_qty_${i}`] = "รายการที่ " + (i + 1) + ": ขอเบิก " + fmtQty(q, 2) + " " + uw
+                    + " แต่คลังมีอยู่ " + fmtQty(rem, 2) + " " + uw + " — กรุณาตรวจสอบจำนวนอีกครั้ง";
+                _over.push("  • รายการที่ " + (i + 1) + " " + String(m.size || "").replace(/^size:/i, "")
+                    + "\n      ขอเบิก " + fmtQty(q, 2) + " " + uw + "  ·  คลังมี " + fmtQty(rem, 2) + " " + uw);
+            }
+        });
         if (Object.keys(errs).length > 0) {
             setRqErrors(errs);
-            toast("❌ กรุณากรอกข้อมูลที่จำเป็นให้ครบ", "err");
+            if (_over.length) {
+                toast("⛔ เบิกเกินจำนวนที่มีในคลัง — ตรวจสอบตัวเลขอีกครั้ง", "err");
+                window.alert("⛔ ส่งใบเบิกไม่ได้ — ขอเกินจำนวนที่มีในคลัง\n\n" + _over.join("\n")
+                    + "\n\nกรุณาตรวจสอบจำนวนที่ต้องการอีกครั้ง แล้วแก้ไขก่อนส่งใบ");
+            }
+            else toast("❌ กรุณากรอกข้อมูลที่จำเป็นให้ครบ", "err");
             return;
         }
         setRqErrors({});
@@ -1922,6 +1950,24 @@ function StoreFlow() {
         setRequests(rs => rs.map(r => r.id === id ? { ...r, status: "rejected" } : r));
         toast(`❌ ไม่อนุมัติ ${id}`, "warn");
         setModal(null);
+    }
+    // ยกเลิกใบเบิก — ต้องบันทึกสถานะลง DB ด้วย
+    // (ของเดิมลบแค่ในหน้าจอ ไม่ได้เขียนลงฐานข้อมูล พอรีเฟรชใบจึงกลับมาเหมือนเดิม)
+    async function cancelReq(id) {
+        try {
+            const { data: fresh } = await sb.from('sf_requests').select('id,status').eq('id', id);
+            const self = fresh && fresh[0];
+            if (!self) { toast(`ℹ️ ไม่พบใบเบิก ${id} ในระบบแล้ว`, "warn"); return; }
+            if (self.status === "issued") {
+                toast(`⛔ ใบ ${id} จ่ายของไปแล้ว ยกเลิกไม่ได้ — ถ้าจ่ายผิดให้ไปแก้ที่ประวัติการเบิก`, "warn");
+                return;
+            }
+        } catch (e) { console.warn('cancel precheck failed:', e); }
+        const { error } = await sb.from('sf_requests').update({ status: "cancelled" }).eq('id', id);
+        if (error) { toast(`❌ ยกเลิกไม่สำเร็จ: ${error.message}`, "warn"); return; }
+        setRequests(rs => rs.map(r => r.id === id ? { ...r, status: "cancelled" } : r));
+        logAudit && logAudit("ใบเบิก", "ยกเลิกใบเบิก", id);
+        toast(`🚫 ยกเลิกใบเบิก ${id} แล้ว`, "warn");
     }
     async function issueReq(id) {
     const r = requests.find(x => x.id === id);
@@ -2705,7 +2751,7 @@ function StoreFlow() {
                         setRqErrors({});
                         setModal("req");
                         toast(`ℹ️ กำลังสร้าง Revised จาก ${r.id}`, "info");
-                    }, onCancel: id => { setRequests(rs => rs.filter(r => r.id !== id)); toast("🗑️ ยกเลิกใบเบิกแล้ว", "warn"); } }),
+                    }, onCancel: cancelReq }),
                 page === "stock" && React.createElement(StkPage, { materials: rawMats, lots: lots, filter: stkFilter, setFilter: setStkFilter, master: rawMaster, goto: setPage, onLotDetail: m => setLotDetailMat(m) }),
                 page === "lotview" && React.createElement(LotPage, { materials: rawMats, lots: lots, master: rawMaster, onLotDetail: m => setLotDetailMat(m) }),
                 // ── คลังวัสดุสิ้นเปลือง (แก๊ส / กล่องกระดาษ / น้ำมัน / น้ำยาล้างงาน) ──
