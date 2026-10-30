@@ -1890,7 +1890,13 @@ function StoreFlow() {
         else {
             // ใบวัสดุสิ้นเปลืองใช้ชุดเลข SUP- แยกจากวัตถุดิบ ACC จะได้แยกต้นทุนออกจากกันได้
             const pf = _isSupReq ? "SUP" : "REQ";
-            const maxSeq = requests.filter(r => r.id.startsWith(`${pf}-${yr}-`) && !r.id.includes("-R")).reduce((max, r) => { const n = parseInt(r.id.split("-")[2] || 0); return n > max ? n : max; }, 0);
+            // เอาเลขล่าสุดจากฐานข้อมูลจริงเสมอ ไม่ใช่จากรายการที่ค้างอยู่ในหน้าจอ
+            // (ถ้าเปิดหน้าทิ้งไว้นาน รายการในจอจะเก่า แล้วได้เลขซ้ำกับคนอื่น ใบจะถูกปฏิเสธ)
+            let maxSeq = requests.filter(r => r.id.startsWith(`${pf}-${yr}-`) && !r.id.includes("-R")).reduce((max, r) => { const n = parseInt(r.id.split("-")[2] || 0); return n > max ? n : max; }, 0);
+            try {
+                const { data: last } = await sb.from('sf_requests').select('id').like('id', `${pf}-${yr}-%`).order('id', { ascending: false }).limit(5);
+                (last || []).forEach(x => { if (!String(x.id).includes("-R")) { const n = parseInt(String(x.id).split("-")[2] || 0); if (n > maxSeq) maxSeq = n; } });
+            } catch (e) { console.warn('next-number lookup failed, use local max:', e); }
             id = `${pf}-${yr}-${String(maxSeq + 1).padStart(4, "0")}`;
         }
         const { _revisedFrom, _originalData, mode: _md, ...rqClean } = rqForm;
@@ -1899,7 +1905,21 @@ function StoreFlow() {
         // วัสดุสิ้นเปลืองไม่ต้องรออนุมัติ (Pradit 17/10/2026) → ขึ้นสถานะ "รอจ่าย" ให้สโตร์เลย
         const newReq = { ...rqClean, customer: derivedCust, id, status: _isSupReq ? "approved" : "pending",
             approvedBy: _isSupReq ? "ไม่ต้องอนุมัติ (วัสดุสิ้นเปลือง)" : null, issuedBy: null, issuedDate: null, items: builtItems, revisedFrom: _revisedFrom || null };
-        await sb.from('sf_requests').insert(reqToDb(newReq));
+        // ต้องเช็ก error ทุกครั้ง — ของเดิมไม่เช็ก ถ้าบันทึกไม่สำเร็จจะยังขึ้น "สร้างใบเบิกแล้ว"
+        // และโชว์เลขใบบนหน้าจอ ทั้งที่ไม่มีใบนั้นอยู่จริง (ใบ 0169 หายไปเพราะเคสนี้ 29/10/2026)
+        {
+            const { error: insErr } = await sb.from('sf_requests').insert(reqToDb(newReq));
+            if (insErr) {
+                const dup = String(insErr.code) === "23505" || /duplicate|already exists/i.test(insErr.message || "");
+                toast("❌ บันทึกใบเบิกไม่สำเร็จ — ใบยังไม่ถูกส่ง", "err");
+                window.alert("❌ บันทึกใบเบิกไม่สำเร็จ — ใบนี้ยังไม่ถูกส่งเข้าระบบ\n\n"
+                    + (dup ? "เลขที่ใบ " + id + " ถูกใช้ไปแล้วโดยคนอื่น\n\nกรุณากดส่งใบอีกครั้ง ระบบจะออกเลขใหม่ให้"
+                           : "สาเหตุ: " + (insErr.message || "ไม่ทราบสาเหตุ")
+                             + "\n\nกรุณาตรวจอินเทอร์เน็ตแล้วกดส่งใบอีกครั้ง\nข้อมูลที่กรอกไว้ยังอยู่ในฟอร์ม ไม่ต้องกรอกใหม่")
+                    + "\n\n⚠️ อย่าเพิ่งแจ้งสโตร์จนกว่าจะส่งสำเร็จ");
+                return;   // คงฟอร์มไว้ ไม่ปิด ไม่เพิ่มเข้ารายการ ไม่ขึ้นข้อความสำเร็จ
+            }
+        }
         // หมายเหตุ: ใบเดิมจะถูกถือว่า "ถูกแทนที่/แก้ไขแล้ว" โดยอัตโนมัติผ่าน isSupersededReq
         //   (ดูจากความสัมพันธ์ revised_from ของใบใหม่) — ไม่ต้องเขียนสถานะ "revised" ลง DB
         //   เพราะคอลัมน์ status มี CHECK constraint ที่ไม่รับค่านั้น และจะกันการอนุมัติที่ approveReq อยู่แล้ว
@@ -2491,6 +2511,28 @@ function StoreFlow() {
                 + ` · ประเภท ${mmForm.type} · Maker ${allNewMakers.join(", ")} · หน่วย ${mmForm.unit} · Min Stock ${parseInt(mmForm.minStock) || 100}`);
             toast(`✅ เพิ่ม "${finalName} ${cleanSize}" จำนวน ${allNewMakers.length} Maker สำเร็จ`);
         }
+        // ── ขึ้นทะเบียน Part No. สินค้าให้อัตโนมัติ ──────────────────────
+        // เดิมต้องไปกรอกซ้ำที่หน้า "จัดการ Part No." อีกรอบ ทั้งที่ข้อมูลชุดเดียวกัน
+        // ตอนนี้กรอกที่ฟอร์ม Material ที่เดียว แล้วทะเบียน Part No. ขึ้นให้เอง
+        try {
+            const _T = v => String(v == null ? "" : v).replace(/\s+/g, " ").trim();
+            const _k = v => _T(v).toLowerCase();
+            const have = {};
+            (partDb || []).forEach(p => { have[_k(p.pn) + "||" + _k(p.sz)] = true; });
+            const addRows = [];
+            (mmForm.productPartNos || []).filter(Boolean).forEach(pn => {
+                const key = _k(pn) + "||" + _k(cleanSize);
+                if (have[key]) return;
+                have[key] = true;
+                addRows.push({ pn: _T(pn), nm: finalName, cust: _T((mmForm.customers || [])[0] || ""),
+                    mdl: _T(pn), typ: "", sz: _T(cleanSize), vnd: _T(maker), cat: mmForm.type });
+            });
+            if (addRows.length) {
+                await savePartDb([...(partDb || []), ...addRows]);
+                logAudit("Part No.", "ขึ้นทะเบียนอัตโนมัติ", addRows.map(x => x.pn).join(", ") + ` · จากการบันทึก Material ${finalName} ${cleanSize}`);
+                toast(`🔖 ขึ้นทะเบียน Part No. ให้อัตโนมัติ ${addRows.length} รายการ — ไม่ต้องไปกรอกซ้ำที่หน้าจัดการ Part No.`, "info");
+            }
+        } catch (e) { console.warn('auto register part no failed:', e); }
         setModal(null);
         setMmForm(emptyMm());
         setMmFromPartNo(false);
@@ -2662,7 +2704,7 @@ function StoreFlow() {
                     React.createElement("div", { style: { width: 26, height: 26, borderRadius: "50%", background: currentUser ? "linear-gradient(135deg,#0969da,#8250df)" : "#d0d7de", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#fff", fontWeight: 700 } }, currentUser ? currentUser.name.slice(0, 1) : "?"),
                     React.createElement("div", null,
                         React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: C.tx } }, currentUser ? currentUser.name : "ยังไม่ได้ Login"),
-                        React.createElement("div", { style: { fontSize: 9, color: C.tx3 } }, currentUser ? (currentUser.role === "supervisor" ? "👨‍💼 หัวหน้างาน" : currentUser.role === "store" ? "🏪 พนักงานสโตร์" : currentUser.role === "admin" ? "⚙️ Admin" : "👷 ฝ่ายผลิต") : "🔒 กรุณาเข้าสู่ระบบ"))),
+                        React.createElement("div", { style: { fontSize: 9, color: C.tx3 } }, currentUser ? (currentUser.role === "supervisor" ? "👨‍💼 หัวหน้างาน" : currentUser.role === "store" ? "🏪 พนักงานสโตร์" : currentUser.role === "admin" ? "⚙️ Admin" : currentUser.role === "requester" ? "🙋 ผู้เบิก" : "👷 ผู้เบิก (ฝ่ายผลิต)") : "🔒 กรุณาเข้าสู่ระบบ"))),
                 currentUser
                     ? React.createElement("button", { onClick: () => { setCurrentUser(null); setPinInput(""); setPinError(""); }, style: { width: "100%", padding: "5px 0", border: `1px solid ${C.brd}`, background: "rgba(248,81,73,.12)", color: "#cf222e", borderRadius: 5, fontSize: 10, cursor: "pointer", fontFamily: "inherit", marginTop: 4 } }, "\uD83D\uDEAA \u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E23\u0E30\u0E1A\u0E1A")
                     : React.createElement("button", { onClick: () => setPinModal({ mode: "login", title: "เข้าสู่ระบบ", onSuccess: (u) => { setCurrentUser(u); setPinModal(null); } }), style: { width: "100%", padding: "5px 0", border: `1px solid ${C.acc}`, background: "rgba(9,105,218,.1)", color: C.acc, borderRadius: 5, fontSize: 10, cursor: "pointer", fontFamily: "inherit", marginTop: 4 } }, "\uD83D\uDD10 \u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A"))),
@@ -3038,7 +3080,7 @@ function PinModal({ open, config, users, onClose, pinInput, setPinInput, pinErro
     if (!open || !config)
         return null;
     const { useState: us } = React;
-    const roleLabel = { supervisor: "👨‍💼 หัวหน้างาน", store: "🏪 พนักงานสโตร์", admin: "⚙️ Admin", production: "👷 ฝ่ายผลิต" };
+    const roleLabel = { supervisor: "👨‍💼 หัวหน้างาน", store: "🏪 พนักงานสโตร์", admin: "⚙️ Admin", production: "👷 ผู้เบิก (ฝ่ายผลิต)", requester: "🙋 ผู้เบิก (MK / ฝ่ายอื่น)" };
     function tryLogin() {
         const u = users.find(x => x.active && x.pin === pinInput && (config.mode === "login" || x.role === "supervisor" || x.role === "admin" || x.role === config.requiredRole));
         if (u) {
@@ -3073,8 +3115,22 @@ function PinModal({ open, config, users, onClose, pinInput, setPinInput, pinErro
 // ════════════════════════════════════════════════════════════
 function UsersPage({ users, setUsers, currentUser, toast, materials }) {
     const [form, setForm] = useState({ id: "", name: "", pin: "", role: "supervisor", active: true });
-    const roleOpts = ["production", "supervisor", "store", "admin"];
-    const roleLabel = { supervisor: "👨‍💼 หัวหน้างาน", store: "🏪 พนักงานสโตร์", admin: "⚙️ Admin", production: "👷 ฝ่ายผลิต" };
+    const roleOpts = ["production", "requester", "supervisor", "store", "admin"];
+    const roleLabel = { supervisor: "👨‍💼 หัวหน้างาน", store: "🏪 พนักงานสโตร์", admin: "⚙️ Admin", production: "👷 ผู้เบิก (ฝ่ายผลิต)", requester: "🙋 ผู้เบิก (MK / ฝ่ายอื่น)" };
+    // บันทึกผู้ใช้ไม่สำเร็จ — ต้องบอกให้ชัด ไม่ใช่เงียบแล้วหลอกว่าสำเร็จ
+    function _userSaveErr(err, roleVal) {
+        const blocked = String(err && err.code) === "23514";
+        toast("❌ บันทึกผู้ใช้ไม่สำเร็จ", "err");
+        window.alert(blocked
+            ? "❌ ฐานข้อมูลยังไม่รับสถานะ \"" + (roleLabel[roleVal] || roleVal) + "\"\n\n"
+                + "ต้องเปิดสิทธิ์ในฐานข้อมูลก่อน 1 ครั้ง (ทำครั้งเดียวจบ)\n"
+                + "เปิด supabase.com > SQL Editor > New query แล้วรัน:\n\n"
+                + "ALTER TABLE sf_users DROP CONSTRAINT IF EXISTS sf_users_role_check;\n"
+                + "ALTER TABLE sf_users ADD CONSTRAINT sf_users_role_check\n"
+                + "  CHECK (role IN ('admin','store','supervisor','production','requester'));\n\n"
+                + "ระหว่างนี้เลือกสถานะ \"ผู้เบิก (ฝ่ายผลิต)\" ไปก่อนได้ ใช้งานได้เหมือนกันทุกอย่าง"
+            : "❌ บันทึกผู้ใช้ไม่สำเร็จ\n\nสาเหตุ: " + ((err && err.message) || "ไม่ทราบสาเหตุ") + "\n\nกรุณาลองใหม่อีกครั้ง");
+    }
     async function save() {
         if (!form.name || !form.pin) {
             toast("กรุณากรอกชื่อและ PIN", "err");
@@ -3092,24 +3148,26 @@ function UsersPage({ users, setUsers, currentUser, toast, materials }) {
                 toast("⛔ แก้ไม่ได้ — นี่คือ Admin ที่ใช้งานอยู่คนสุดท้าย กรุณาตั้ง Admin คนใหม่ก่อน", "err");
                 return;
             }
-            await sb.from('sf_users').update({
+            const { error: upErr } = await sb.from('sf_users').update({
                 user_name: form.name,
                 pin: form.pin,
                 role: form.role,
                 active: form.active
             }).eq('id', form.id);
+            if (upErr) { _userSaveErr(upErr, form.role); return; }
             setUsers(us => us.map(u => u.id === form.id ? { ...u, ...form } : u));
             toast(`✅ แก้ไข "${form.name}" แล้ว`);
         }
         else {
             const id = "u" + Date.now();
-            await sb.from('sf_users').insert({
+            const { error: insErr } = await sb.from('sf_users').insert({
                 id: id,
                 user_name: form.name,
                 pin: form.pin,
                 role: form.role,
                 active: form.active
             });
+            if (insErr) { _userSaveErr(insErr, form.role); return; }
             setUsers(us => [...us, { ...form, id }]);
             toast(`✅ เพิ่ม "${form.name}" แล้ว`);
         }
@@ -5769,7 +5827,9 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
         const seen = {}; const out = [];
         [selMat].concat(famSizes).concat(form.lots.map(l => l.matId ? materials.find(x => x.id === l.matId) : null))
             .forEach(fm => { if (fm && !seen[fm.id]) { seen[fm.id] = 1; out.push(fm); } });
-        return out.map(fm => ({ v: fm.id, l: sizeTxt(fm) }));
+        // วัสดุสิ้นเปลืองต้องขึ้นชื่อของนำหน้าเสมอ (Nitrogen / Oxygen / Argon)
+        // เพราะหลายตัวมี size เหมือนกันเป๊ะ เช่น "7 m³ (V.580)" ถ้าโชว์แต่ size จะแยกไม่ออกเลย
+        return out.map(fm => ({ v: fm.id, l: (isSupplyType(fm.type) ? (fm.name || "") + " · " : "") + sizeTxt(fm) }));
     })();
     function addLotFor(mid) { setForm(f => { const pv = f.lots[f.lots.length - 1] || {}; // บรรทัดแรกที่ยังว่างสนิทและยังไม่ได้เลือก size เอง → ใช้บรรทัดนั้นเลย ไม่ต้องเพิ่มใหม่
         const blank = f.lots.length === 1 && !f.lots[0].matId && !f.lots[0].lotNo && !f.lots[0].pcs && !f.lots[0].kgs && !f.lots[0].coil && !f.lots[0].m; const row = { lotNo: "", pcs: "", coil: "", kgs: "", m: "", price: pv.price || "", priceUnit: pv.priceUnit || "", matId: mid }; return { ...f, lots: blank ? [{ ...f.lots[0], matId: mid }] : [...f.lots, row] }; }); }
@@ -5799,7 +5859,8 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
                             // ช่อง Size แบบพิมพ์ค้นหาได้ + มีรายการให้เลือก (datalist)
                             // เดิมเป็น dropdown อย่างเดียว ต้องไล่หาในรายการยาว ๆ เอง
                             // พิมพ์บางส่วนของ Size ได้เลย เช่น "60.5" แล้วระบบกรองให้
-                            const lbl = m => `${m.size.replace(/^size:/i, "")}${m.temper && m.temper !== "-" ? " (" + m.temper + ")" : ""} — ${m.maker}`;
+                            // วัสดุสิ้นเปลือง: ขึ้นชื่อของก่อน size เสมอ — Nitrogen/Argon มี size เดียวกัน ถ้าไม่มีชื่อจะเลือกผิดตัว
+                            const lbl = m => `${isSupplyType(m.type) ? (m.name || "") + " · " : ""}${m.size.replace(/^size:/i, "")}${m.temper && m.temper !== "-" ? " (" + m.temper + ")" : ""} — ${m.maker}`;
                             // ถ้าเลือก Maker ไว้แล้ว แสดงเฉพาะของ Maker นั้นก่อน ที่เหลือต่อท้าย
                             const mine = form.maker ? filtMats.filter(m => m.maker === form.maker) : [];
                             const rest = form.maker ? filtMats.filter(m => m.maker !== form.maker) : filtMats;
@@ -7403,6 +7464,23 @@ function PartNoPage({ partDb, onSave, master, materials, toast, onAddMat, onLink
         onSave(next);
         setEdit(null);
         toast(isNew ? `✅ เพิ่ม Part No. "${clean.pn}" แล้ว` : `💾 บันทึก "${clean.pn}" แล้ว`);
+        // ── เพิ่ม Part No. ใหม่แล้วทำต่อให้เลย ไม่ต้องไปตามกดเองทีหลัง ──
+        //   ไม่มีของในคลังที่ตรง  → เปิดฟอร์มเพิ่ม Material ให้ พร้อมกรอกข้อมูลไว้แล้ว
+        //   มีของอยู่แล้วตัวเดียว → ผูก Part No. ใหม่เข้ากับตัวนั้นให้เลย
+        //                          (Size เดิมแต่มี Part No. ใหม่มาใช้ร่วมกัน — เจอบ่อย)
+        //   มีหลายตัวเข้าข่าย     → เปิดหน้าต่างให้เลือกเอง ไม่เดาให้ เพราะผูกผิดแล้วยอดจะเพี้ยน
+        if (isNew) {
+            const cands = fastMats(clean);
+            setTimeout(() => {
+                if (!cands.length) { if (onAddMat) onAddMat(clean); }
+                else if (cands.length === 1 && onLinkMat) {
+                    const m = cands[0];
+                    onLinkMat(clean, m.id);
+                    toast(`🔗 ผูก "${clean.pn}" เข้ากับ ${m.name} ${String(m.size || "").replace(/^size:/i, "")} (${m.maker}) ให้แล้ว — ใช้ของกองเดิมร่วมกัน`, "info");
+                }
+                else setPick(clean);
+            }, 400);
+        }
     }
     function del(p) {
         if (!window.confirm(`ลบ Part No. "${p.pn}"${p.nm ? ` (${p.nm})` : ""}?`)) return;
@@ -7420,7 +7498,14 @@ function PartNoPage({ partDb, onSave, master, materials, toast, onAddMat, onLink
     return React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "calc(100vh - 80px)" } },
         React.createElement("div", { style: { background: "rgba(9,105,218,.06)", border: "1px solid rgba(9,105,218,.2)", borderRadius: 8, padding: "9px 12px", fontSize: 11, color: C.acc2, marginBottom: 14, lineHeight: 1.7 } },
             React.createElement("strong", null, "ℹ️ ทะเบียน Part No."),
-            " — ใช้ค้นหาอัตโนมัติในฟอร์มใบเบิก | เพิ่ม/แก้ไขที่นี่ บันทึกลงฐานข้อมูลกลาง ทุกเครื่องเห็นเหมือนกัน"),
+            " — ใช้ค้นหาอัตโนมัติในฟอร์มใบเบิก | เพิ่ม/แก้ไขที่นี่ บันทึกลงฐานข้อมูลกลาง ทุกเครื่องเห็นเหมือนกัน",
+            React.createElement("br"),
+            React.createElement("strong", null, "🔗 กรอกที่เดียวพอ"),
+            " — เพิ่ม Part No. ใหม่ที่นี่แล้วระบบทำต่อให้เอง: ",
+            React.createElement("strong", null, "ยังไม่มีของในคลัง"),
+            " → เปิดฟอร์มเพิ่ม Material พร้อมกรอกข้อมูลให้แล้ว · ",
+            React.createElement("strong", null, "Size เดิมมีอยู่แล้ว"),
+            " → ผูก Part No. ใหม่เข้ากับของกองเดิมให้เลย (ถ้าเข้าข่ายหลายตัวจะให้เลือกเอง) · และถ้าเพิ่มจากหน้า Material โดยใส่ช่อง \"Part No. สินค้า\" ระบบก็ขึ้นทะเบียนตรงนี้ให้อัตโนมัติ"),
         React.createElement(Card, { grow: true },
             React.createElement("div", { style: { padding: "12px 14px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderBottom: `1px solid ${C.brd}` } },
                 React.createElement(Inp, { value: q, onChange: setQ, placeholder: "🔍 ค้นหา Part No. / Part Name / Customer / Size / Vendor...", style: { flex: 1, minWidth: 220 } }),
