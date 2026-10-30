@@ -2539,6 +2539,10 @@ function StoreFlow() {
     }
     const pending = requests.filter(r => r.status === "pending" && !isSupersededReq(r, requests)).length;
     const approved = requests.filter(r => r.status === "approved" && !isSupersededReq(r, requests)).length;
+    // แยกตัวเลขค้างของ 2 หมวด — ป้ายบนเมนูจะได้ไม่ปนกัน บัญชีตรวจง่ายขึ้น
+    const _waiting = r => !isSupersededReq(r, requests) && (r.status === "pending" || r.status === "approved");
+    const rawWaiting = requests.filter(r => _waiting(r) && !isSupplyReq(r)).length;
+    const supWaiting = requests.filter(r => _waiting(r) && isSupplyReq(r)).length;
     // แยกของ 2 คลังออกจากกัน — หน้าวัตถุดิบต้องไม่เห็นแก๊ส/กล่อง/น้ำมัน และกลับกัน
     const rawMats = materials.filter(m => !isSupplyType(m.type));
     const supMats = materials.filter(m => isSupplyType(m.type));
@@ -2651,7 +2655,7 @@ function StoreFlow() {
         { lbl: "หน้าหลัก", items: [
                 { id: "quickcheck", icon: "🔍", lbl: "เช็คสต๊อกด่วน" },
                 { id: "dashboard", icon: "📊", lbl: "ภาพรวมสต๊อก" },
-                { id: "request", icon: "📋", lbl: "ใบเบิกวัตถุดิบ", badge: pending + approved },
+                { id: "request", icon: "📋", lbl: "ใบเบิกวัตถุดิบ", badge: rawWaiting },
             ] },
         { lbl: "คลังสินค้า", items: [
                 { id: "stock", icon: "📦", lbl: "คลังวัตถุดิบ" },
@@ -2665,6 +2669,7 @@ function StoreFlow() {
                 { id: "deadstock", icon: "🗃️", lbl: "วัตถุดิบไม่เคลื่อนไหว" },
             ] },
         { lbl: "วัสดุสิ้นเปลือง", items: [
+                { id: "supplyreq", icon: "📋", lbl: "ใบเบิกวัสดุสิ้นเปลือง", badge: supWaiting },
                 { id: "supplystock", icon: "🧰", lbl: "คลังวัสดุสิ้นเปลือง" },
                 { id: "supplyissue", icon: "📤", lbl: "จ่ายวัสดุ", can: canEditStock },
                 { id: "supplyrecv", icon: "📥", lbl: "รับวัสดุเข้า", can: canEditStock },
@@ -2771,10 +2776,11 @@ function StoreFlow() {
                 page === "quickcheck" && React.createElement(QuickCheckPage, { materials: rawMats, lots: lots, toast: toast }),
                 page === "dashboard" && React.createElement(DashPage, { requests: requests, materials: rawMats, lots: lots, role: role, master: rawMaster, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, goto: setPage, issueHist: issueHist, recvHist: recvHist, priceMap: priceMap, onSavePrice: canEditStock ? savePrice : null, lotPriceMap: lotPriceMap, only: "main" }),
                 page === "deadstock" && React.createElement(DashPage, { requests: requests, materials: rawMats, lots: lots, role: role, master: rawMaster, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, goto: setPage, issueHist: issueHist, recvHist: recvHist, priceMap: priceMap, onSavePrice: canEditStock ? savePrice : null, lotPriceMap: lotPriceMap, only: "aged" }),
-                page === "request" && React.createElement(ReqPage, { requests: requests, materials: rawMats, issueHist: issueHist, filter: reqFilter, setFilter: setReqFilter, role: role, me: (currentUser && currentUser.name) || "", setHistoryModal: setHistoryModal, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, onNew: () => {
+                (page === "request" || page === "supplyreq") && React.createElement(ReqPage, { key: page, group: page === "supplyreq" ? "supply" : "raw", requests: requests, materials: materials, issueHist: issueHist, filter: reqFilter, setFilter: setReqFilter, role: role, me: (currentUser && currentUser.name) || "", setHistoryModal: setHistoryModal, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, onNew: () => {
                         // ต้องล็อกอินก่อนเขียนใบเบิก แล้วเติมชื่อผู้เบิกจากคนที่ล็อกอินให้เลย
                         // (เดิมใครเปิดลิงก์ก็ส่งใบได้ และพิมพ์ชื่อใครก็ได้ ตามกลับไม่ได้ว่าใครส่งจริง)
-                        const openReqForm = (u) => { setRqForm({ ...emptyRq(), requester: (u && u.name) || "" }); setRqErrors({}); setModal("req"); };
+                        // เข้าจากเมนู "ใบเบิกวัสดุสิ้นเปลือง" → เปิดฟอร์มโหมดวัสดุให้เลย ไม่ต้องมากดสลับเอง
+                        const openReqForm = (u) => { setRqForm({ ...emptyRq(), requester: (u && u.name) || "", mode: page === "supplyreq" ? "supply" : "" }); setRqErrors({}); setModal("req"); };
                         if (!currentUser) {
                             setPinModal({ mode: "login", title: "เข้าสู่ระบบก่อนสร้างใบเบิก", onSuccess: (u) => { setCurrentUser(u); setPinModal(null); openReqForm(u); } });
                             return;
@@ -4099,7 +4105,11 @@ function HistoryModal({ open, onClose, request }) {
     );
 }
 
-function ReqPage({ requests, materials, filter, setFilter, role, me, setHistoryModal, onAp, onIs, onNew, onEdit, onCancel, issueHist }) {
+function ReqPage({ requests: _allReqs, materials, filter, setFilter, role, me, setHistoryModal, onAp, onIs, onNew, onEdit, onCancel, issueHist, group }) {
+    // แยกใบเบิกวัตถุดิบ (REQ-) ออกจากใบเบิกวัสดุสิ้นเปลือง (SUP-) คนละหน้ากัน
+    // บัญชีตรวจทีละหมวดได้ ไม่ต้องไล่คัดเอาเองจากกองเดียวกัน
+    const isSup = group === "supply";
+    const requests = (_allReqs || []).filter(r => isSupplyReq(r) === isSup);
     // แก้ไข/ยกเลิกใบเบิกได้เฉพาะ "คนที่เขียนใบนั้นเอง" (หัวหน้าที่เบิกเองก็แก้ใบตัวเองได้)
     // admin แก้ได้ทุกใบไว้กู้สถานการณ์ เช่น คนเขียนลาหยุดแล้วใบติดค้าง
     const _norm = v => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
