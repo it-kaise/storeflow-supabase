@@ -44,6 +44,9 @@ const { useState } = React;
 // เลขที่ขึ้นทะเบียนเอกสาร ISO ของใบเบิกวัตถุดิบ — แสดงมุมขวาล่างของใบที่พิมพ์ออกมา
 // ถ้ามีการ revise เอกสาร ให้แก้เลขที่บรรทัดนี้บรรทัดเดียว
 const ISO_DOC_REQ = 'F-KKQE-ST-06,R02';
+// เลขที่เอกสาร ISO ของ "ใบเบิกวัสดุสิ้นเปลือง" — คนละฟอร์มกับใบเบิกวัตถุดิบ
+// ยังไม่ได้ขึ้นทะเบียน จึงเว้นว่างไว้ก่อน (ใส่เลขที่ได้แล้วแก้บรรทัดนี้บรรทัดเดียว)
+const ISO_DOC_SUP = '';
 const SUPABASE_URL = 'https://gibuxfwoaawmbkwdawpk.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdpYnV4ZndvYWF3bWJrd2Rhd3BrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyNTczMTYsImV4cCI6MjA5OTgzMzMxNn0.vb_aWkLt_CEbay3Tnm5abGKHaZOlR92c5qJdOM7VfQM';
 const { createClient } = supabase;
@@ -2270,6 +2273,16 @@ function StoreFlow() {
             toast("กรุณาระบุ Lot No. อย่างน้อย 1 รายการ", "err");
             return;
         }
+        // กันบันทึก Lot ที่ไม่ได้ใส่จำนวน — เดิมบันทึกผ่านแล้วได้ยอดว่าง
+        // (Oxygen รับ 30/10/2026 12 ถัง หายไปทั้งก้อนเพราะเคสนี้)
+        const _noQty = validLots.filter(l => !((parseFloat(l.pcs) || 0) || (parseFloat(l.coil) || 0) || (parseFloat(l.kgs) || 0) || (parseFloat(l.m) || 0)));
+        if (_noQty.length) {
+            toast("❌ มี Lot ที่ยังไม่ได้ใส่จำนวน", "err");
+            window.alert("❌ บันทึกไม่ได้ — มี Lot ที่ยังไม่ได้ใส่จำนวน\n\n"
+                + _noQty.map(l => "  • Lot " + l.lotNo).join("\n")
+                + "\n\nกรุณาใส่จำนวนให้ครบทุก Lot ก่อนบันทึก\nถ้าไม่ต้องการ Lot นั้น ให้ลบบรรทัดออก");
+            return;
+        }
         // หา material ปลายทางที่จะรับเข้า
         // สำคัญ: ต้องยึด material ที่ผู้ใช้เลือก (คง Temper เดิม) ห้ามค้นใหม่ด้วย size+maker เฉยๆ
         // เพราะ name+size+maker เดียวกันอาจมีหลาย temper (เช่น SUS 14x1.0x4000 มีทั้ง No.1AP / ASW-TKC)
@@ -2553,6 +2566,20 @@ function StoreFlow() {
     async function issueSupplyReq(id) {
         const r = requests.find(x => x.id === id);
         if (!r) return;
+        // กันกดปุ่มจ่ายรัว / สโตร์ 2 คนกดใบเดียวกัน — เดิมไม่มีกัน ทำให้ประวัติถูกบันทึกซ้ำ 2 ชุด
+        // (ใบ SUP-2026-0001 30/10/2026 จ่าย ARGON 30 ถัง แต่ประวัติขึ้น 60 ถัง)
+        if (issuingRef.current) return;
+        issuingRef.current = true;
+        try {
+            const { data: fresh } = await sb.from('sf_requests').select('id,status,issued_by').eq('id', id);
+            const self = fresh && fresh[0];
+            if (self && self.status === "issued") {
+                toast(`ℹ️ ใบ ${id} ถูกจ่ายไปแล้ว${self.issued_by ? " โดย " + self.issued_by : ""}`, "warn");
+                setModal(null); setPendingIsId(null); issuingRef.current = false;
+                return;
+            }
+        } catch (e) { console.warn('supply issue precheck failed:', e); }
+        try {
         const today = new Date().toISOString().split("T")[0];
         const by = (currentUser && currentUser.name) || "พนักงานสโตร์";
         const short = [];
@@ -2603,6 +2630,7 @@ function StoreFlow() {
         toast("📤 จ่ายวัสดุตามใบ " + id + " แล้ว");
         setModal(null);
         setPendingIsId(null);
+        } finally { issuingRef.current = false; }
     }
     // ── จ่ายวัสดุสิ้นเปลือง: ตัดสต๊อกแบบ FIFO + ลงประวัติ (ไม่ต้องมีใบเบิก/อนุมัติ) ──
     async function issueSupply(p) {
@@ -2674,6 +2702,7 @@ function StoreFlow() {
                 { id: "supplyissue", icon: "📤", lbl: "จ่ายวัสดุ", can: canEditStock },
                 { id: "supplyrecv", icon: "📥", lbl: "รับวัสดุเข้า", can: canEditStock },
                 { id: "supplyhist", icon: "📜", lbl: "ประวัติวัสดุ" },
+                { id: "supplycost", icon: "💰", lbl: "ต้นทุนวัสดุสิ้นเปลือง" },
             ] },
         { lbl: "ตั้งค่า", items: [
                 { id: "matmaster", icon: "⚙️", lbl: "จัดการ Material", can: canEditSettings },
@@ -2810,7 +2839,8 @@ function StoreFlow() {
                 page === "auditlog" && canEditSettings && React.createElement(AuditLogPage, { auditLog: auditLog }),
                 page === "ngreturn" && canEditStock && React.createElement(NgReturnPage, { ngReturns: ngReturns, onSave: saveNgReturns, currentUser: currentUser, toast: toast, onReceive: receiveReplacementStock, onEditRep: editReplacementStock, onRemoveRep: removeReplacementStock }),
                 page === "history" && React.createElement(HistPage, { issueHist: issueHist, setIssueHist: canEditStock ? setIssueHist : null, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null, group: "raw" }),
-                page === "supplyhist" && React.createElement(HistPage, { issueHist: issueHist, setIssueHist: canEditStock ? setIssueHist : null, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null, group: "supply" }),
+                page === "supplycost" && React.createElement(SupplyCostPage, { issueHist: issueHist, materials: materials, priceMap: priceMap }),
+                page === "supplyhist" && React.createElement(HistPage, { issueHist: issueHist, priceMap: priceMap, setIssueHist: canEditStock ? setIssueHist : null, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null, group: "supply" }),
                 page === "users" && canManageUsers && React.createElement(UsersPage, { users: users, setUsers: setUsers, currentUser: currentUser, toast: toast, materials: materials }),
                 page === "matmaster" && canEditSettings && React.createElement(MatPage, { materials: materials, setMaterials: setMaterials, filter: mmFilter, setFilter: setMmFilter, master: master, onAdd: () => { setMmForm(emptyMm()); setMmErrors({}); setMmFromPartNo(false); setModal("mat"); }, onEdit: m => { setMmErrors({}); setMmFromPartNo(false); setMmForm({ editId: m.id, type: m.type, name: m.name, partNo: m.partNo, size: m.size, temper: m.temper, maker: m.maker, makerNew: "", extraMakers: m.extraMakers || [], customers: m.customers || [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: m.remark || "", productPartNos: m.productPartNos || [] }); setModal("mat"); }, onAddSize: m => { setMmErrors({}); setMmFromPartNo(false); setMmForm({ editId: "", type: m.type, name: m.name, partNo: m.partNo, size: "", temper: m.temper, maker: m.maker, makerNew: "", customers: [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: "", productPartNos: [] }); setModal("mat"); toast(`ℹ️ เพิ่ม Size ใหม่สำหรับ ${m.name}`, "info"); }, onToggle: async id => {
                         const cur = materials.find(x => x.id === id);
@@ -4272,12 +4302,14 @@ function ReqPage({ requests: _allReqs, materials, filter, setFilter, role, me, s
             + ".ft{margin-top:14px;border-top:1px solid #bbb;padding-top:5px;font-size:9.5px;color:#777;display:flex;justify-content:space-between;align-items:flex-end}"
             + ".iso{font-family:'Consolas',monospace;font-size:11px;font-weight:800;color:#111;letter-spacing:.3px}"
             + "</style></head><body>"
+            // หัวเอกสารเปลี่ยนตามหมวดของใบ — แยกเอกสาร 2 ชุดให้บัญชีชัดเจน
             + "<div class='hd'><div><div class='co'>KAISE (THAILAND) CO.,LTD.</div><div class='cs'>ระบบควบคุมวัตถุดิบ · Material Control System</div></div>"
-            + "<div class='ti'><div class='tt'>ใบเบิกวัตถุดิบ</div><div class='cs'>MATERIAL REQUISITION</div>"
+            + "<div class='ti'><div class='tt'>" + (isSupplyReq(r) ? "ใบเบิกวัสดุสิ้นเปลือง" : "ใบเบิกวัตถุดิบ") + "</div>"
+            + "<div class='cs'>" + (isSupplyReq(r) ? "SUPPLIES REQUISITION" : "MATERIAL REQUISITION") + "</div>"
             + "<div class='tn'>" + esc(r.id) + "</div><div class='st'>" + esc(stTxt) + "</div></div></div>"
             + "<div class='gr'>" + info("วันที่ขอเบิก", fmtDate(r.date)) + info("แผนก", r.dept) + info("ผู้เบิก", r.requester)
             + info("W/O No.", r.jo) + info("Forecast/PO", r.forecast) + info("ลูกค้า", r.customer) + "</div>"
-            + "<table><thead><tr><th style='width:26px'>#</th><th>วัตถุดิบ / SIZE</th><th style='width:110px'>MAKER</th>"
+            + "<table><thead><tr><th style='width:26px'>#</th><th>" + (isSupplyReq(r) ? "รายการวัสดุ / SIZE" : "วัตถุดิบ / SIZE") + "</th><th style='width:110px'>MAKER</th>"
             + "<th style='width:106px'>PART NO. / ลูกค้า</th><th style='width:96px'>W/O No. / FORECAST</th><th style='width:92px' class='r'>จำนวน</th><th style='width:118px'>LOT NO. / จ่ายจริง</th></tr></thead>"
             + "<tbody>" + (rows || "<tr><td colspan='7' class='c'>- ไม่มีรายการ -</td></tr>") + "</tbody></table>"
             + "<div class='nt'><b>หมายเหตุ:</b> " + esc(r.note || "-") + "</div>"
@@ -4286,7 +4318,7 @@ function ReqPage({ requests: _allReqs, materials, filter, setFilter, role, me, s
             + sign("ผู้จ่ายของ", r.issuedBy, r.issuedDate) + "</div>"
             // เลขที่ขึ้นทะเบียนเอกสาร ISO — ต้องอยู่มุมขวาล่างของใบเบิกทุกใบ
             + "<div class='ft'><span>พิมพ์เมื่อ " + new Date().toLocaleString("th-TH") + "</span><span>" + esc(r.id) + "</span>"
-            + "<span class='iso'>" + ISO_DOC_REQ + "</span></div>"
+            + "<span class='iso'>" + (isSupplyReq(r) ? ISO_DOC_SUP : ISO_DOC_REQ) + "</span></div>"
             + "</body></html>";
         const w = window.open("", "_blank", "width=900,height=1000");
         if (!w) { alert("เบราว์เซอร์บล็อกหน้าต่างใหม่ — กรุณาอนุญาต popup ของเว็บนี้แล้วลองอีกครั้ง"); return; }
@@ -4334,7 +4366,7 @@ function ReqPage({ requests: _allReqs, materials, filter, setFilter, role, me, s
         const tag = filter === "all" ? "ทั้งหมด" : ((smap[filter] || {}).lbl || filter);
         exportXLSX([{ name: "รายการเบิก-จ่าย", headers: detHeaders, rows: detRows },
             { name: "สรุปรายใบ", headers: sumHeaders, rows: sumRows }],
-            `ใบเบิกวัตถุดิบ_${tag}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+            `${isSup ? "ใบเบิกวัสดุสิ้นเปลือง" : "ใบเบิกวัตถุดิบ"}_${tag}_${new Date().toISOString().slice(0, 10)}.xlsx`);
     }
 
     return React.createElement("div", null,
@@ -5688,7 +5720,21 @@ function LotPage({ materials, lots, master, onLotDetail }) {
                     React.createElement(Btn, { v: "accent", sz: "sm", onClick: () => onLotDetail(m), style: { width: "100%", justifyContent: "center" } }, "\uD83D\uDD0D \u0E14\u0E39\u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14 Lot")));
         })));
 }
-function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMaker, onAddLength }) {
+function RecvPage({ form, setForm, materials, master, onSubmit, recvHist: _allRecv, addMaker, onAddLength }) {
+    // "รายการรับล่าสุด" ต้องโชว์เฉพาะหมวดของหน้านี้ — หน้ารับวัสดุสิ้นเปลืองต้องไม่มีวัตถุดิบปน และกลับกัน
+    // (materials ที่ส่งเข้ามาถูกกรองตามหมวดแล้ว จึงใช้ชื่อของในหมวดนั้นเป็นตัวเทียบ)
+    const _myNameSet = {}, _myNameOnly = [];
+    (materials || []).forEach(m => {
+        _myNameSet[String(m.name + " " + m.size)] = 1;
+        const n = String(m.name || "").trim();
+        if (n && _myNameOnly.indexOf(n) < 0) _myNameOnly.push(n);
+    });
+    const recvHist = (_allRecv || []).filter(r => {
+        const n = String((r && r.name) || "").trim();
+        if (!n) return false;
+        if (_myNameSet[n]) return true;
+        return _myNameOnly.some(x => n === x || n.indexOf(x + " ") === 0);
+    });
     var _a;
     // กันกดปุ่มบันทึกซ้ำระหว่างที่ยังบันทึกไม่เสร็จ — เดิมกดรัวได้ ทำให้ของเข้าคลัง 2 รอบ
     const [saving, setSaving] = useState(false);
@@ -6126,9 +6172,107 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist, addMak
                                 React.createElement(Tag, { color: r.rohs === "ROHS" ? C.ok : C.warn }, r.rohs || "-")))))))));
 }
 // ════════════════════════════════════════════════════════════
+// SUPPLY COST PAGE — ดูต้นทุนวัสดุสิ้นเปลืองอย่างเดียว ไม่มีตารางรายการมาบัง
+// เลือกเดือนด้วยปุ่มใหญ่ เทียบกับเดือนก่อนให้เลย กด Excel ส่งบัญชีได้ทันที
+// ════════════════════════════════════════════════════════════
+function SupplyCostPage({ issueHist, materials, priceMap }) {
+    const sups = (materials || []).filter(m => isSupplyType(m.type));
+    const byName = {};
+    sups.forEach(m => { byName[String(m.name + " " + m.size).replace(/\s+/g, " ").trim().toLowerCase()] = m; });
+    const matOf = r => byName[String((r && r.name) || "").replace(/\s+/g, " ").trim().toLowerCase()];
+    const supRows = (issueHist || []).filter(r => !!matOf(r));
+    const months = [...new Set(supRows.map(r => String(r.date || "").slice(0, 7)).filter(x => x.length === 7))].sort().reverse();
+    const [mon, setMon] = useState(months[0] || "");
+    const [typ, setTyp] = useState("");
+    const TYPE_LBL = { GAS: "แก๊ส", OIL: "น้ำมัน", CHEM: "น้ำยาล้างงาน", BOX: "กล่องกระดาษ" };
+    const TYPE_COL = { GAS: "#0969da", OIL: "#bc4c00", CHEM: "#8250df", BOX: "#1a7f37" };
+    // รวมยอดของเดือนที่เลือก (ถ้าไม่เลือก = ทุกเดือน)
+    function summarise(month) {
+        const agg = {}; let total = 0;
+        supRows.forEach(r => {
+            if (month && String(r.date || "").slice(0, 7) !== month) return;
+            const m = matOf(r); if (!m) return;
+            if (typ && m.type !== typ) return;
+            const qty = Number(r.pcs) || Number(r.kgs) || 0;
+            if (!qty) return;
+            const k = m.id;
+            if (!agg[k]) agg[k] = { m: m, qty: 0, baht: 0, price: Number((priceMap || {})[m.id]) || 0 };
+            agg[k].qty += qty;
+            if (agg[k].price > 0) { agg[k].baht += agg[k].price * qty; total += agg[k].price * qty; }
+        });
+        return { rows: Object.values(agg).sort((a, b) => b.baht - a.baht || b.qty - a.qty), total: total };
+    }
+    const cur = summarise(mon);
+    const prevMon = mon ? months[months.indexOf(mon) + 1] : null;
+    const prev = prevMon ? summarise(prevMon) : null;
+    const diff = prev && prev.total > 0 ? ((cur.total - prev.total) / prev.total) * 100 : null;
+    const noPrice = cur.rows.filter(x => !(x.price > 0));
+    const maxBaht = cur.rows.reduce((s, x) => Math.max(s, x.baht), 0);
+    const monLbl = m => { if (!m) return "ทุกเดือน"; const [y, mm] = m.split("-"); return ["", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."][+mm] + " " + y; };
+    const dl = () => exportXLSX([{ name: "ต้นทุนวัสดุสิ้นเปลือง",
+            headers: ["รายการ", "ประเภท", "ปริมาณที่เบิกใช้", "หน่วย", "ราคา/หน่วย (บาท)", "มูลค่า (บาท)"],
+            rows: cur.rows.map(x => [x.m.name + " " + sizeTxt(x.m.size), TYPE_LBL[x.m.type] || x.m.type,
+                Math.round(x.qty * 100) / 100, unitWordOf(x.m.type, x.m.unit, x.m.size),
+                x.price > 0 ? x.price : "", x.price > 0 ? Math.round(x.baht * 100) / 100 : ""])
+                .concat([["รวมทั้งหมด", "", "", "", "", Math.round(cur.total * 100) / 100]]) }],
+        `ต้นทุนวัสดุสิ้นเปลือง_${mon || "ทุกเดือน"}.xlsx`);
+    const chip = (active, label, onClick, key) => React.createElement("button", { key: key, onClick: onClick,
+        style: { padding: "7px 16px", borderRadius: 20, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+            border: `1px solid ${active ? C.acc : C.brd}`, background: active ? C.acc : "transparent", color: active ? "#fff" : C.tx2, whiteSpace: "nowrap" } }, label);
+    return React.createElement("div", null,
+        React.createElement("div", { style: { marginBottom: 14 } },
+            React.createElement("div", { style: { fontSize: 19, fontWeight: 800 } }, "💰 ต้นทุนวัสดุสิ้นเปลือง"),
+            React.createElement("div", { style: { fontSize: 12, color: C.tx2, marginTop: 3 } }, "คิดจาก ปริมาณที่เบิกใช้จริง × ราคา/หน่วย ที่ตั้งไว้ใน Material")),
+        React.createElement(Card, null,
+            React.createElement("div", { style: { padding: "12px 14px", display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center", borderBottom: `1px solid ${C.brd}` } },
+                React.createElement("span", { style: { fontSize: 12, fontWeight: 700, color: C.tx2, marginRight: 3 } }, "เดือน"),
+                months.slice(0, 12).map(m => chip(mon === m, monLbl(m), () => setMon(m), m)),
+                chip(mon === "", "ทุกเดือน", () => setMon(""), "_all")),
+            React.createElement("div", { style: { padding: "10px 14px", display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" } },
+                React.createElement("span", { style: { fontSize: 12, fontWeight: 700, color: C.tx2, marginRight: 3 } }, "ประเภท"),
+                chip(typ === "", "ทุกประเภท", () => setTyp(""), "_t"),
+                ["GAS", "OIL", "CHEM", "BOX"].map(t => chip(typ === t, TYPE_LBL[t], () => setTyp(typ === t ? "" : t), t)))),
+        React.createElement(Card, null,
+            React.createElement("div", { style: { padding: "20px 22px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 14, background: "rgba(26,127,55,.07)" } },
+                React.createElement("div", null,
+                    React.createElement("div", { style: { fontSize: 12.5, color: C.tx2, fontWeight: 600 } }, "ยอดรวม " + monLbl(mon) + (typ ? " · เฉพาะ" + TYPE_LBL[typ] : "")),
+                    React.createElement("div", { style: { fontFamily: "monospace", fontSize: 34, fontWeight: 800, color: "#1a7f37", lineHeight: 1.2 } }, fmtQty(cur.total, 2) + " บาท"),
+                    diff != null && React.createElement("div", { style: { fontSize: 12.5, marginTop: 4, color: diff > 0 ? C.err : "#1a7f37", fontWeight: 700 } },
+                        (diff > 0 ? "▲ สูงขึ้น " : diff < 0 ? "▼ ลดลง " : "เท่ากับ ") + fmtQty(Math.abs(diff), 1) + "% จาก" + monLbl(prevMon)
+                            + "  (" + fmtQty(prev.total, 2) + " บาท)")),
+                React.createElement(Btn, { v: "success", onClick: dl }, "📊 ดึง Excel ส่งบัญชี"))),
+        cur.rows.length === 0
+            ? React.createElement(Card, null, React.createElement("div", { style: { padding: 30, textAlign: "center", color: C.tx2, fontSize: 13, lineHeight: 1.8 } },
+                "ยังไม่มีการเบิกใช้ใน" + monLbl(mon) + (typ ? " ประเภท" + TYPE_LBL[typ] : ""),
+                React.createElement("br"), "ลองเลือกเดือนอื่น หรือดู \"ทุกเดือน\""))
+            : React.createElement(Card, null,
+                React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 13 } },
+                    React.createElement("thead", null, React.createElement("tr", { style: { background: C.sur2 } },
+                        ["รายการ", "ปริมาณที่เบิกใช้", "ราคา/หน่วย", "มูลค่า", "สัดส่วน"].map((hh, hi) => React.createElement("th", { key: hi,
+                            style: { padding: "10px 13px", textAlign: hi === 0 ? "left" : "right", fontSize: 11, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, hh)))),
+                    React.createElement("tbody", null, cur.rows.map((x, i) => React.createElement("tr", { key: i },
+                        React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2 } },
+                            React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: "#fff", background: TYPE_COL[x.m.type] || C.tx2, borderRadius: 4, padding: "1px 7px", marginRight: 7 } }, TYPE_LBL[x.m.type] || x.m.type),
+                            React.createElement("span", { style: { fontWeight: 600 } }, x.m.name),
+                            React.createElement("span", { style: { color: C.tx2, marginLeft: 6, fontSize: 12 } }, sizeTxt(x.m.size))),
+                        React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2, textAlign: "right", fontFamily: "monospace", whiteSpace: "nowrap" } },
+                            fmtQty(x.qty, 0) + " " + unitWordOf(x.m.type, x.m.unit, x.m.size)),
+                        React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2, textAlign: "right", fontFamily: "monospace", color: C.tx2, whiteSpace: "nowrap" } },
+                            x.price > 0 ? fmtQty(x.price, 2) : "—"),
+                        React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2, textAlign: "right", fontFamily: "monospace", fontWeight: 800, whiteSpace: "nowrap", color: x.price > 0 ? C.tx : C.warn } },
+                            x.price > 0 ? fmtQty(x.baht, 2) : "ยังไม่ตั้งราคา"),
+                        React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2, width: 130 } },
+                            React.createElement("div", { style: { height: 8, borderRadius: 4, background: C.sur2, overflow: "hidden" } },
+                                React.createElement("div", { style: { height: "100%", width: (maxBaht > 0 ? (x.baht / maxBaht) * 100 : 0) + "%", background: TYPE_COL[x.m.type] || C.acc } })))))))),
+        noPrice.length > 0 && React.createElement("div", { style: { background: "rgba(210,153,34,.1)", border: "1px solid rgba(210,153,34,.35)", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#9a6700", lineHeight: 1.7 } },
+            React.createElement("strong", null, "⚠️ มี " + noPrice.length + " รายการที่ยังไม่ได้ตั้งราคา/หน่วย"),
+            " — ยอดรวมจึงยังไม่ครบ: ", noPrice.map(x => x.m.name).join(", "),
+            React.createElement("br"), "ตั้งได้ที่ ตั้งค่า → จัดการ Material → แก้ไขรายการนั้น → ช่องราคา"));
+}
+// ════════════════════════════════════════════════════════════
 // HISTORY PAGE
 // ════════════════════════════════════════════════════════════
-function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLots, materials, ngReturns, saveNgReturns, toast, logAudit, lotPriceMap, onSaveLotPrice, onSaveLotPricesBulk, dnMap, onSaveDnBulk, group }) {
+function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLots, materials, ngReturns, saveNgReturns, toast, logAudit, lotPriceMap, priceMap, onSaveLotPrice, onSaveLotPricesBulk, dnMap, onSaveDnBulk, group }) {
     // แยกประวัติ 2 คลังออกจากกัน — ส่ง materials มาทั้งหมดเพื่อให้เทียบชื่อได้ แล้วค่อยกรองตามกลุ่ม
     // (ห้ามกรอง array ก่อนส่งเข้ามา เพราะปุ่มแก้ไข/ลบ อ้างอิงลำดับแถวในชุดเต็ม)
     const supNameSet = {};
@@ -6734,6 +6878,50 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
                         filtered.length,
                         " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"))),
             React.createElement("div", { style: { overflow: "auto", flex: 1, minHeight: 240 } },
+                // ── สรุปมูลค่าวัสดุสิ้นเปลืองที่เบิกใช้ (สำหรับดู cost) ──
+                // คิดจาก ราคา/หน่วย ที่ตั้งไว้ใน Material × จำนวนที่จ่ายจริงตามตัวกรองที่เลือกอยู่
+                group === "supply" && tab === "issue" && (() => {
+                    const byName = {};
+                    (materials || []).forEach(m => { byName[String(m.name + " " + m.size).replace(/\s+/g, " ").trim().toLowerCase()] = m; });
+                    const agg = {}; let total = 0; let noPrice = 0;
+                    filtered.forEach(r => {
+                        const m = byName[String(r.name || "").replace(/\s+/g, " ").trim().toLowerCase()];
+                        const qty = Number(r.pcs) || Number(r.kgs) || 0;
+                        if (!qty) return;
+                        const key = r.name || "-";
+                        if (!agg[key]) agg[key] = { qty: 0, baht: 0, unit: m ? unitWordOf(m.type, m.unit, m.size) : "", priced: false };
+                        agg[key].qty += qty;
+                        const p = m ? Number((priceMap || {})[m.id]) : 0;
+                        if (p > 0) { agg[key].baht += p * qty; agg[key].priced = true; total += p * qty; }
+                        else noPrice++;
+                    });
+                    const rows = Object.entries(agg).sort((a, b) => b[1].baht - a[1].baht);
+                    if (!rows.length) return null;
+                    // บอกให้ชัดว่ายอดนี้มาจากเงื่อนไขไหน — เวลาส่งให้บัญชีจะได้ไม่ตีความผิด
+                    const scope = (filterMonth ? "เดือน " + filterMonth : "ทุกเดือน")
+                        + " · " + (filterMat ? sizeTxt(filterMat) : "ทุกรายการ");
+                    const dlCost = () => exportXLSX([{ name: "มูลค่าวัสดุสิ้นเปลือง",
+                        headers: ["รายการ", "ปริมาณที่เบิกใช้", "หน่วย", "มูลค่า (บาท)"],
+                        rows: rows.map(([nm, v]) => [sizeTxt(nm), v.qty, v.unit, v.priced ? Math.round(v.baht * 100) / 100 : ""])
+                            .concat([["รวม", "", "", Math.round(total * 100) / 100]]) }],
+                        `มูลค่าวัสดุสิ้นเปลือง_${filterMonth || "ทุกเดือน"}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+                    return React.createElement("div", { style: { margin: "0 0 10px", border: `1px solid ${C.brd}`, borderRadius: 10, overflow: "hidden" } },
+                        React.createElement("div", { style: { padding: "9px 13px", background: "rgba(26,127,55,.08)", borderBottom: `1px solid ${C.brd}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 } },
+                            React.createElement("span", { style: { fontSize: 12, fontWeight: 700, color: "#1a7f37" } },
+                                "💰 มูลค่าวัสดุสิ้นเปลืองที่เบิกใช้",
+                                React.createElement("span", { style: { fontWeight: 500, color: C.tx2, marginLeft: 7 } }, scope)),
+                            React.createElement("span", { style: { display: "inline-flex", alignItems: "center", gap: 9 } },
+                                React.createElement("span", { style: { fontFamily: "monospace", fontSize: 16, fontWeight: 800, color: "#1a7f37" } }, fmtQty(total, 2) + " บาท"),
+                                React.createElement(Btn, { v: "success", sz: "xs", onClick: dlCost }, "📊 Excel สรุปมูลค่า"))),
+                        React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11.5 } },
+                            React.createElement("tbody", null, rows.map(([nm, v], i) => React.createElement("tr", { key: i },
+                                React.createElement("td", { style: { padding: "6px 13px", borderBottom: C.brd2 } }, sizeTxt(nm)),
+                                React.createElement("td", { style: { padding: "6px 13px", borderBottom: C.brd2, textAlign: "right", fontFamily: "monospace", whiteSpace: "nowrap" } }, fmtQty(v.qty, 0) + " " + v.unit),
+                                React.createElement("td", { style: { padding: "6px 13px", borderBottom: C.brd2, textAlign: "right", fontFamily: "monospace", fontWeight: 700, whiteSpace: "nowrap", color: v.priced ? C.tx : C.warn } },
+                                    v.priced ? fmtQty(v.baht, 2) + " บาท" : "ยังไม่ได้ตั้งราคา"))))),
+                        noPrice > 0 && React.createElement("div", { style: { padding: "7px 13px", fontSize: 11, color: C.warn, background: "rgba(210,153,34,.07)" } },
+                            "⚠️ มี " + noPrice + " รายการที่ยังไม่ได้ตั้งราคา/หน่วย — ตั้งได้ที่ จัดการ Material (ช่องราคา) แล้วยอดจะคิดให้ครบ"));
+                })(),
                 tab === "issue" && issueSum && (() => {
                     // สรุปยอดจ่ายออก — รวมได้ 3 แบบ: วันที่+วัตถุดิบ / วันที่+แผนก / ต่อใบเบิก
                     const g = {};
