@@ -450,6 +450,102 @@ function _makerScore(vnd, maker) {
     return 0;
 }
 function _vendorHit(vnd, maker) { return _makerScore(vnd, maker) > 0; }
+// ── ดึง "ตัวเลขมิติ" ออกจากข้อความ size แล้วเทียบเป็นตัวเลขจริง ──
+// สโตร์พิมพ์ size ไม่เหมือนกันทุกครั้ง: 12.70 กับ 12.7 / 1 กับ 1.0 คือตัวเดียวกัน
+// แต่ถ้าเทียบแบบตัดจุดทิ้งเป็นข้อความจะได้ "1270" กับ "127" ซึ่งไม่ตรงกัน
+// ตัดวงเล็บท้าย (เช่น (1/2H), (OL), (For KVC)) ออกก่อน เพราะไม่ใช่มิติของท่อ
+function _dimNums(s) {
+    let t = String(s == null ? "" : s).replace(/^\s*size:\s*/i, "");
+    const p = t.indexOf("(");
+    if (p > 0) t = t.slice(0, p);
+    return (t.replace(/(\d),(\d{3})(?!\d)/g, "$1$2").match(/\d+(?:\.\d+)?/g) || []).map(parseFloat);
+}
+// ตัวเลขทุกตัวในข้อความ (ไม่ตัดวงเล็บ) — ใช้กับ "ชื่อที่ประวัติบันทึกไว้"
+// เพราะชื่อแบบยาวมีวงเล็บคั่นกลาง แล้ว size อยู่ท้ายสุด เช่น
+// "SUS304 JIS G3446 NO.1-TKA(NO.1AP) (RM_NYK) Ø14.0x0.8x3500" — ตัดที่วงเล็บแรกจะไม่เหลือ size
+function _allNumsOf(s) {
+    return (String(s == null ? "" : s).replace(/(\d),(\d{3})(?!\d)/g, "$1$2").match(/\d+(?:\.\d+)?/g) || []).map(parseFloat);
+}
+// ชุดตัวเลขมิติของ material อยู่ "ติดกันเป็นชุด" ในชื่อที่ประวัติบันทึกไว้หรือไม่
+// ประวัติเก็บชื่อยาวที่มีเลขเกรดนำหน้า เช่น "COPPER TUBE C1220T Ø12.70x1.0LWC"
+// -> ตัวเลขทั้งหมด [1220, 12.70, 1.0] ต้องข้าม 1220 ให้ได้ แล้วเจอ [12.7, 1.0] ของคลัง
+function _dimRunIn(hay, needle) {
+    if (needle.length < 2 || hay.length < needle.length) return false;
+    for (let i = 0; i + needle.length <= hay.length; i++) {
+        let ok = true;
+        for (let j = 0; j < needle.length; j++) if (Math.abs(hay[i + j] - needle[j]) > 1e-9) { ok = false; break; }
+        if (ok) return true;
+    }
+    return false;
+}
+// ── หา material ของรายการในประวัติ ──
+// ประวัติเก็บ "ชื่อ+size" เป็นข้อความ ณ ตอนที่เบิก/รับ ถ้าภายหลังไปแก้ชื่อหรือ size
+// ข้อความจะไม่ตรงกันอีก ทำให้รายงานหาชนิดไม่เจอ แล้วยอดทั้งเดือนไปโผล่ที่หมวด "อื่นๆ"
+// ไล่หา 4 ชั้น (Maker ต้องเข้ากันทุกชั้นที่ไม่ใช่ตรงเป๊ะ):
+//   1) ชื่อ+size ตรงเป๊ะ
+//   2) size ที่ normalize แล้วตรงกัน
+//   3) ชุดตัวเลขมิติของคลังอยู่ติดกันเป็นชุดในชื่อของประวัติ  (ข้ามเลขเกรด / 12.70=12.7)
+//   4) ตัวเลขทุกตัวในประวัติมีอยู่ใน size ของคลัง (คลังเขียนละเอียดกว่า มี tolerance/ID)
+function findMatOfHist(list, name, maker, cache) {
+    const ck = (name || "") + "\u0001" + (maker || "");
+    if (cache && ck in cache) return cache[ck];
+    const mats = list || [];
+    // material เดียวอาจลงทะเบียน Maker ไว้หลายเจ้า (Maker เสริม) — ต้องเทียบให้ครบทุกเจ้า
+    const mkScore = m => {
+        let s = _makerScore(maker, m.maker);
+        const more = (m.allMakers && m.allMakers.length) ? m.allMakers : (m.extraMakers || []);
+        for (const x of more) { const v = _makerScore(maker, x); if (v > s) s = v; }
+        return s;
+    };
+    let out = null;
+    const lower = ((name || "") + "|" + (maker || "")).toLowerCase();
+    for (const m of mats) {
+        if (((m.name + " " + m.size) + "|" + m.maker).toLowerCase() === lower) { out = m; break; }
+    }
+    if (!out) {
+        const bare = String(name || "").replace(/^.*?size:/i, "");
+        const key = _normSizeKey(bare);
+        let best = null, bs = 0;
+        if (key) {
+            mats.forEach(m => {
+                if (_normSizeKey(m.size) !== key) return;
+                const s = mkScore(m);
+                if (s > bs) { bs = s; best = m; }
+            });
+        }
+        if (!best) {
+            // ชั้น 3 — เทียบมิติเป็นตัวเลข เลือกตัวที่มิติยาวที่สุด (เจาะจงที่สุด) ก่อน แล้วค่อยดู Maker
+            const hn = _allNumsOf(bare);
+            let bl = 0;
+            mats.forEach(m => {
+                const s = mkScore(m);
+                if (s <= 0) return;
+                const mn = _dimNums(m.size);
+                if (!_dimRunIn(hn, mn)) return;
+                if (mn.length > bl || (mn.length === bl && s > bs)) { bl = mn.length; bs = s; best = m; }
+            });
+        }
+        if (!best) {
+            // ชั้น 4 (เดิม) — ใช้ตัวเลขทุกตัวรวมในวงเล็บ เพื่อไม่ให้การจับคู่ที่เคยถูกอยู่แล้วเปลี่ยนไป
+            const allNums = s2 => {
+                const o = {};
+                String(s2 == null ? "" : s2).replace(/,/g, "").replace(/\d+(?:\.\d+)?/g, n => { o[parseFloat(n)] = true; return n; });
+                return o;
+            };
+            const hs = Object.keys(allNums(bare));
+            if (hs.length) mats.forEach(m => {
+                const s = mkScore(m);
+                if (s <= 0) return;
+                const ms = allNums(m.size);
+                if (!hs.every(x => ms[x])) return;
+                if (s > bs) { bs = s; best = m; }
+            });
+        }
+        out = best || null;
+    }
+    if (cache) cache[ck] = out;
+    return out;
+}
 // จัดอันดับ material ที่เข้าข่ายเป็นของ part นี้
 // น้ำหนัก: หมวดตรง > Maker ตรง (ยิ่งตรงชัดยิ่งสูง) > ผูก Part No. ไว้ > size ตรง > temper ตรง
 // Maker ต้องแรงพอที่จะชนะ "ผูกไว้ + size ตรง" เพราะทะเบียนระบุ Maker ไว้ชัดเจนที่สุด
@@ -1128,33 +1224,65 @@ function LotDetailModal({ open, onClose, mat, lots, setLots, master, onNG, logAu
                                     empty && React.createElement("button", { onClick: () => { if (window.confirm(`ลบ Lot "${lot.lotNo}"?`)) {
                                             setLots(ls => ({ ...ls, [mat.id]: ls[mat.id].filter((_, xi) => xi !== i) }));
                                         } }, style: { background: "rgba(248,81,73,.15)", border: "1px solid rgba(248,81,73,.3)", borderRadius: 4, color: "#cf222e", cursor: "pointer", padding: "2px 7px", fontSize: 13 } }, "\uD83D\uDDD1\uFE0F")))),
-                            // ร่องรอยการตัดจ่ายของลอตนี้ — ใครเบิก ใบไหน วันไหน ตัดไปเท่าไร
-                            // (เดิมไม่มีเลย เห็นแต่ยอดคงเหลือ จึงสอบย้อนกลับไม่ได้ว่าของหายไปทางไหน)
+                            // ── สรุปลอตนี้แบบอ่านจบในที่เดียว ──────────────────────────
+                            // รับเข้า → จ่ายออก → ควรเหลือ → ระบบขึ้นจริง  พร้อมบอกว่าตรงหรือไม่ตรง
+                            // (เลข Lot เดียวกันรับได้หลายครั้ง จึงรวมทุกแถวของเลขลอตนี้มาคิดด้วยกัน)
                             (() => {
                                 const _k2 = v => String(v == null ? "" : v).replace(/[\s-]/g, "").toLowerCase();
                                 const mv = (issueHist || []).filter(r => _k2(r.lotNo) === _k2(lot.lotNo)
                                     && _k2(r.name) === _k2(`${mat.name} ${mat.size}`))
                                     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
-                                const used = { kgs: 0, pcs: 0, coil: 0, m: 0 };
-                                mv.forEach(r => { ["kgs", "pcs", "coil", "m"].forEach(f => { used[f] += Number(r[f]) || 0; }); });
-                                const txt = uCols.map(c => (used[c[0]] || 0) > 0 ? fmtQty(used[c[0]], c[2]) + " " + c[1] : null).filter(Boolean).join(" · ");
+                                const sameRows = ml.filter(l2 => normLot(l2.lotNo) === normLot(lot.lotNo));
+                                const multi = sameRows.length > 1;
+                                const firstIdx = ml.findIndex(l2 => normLot(l2.lotNo) === normLot(lot.lotNo));
+                                const rows2 = uCols.map(c => {
+                                    const rc = sameRows.reduce((s, l2) => s + (Number(l2[c[0]]) || 0), 0);
+                                    const rm = sameRows.reduce((s, l2) => s + (Number(l2["rem_" + c[0]]) || 0), 0);
+                                    const us = mv.reduce((s, r) => s + (Number(r[c[0]]) || 0), 0);
+                                    return { f: c[0], u: c[1], d: c[2], rc: rc, us: us, rm: rm,
+                                        should: Math.round((rc - us) * 100) / 100,
+                                        gap: Math.round((rc - us - rm) * 100) / 100 };
+                                }).filter(x => x.rc > 0 || x.us > 0 || x.rm > 0);
+                                const bad = rows2.some(x => Math.abs(x.gap) >= (x.f === "kgs" ? 1 : 0.6));
+                                // ลอตที่ยังไม่เคยเบิกและของอยู่ครบ = ไม่มีอะไรต้องรายงาน ไม่ต้องขึ้นกล่องให้รก
+                                if (!mv.length && !bad) return null;
+                                // เลข Lot ซ้ำหลายแถว สรุปรวมแค่แถวแรก แถวที่เหลือไม่ต้องขึ้นอะไร
+                                if (multi && i !== firstIdx) return null;
+                                const col = bad ? "#bf8700" : (mv.length ? "#cf222e" : "#57606a");
+                                const bg = bad ? "rgba(210,153,34,.10)" : (mv.length ? "rgba(207,34,46,.06)" : "rgba(140,149,159,.10)");
+                                const cell = (v, b, cl) => React.createElement("td", { style: { padding: "3px 12px 3px 0", textAlign: "right", fontFamily: "monospace", fontSize: 12.5, fontWeight: b ? 800 : 600, color: cl || "#1f2328", whiteSpace: "nowrap" } }, v);
+                                const lbl = (t, cl) => React.createElement("td", { style: { padding: "3px 10px 3px 0", fontSize: 12, color: cl || "#57606a", whiteSpace: "nowrap" } }, t);
                                 return React.createElement("tr", { key: "mv-" + i },
                                     React.createElement("td", { colSpan: 6 + uCols.length * 2 + 1 + (setLots ? 1 : 0),
                                         style: { padding: "0 14px 10px 52px", borderBottom: "1px solid rgba(208,215,222,.7)" } },
-                                        mv.length === 0
-                                            ? React.createElement("div", { style: { background: "rgba(210,153,34,.1)", borderLeft: "4px solid #bf8700", borderRadius: 6, padding: "7px 12px", fontSize: 12, color: "#7d4e00", fontWeight: 600 } },
-                                                "⚠️ ไม่มีประวัติการจ่ายผูกกับลอตนี้ — ถ้ายอดลดลงแปลว่าเคยปรับยอดด้วยมือ ตรวจย้อนกลับไม่ได้")
-                                            : React.createElement("div", { style: { background: "rgba(207,34,46,.07)", borderLeft: "4px solid #cf222e", borderRadius: 6, padding: "8px 12px" } },
-                                                React.createElement("div", { style: { fontSize: 12.5, fontWeight: 800, color: "#cf222e", marginBottom: 5 } },
-                                                    "📤 จ่ายออกจากลอตนี้ " + mv.length + " ครั้ง  ·  รวม " + (txt || "-")),
-                                                React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
-                                                    mv.map((r, j) => React.createElement("span", { key: j,
-                                                        style: { display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", border: "1px solid rgba(207,34,46,.3)", borderRadius: 14, padding: "3px 11px", fontSize: 12, color: "#1f2328", whiteSpace: "nowrap" } },
-                                                        React.createElement("span", { style: { color: "#57606a", fontFamily: "monospace" } }, fmtDate(r.date)),
-                                                        React.createElement("span", { style: { color: "#0969da", fontWeight: 700, fontFamily: "monospace" } }, r.reqId || "-"),
-                                                        React.createElement("span", { style: { fontWeight: 800, fontFamily: "monospace" } },
-                                                            uCols.map(c => (Number(r[c[0]]) || 0) > 0 ? fmtQty(r[c[0]], c[2]) + " " + c[1] : null).filter(Boolean).join(" / ")),
-                                                        r.dept ? React.createElement("span", { style: { color: "#8250df", fontWeight: 700, fontSize: 11 } }, r.dept) : null))))));
+                                        React.createElement("div", { style: { background: bg, borderLeft: "4px solid " + col, borderRadius: 7, padding: "9px 13px" } },
+                                            React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: col, marginBottom: 6 } },
+                                                bad ? "⚠️ ยอดลอตนี้ไม่สอดคล้องกับเอกสาร"
+                                                    : mv.length ? "✓ ยอดลอตนี้ตรงกับเอกสารทุกใบ"
+                                                    : "ลอตนี้ไม่มีประวัติการจ่ายในระบบ",
+                                                multi ? React.createElement("span", { style: { fontWeight: 600, fontSize: 11.5, marginLeft: 8, color: "#57606a" } },
+                                                    "(เลข Lot นี้รับเข้า " + sameRows.length + " ครั้ง — สรุปรวมทุกครั้งแล้ว)") : null),
+                                            React.createElement("table", { style: { borderCollapse: "collapse", marginBottom: mv.length ? 8 : 0 } },
+                                                React.createElement("tbody", null,
+                                                    React.createElement("tr", null, lbl("รับเข้า"), ...rows2.map(x => cell(fmtQty(x.rc, x.d) + " " + x.u))),
+                                                    React.createElement("tr", null, lbl("จ่ายออกตามใบเบิก", mv.length ? "#cf222e" : null),
+                                                        ...rows2.map(x => cell("− " + fmtQty(x.us, x.d) + " " + x.u, 0, mv.length ? "#cf222e" : null))),
+                                                    React.createElement("tr", { style: { borderTop: "1px solid rgba(0,0,0,.18)" } },
+                                                        lbl("ควรเหลือ"), ...rows2.map(x => cell(fmtQty(x.should, x.d) + " " + x.u, 1))),
+                                                    React.createElement("tr", null, lbl("ระบบขึ้นจริง"),
+                                                        ...rows2.map(x => cell(fmtQty(x.rm, x.d) + " " + x.u, 1, bad ? "#bf8700" : "#1a7f37"))),
+                                                    bad ? React.createElement("tr", null, lbl("ส่วนต่างที่หาย", "#bf8700"),
+                                                        ...rows2.map(x => cell(x.gap ? fmtQty(x.gap, x.d) + " " + x.u : "-", 1, "#bf8700"))) : null)),
+                                            bad ? React.createElement("div", { style: { fontSize: 11.5, color: "#7d4e00", fontWeight: 600, marginBottom: mv.length ? 8 : 0 } },
+                                                "ส่วนต่างนี้ออกจากคลังไปโดยไม่มีใบเบิก — เคยปรับยอดคงเหลือด้วยมือ ตรวจย้อนกลับไม่ได้") : null,
+                                            mv.length ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
+                                                mv.map((r, j) => React.createElement("span", { key: j,
+                                                    style: { display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", border: "1px solid rgba(207,34,46,.3)", borderRadius: 14, padding: "3px 11px", fontSize: 12, whiteSpace: "nowrap" } },
+                                                    React.createElement("span", { style: { color: "#57606a", fontFamily: "monospace" } }, fmtDate(r.date)),
+                                                    React.createElement("span", { style: { color: "#0969da", fontWeight: 700, fontFamily: "monospace" } }, r.reqId || "-"),
+                                                    React.createElement("span", { style: { fontWeight: 800, fontFamily: "monospace" } },
+                                                        uCols.map(c => (Number(r[c[0]]) || 0) > 0 ? fmtQty(r[c[0]], c[2]) + " " + c[1] : null).filter(Boolean).join(" / ")),
+                                                    r.dept ? React.createElement("span", { style: { color: "#8250df", fontWeight: 700, fontSize: 11 } }, r.dept) : null))) : null)));
                             })(),
                             editIdx === i && setLots && React.createElement("tr", { key: "edit-" + i, style: { background: "rgba(88,166,255,.06)" } },
                                 React.createElement("td", { colSpan: 6 + uCols.length * 2 + 1 + (setLots ? 1 : 0), style: { padding: "10px 14px", borderBottom: "1px solid rgba(208,215,222,.7)" } },
@@ -2842,8 +2970,8 @@ function StoreFlow() {
                     } }, "\u2795 \u0E2A\u0E23\u0E49\u0E32\u0E07\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01")),
             React.createElement("div", { className: "pgwrap", style: { flex: 1, overflowY: "auto", overflowX: "hidden", padding: "16px 12px" } },
                 page === "quickcheck" && React.createElement(QuickCheckPage, { materials: rawMats, lots: lots, toast: toast }),
-                page === "dashboard" && React.createElement(DashPage, { requests: requests, materials: rawMats, lots: lots, role: role, master: rawMaster, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, goto: setPage, issueHist: issueHist, recvHist: recvHist, priceMap: priceMap, onSavePrice: canEditStock ? savePrice : null, lotPriceMap: lotPriceMap, only: "main" }),
-                page === "deadstock" && React.createElement(DashPage, { requests: requests, materials: rawMats, lots: lots, role: role, master: rawMaster, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, goto: setPage, issueHist: issueHist, recvHist: recvHist, priceMap: priceMap, onSavePrice: canEditStock ? savePrice : null, lotPriceMap: lotPriceMap, only: "aged" }),
+                page === "dashboard" && React.createElement(DashPage, { requests: requests, materials: rawMats, allMats: materials, lots: lots, role: role, master: rawMaster, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, goto: setPage, issueHist: issueHist, recvHist: recvHist, priceMap: priceMap, onSavePrice: canEditStock ? savePrice : null, lotPriceMap: lotPriceMap, only: "main" }),
+                page === "deadstock" && React.createElement(DashPage, { requests: requests, materials: rawMats, allMats: materials, lots: lots, role: role, master: rawMaster, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, goto: setPage, issueHist: issueHist, recvHist: recvHist, priceMap: priceMap, onSavePrice: canEditStock ? savePrice : null, lotPriceMap: lotPriceMap, only: "aged" }),
                 (page === "request" || page === "supplyreq") && React.createElement(ReqPage, { key: page, group: page === "supplyreq" ? "supply" : "raw", requests: requests, materials: materials, issueHist: issueHist, filter: reqFilter, setFilter: setReqFilter, role: role, me: (currentUser && currentUser.name) || "", setHistoryModal: setHistoryModal, onAp: id => { setPendingApId(id); setModal("approve"); }, onIs: id => { setPendingIsId(id); setModal("issue"); }, onNew: () => {
                         // ต้องล็อกอินก่อนเขียนใบเบิก แล้วเติมชื่อผู้เบิกจากคนที่ล็อกอินให้เลย
                         // (เดิมใครเปิดลิงก์ก็ส่งใบได้ และพิมพ์ชื่อใครก็ได้ ตามกลับไม่ได้ว่าใครส่งจริง)
@@ -3647,7 +3775,7 @@ function QuickCheckPage({ materials, lots, toast }) {
                         React.createElement("strong", null, "จัดการ Part No."),
                         " แล้วกดปุ่ม 🔀 ที่รายการนี้ เพื่อเลือกวัตถุดิบที่ตรงกัน"))));
 }
-function DashPage({ requests, materials, lots, role, master, onAp, onIs, goto, issueHist, recvHist, priceMap, onSavePrice, lotPriceMap, only }) {
+function DashPage({ requests, materials, allMats, lots, role, master, onAp, onIs, goto, issueHist: _issueHistAll, recvHist: _recvHistAll, priceMap, onSavePrice, lotPriceMap, only }) {
     // หน่วยหลักที่ใช้คิดมูลค่า
     // หน่วยคิดเงิน: ยึดหน่วยของ material ถ้ามีของในหน่วยนั้นจริง ไม่งั้นใช้หน่วยที่มีของ
     // (unit "BOTH"/"BOTH_KG_COIL" เก็บได้หลายหน่วย จึงต้องดูจากยอดคงเหลือจริง)
@@ -3744,47 +3872,22 @@ function DashPage({ requests, materials, lots, role, master, onAp, onIs, goto, i
             { name: "รายละเอียดราย Lot", headers: detHeaders, rows: detRows }],
             `วัตถุดิบไม่เคลื่อนไหว_${agedTh}เดือน_${dt}.xlsx`);
     }
-    const allDates = [...(issueHist || []), ...(recvHist || [])].map(h => h.date).filter(Boolean);
+    // ── หน้านี้เป็น "ภาพรวมวัตถุดิบ" แก๊ส/น้ำมัน/กล่อง/เคมี ต้องไม่โผล่มาปน ──
+    // materials ที่ส่งเข้ามาถูกกรองเหลือแค่วัตถุดิบแล้ว แต่ประวัติเบิก-รับ ส่งมาทั้งก้อน
+    // ของวัสดุสิ้นเปลืองจึงหา material ไม่เจอ แล้วไปกองที่หมวด "อื่นๆ" (เดิม GAS อยู่ในนั้น)
+    // จึงต้องใช้รายการของทั้ง 2 คลัง (allMats) มาคัดแถวของวัสดุสิ้นเปลืองออกก่อน
+    const _mfCacheAll = {}, _mfCacheRaw = {};
+    const _allMatList = (allMats && allMats.length) ? allMats : materials;
+    const _isSupRow = h => {
+        const m = findMatOfHist(_allMatList, h.name, h.maker, _mfCacheAll);
+        return !!m && isSupplyType(m.type);
+    };
+    const issueHist = (_issueHistAll || []).filter(h => !_isSupRow(h));
+    const recvHist = (_recvHistAll || []).filter(h => !_isSupRow(h));
+    const allDates = [...issueHist, ...recvHist].map(h => h.date).filter(Boolean);
     const statMonths = [...new Set(allDates.map(d => String(d).slice(0, 7)))].sort().reverse();
     const effMonth = statMonth === "__all__" ? "" : (statMonth || statMonths[0] || "");
-    const matByKey = {};
-    materials.forEach(m => { matByKey[((m.name + " " + m.size) + "|" + m.maker).toLowerCase()] = m; });
-    // หา material ของรายการในประวัติ
-    // ประวัติเก็บ "ชื่อ+size" เป็นข้อความ ณ ตอนที่เบิก/รับ ถ้าภายหลังไปแก้ชื่อหรือ size ของ material
-    // ข้อความจะไม่ตรงกันอีก ทำให้รายงานหาชนิดไม่เจอและยอดทั้งเดือนหายไปเงียบๆ
-    // จึงไล่หา 3 ชั้น: ตรงเป๊ะ → size ที่ normalize แล้ว → ตัวเลขใน size ตรงกัน (ต้อง Maker ตรงด้วยเสมอ)
-    function _numSet(s) {
-        const out = {};
-        String(s == null ? "" : s).replace(/,/g, "").replace(/\d+(?:\.\d+)?/g, n => { out[parseFloat(n)] = true; return n; });
-        return out;
-    }
-    function matOfHist(name, maker) {
-        const exact = matByKey[((name || "") + "|" + (maker || "")).toLowerCase()];
-        if (exact) return exact;
-        const bare = String(name || "").replace(/^.*?size:/i, "");
-        const key = _normSizeKey(bare);
-        let best = null, bs = 0;
-        if (key) {
-            materials.forEach(m => {
-                if (_normSizeKey(m.size) !== key) return;
-                const s = _makerScore(maker, m.maker);
-                if (s > bs) { bs = s; best = m; }
-            });
-            if (best) return best;
-        }
-        // ชั้นสุดท้าย: size ในคลังอาจละเอียดกว่าที่บันทึกไว้ (มี tolerance/ID/หน่วย)
-        // ถือว่าเป็นตัวเดียวกันเมื่อ "ตัวเลขทุกตัวในประวัติมีอยู่ใน size ของคลัง" และ Maker ตรง
-        const hs = Object.keys(_numSet(bare));
-        if (!hs.length) return null;
-        materials.forEach(m => {
-            const s = _makerScore(maker, m.maker);
-            if (s <= 0) return;
-            const ms = _numSet(m.size);
-            if (!hs.every(x => ms[x])) return;
-            if (s > bs) { bs = s; best = m; }
-        });
-        return best;
-    }
+    const matOfHist = (name, maker) => findMatOfHist(materials, name, maker, _mfCacheRaw);
     const reqById = {};
     (requests || []).forEach(rq => { reqById[rq.id] = rq; });
     function aggTop3(hist, isIssue) {
@@ -3829,8 +3932,9 @@ function DashPage({ requests, materials, lots, role, master, onAp, onIs, goto, i
         Object.keys(topIssue).forEach(k => { if ((topIssue[k] || []).length) has[k] = 1; });
         Object.keys(topRecv).forEach(k => { if ((topRecv[k] || []).length) has[k] = 1; });
         const known = master.matTypes.filter(t => has[t.code]);
+        // ชื่อหมวดต้องบอกตรง ๆ ว่าทำไมมันมาอยู่ที่นี่ — เดิมเขียนแค่ "อื่นๆ" ทำให้เข้าใจผิดว่าเป็นชนิดหนึ่ง
         return has["OTHER"]
-            ? [...known, { code: "OTHER", label: "อื่นๆ", color: "#8c959f", bg: "rgba(140,149,159,.12)" }]
+            ? [...known, { code: "OTHER", label: "⚠️ ยังไม่มีในทะเบียนคลัง", color: "#bf8700", bg: "rgba(210,153,34,.12)" }]
             : known;
     })();
     // ถ้าชนิดที่เลือกไว้ไม่มีข้อมูลในเดือนนี้ ให้ตกมาที่ตัวแรกที่มีข้อมูล
@@ -3883,6 +3987,12 @@ function DashPage({ requests, materials, lots, role, master, onAp, onIs, goto, i
                                 color: on ? (t.color || C.acc) : C.tx2 } },
                             t.label + (t.code !== "OTHER" ? " (" + t.code + ")" : ""));
                     })),
+                // อธิบายให้ชัดว่าหมวดนี้ไม่ใช่ชนิดวัตถุดิบ แต่เป็นรายการที่จับคู่กับทะเบียนคลังไม่ได้
+                curType === "OTHER" && React.createElement("div", { style: { background: "rgba(210,153,34,.10)", borderLeft: "4px solid #bf8700", borderRadius: 7, padding: "9px 13px", marginBottom: 12, fontSize: 12.5, color: "#7d4e00", lineHeight: 1.65 } },
+                    React.createElement("div", { style: { fontWeight: 800, marginBottom: 3 } }, "นี่ไม่ใช่ชนิดวัตถุดิบ"),
+                    "รายการข้างล่างนี้มีประวัติรับ/เบิกอยู่จริง แต่ระบบหา \"ชื่อ + Size + Maker\" ที่ตรงกันในทะเบียนคลังไม่เจอ จึงบอกชนิดไม่ได้",
+                    React.createElement("div", { style: { marginTop: 4 } },
+                        "ส่วนใหญ่เป็นของที่รับเข้าไว้ก่อนลงทะเบียนในคลัง หรือลงทะเบียนไว้คนละ Maker — ถ้าเพิ่ม/แก้ทะเบียนให้ตรง รายการจะย้ายไปอยู่ในชนิดของตัวเองเอง")),
                 React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 } },
                     React.createElement("div", null,
                         React.createElement("div", { style: { fontSize: 13.5, fontWeight: 800, color: C.acc, marginBottom: 8 } }, "📤 เบิกจ่ายมากที่สุด"),
