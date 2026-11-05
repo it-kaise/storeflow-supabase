@@ -250,8 +250,9 @@ function unitWordOf(type, unit, size) {
     // ดูจากข้อความขนาดบรรจุของตัวนั้นเอง จะได้ไม่ต้องมีหน่วยใหม่ในระบบ
     if (t === "OIL" || t === "CHEM") {
         const s = String(size == null ? "" : size);
-        if (/กก|กิโล|\bKG/i.test(s)) return "กก.";        // บางตัวซื้อ-เบิกเป็นกิโล (เช่น Methylene Chloride)
+        // หน้างานเบิกเป็นลิตรเสมอ — ถ้าเขียนลิตรไว้ ให้ถือว่าเลขกิโล (ถ้ามี) คือน้ำหนักต่อถัง ไม่ใช่หน่วยเบิก
         if (/ลิตร|\bL\b|LT/i.test(s)) return "ลิตร";
+        if (/กก|กิโล|\bKG/i.test(s)) return "กก.";        // ตัวที่คุมเป็นกิโลล้วน ยังไม่ได้ระบุลิตร
         if (/ถัง|PAIL|DRUM|แกลลอน/i.test(s)) return "ถัง";  // ยกทั้งถัง (ยังไม่รู้ขนาดบรรจุ)
         return "ลิตร";
     }
@@ -261,18 +262,68 @@ function unitWordOf(type, unit, size) {
 function supplyField(type) { return (String(type || "").toUpperCase() === "OIL" || String(type || "").toUpperCase() === "CHEM") ? "kgs" : "pcs"; }
 // ขนาดบรรจุต่อถัง/PAIL — อ่านจากข้อความ size เช่น "200 ลิตร/ถัง" = 200 · "20 ลิตร/PAIL" = 20
 // ใช้ตอนรับของ: สโตร์กรอกจำนวนถัง ระบบคูณเป็นลิตรให้เอง (รับเป็นถัง จ่ายเป็นลิตร)
+// บางตัวผู้ขายคิดเป็นกิโล แต่หน้างานเบิกเป็นลิตรเสมอ → เขียนน้ำหนักต่อถังไว้ในวงเล็บ
+// เช่น "200 ลิตร/DRUM (154 กก.)" = 1 drum 200 ลิตร หนัก 154 กก. → 0.77 กก./ลิตร
+// ตัวเลข+หน่วยลิตร — ต้องไม่ให้ตัว L ที่อยู่กลางคำอย่าง "PAIL" นับเป็นลิตร
+const LITRE_RE = /(\d+(?:\.\d+)?)\s*(?:ลิตร|LT|L)(?![A-Za-z])/i;
 function packSizeOf(m) {
     const s = String((m && m.size) || "");
-    const mm = s.match(/(\d+(?:\.\d+)?)\s*(ลิตร|L|LT|กก|กิโล|KG)/i);
+    const mm = s.match(LITRE_RE);
+    if (mm) return parseFloat(mm[1]);
+    // ไม่ได้เขียนลิตรไว้เลย = ตัวนั้นคุมเป็นกิโลล้วน ใช้เลขกิโลเป็นขนาดบรรจุไปก่อน (พฤติกรรมเดิม)
+    const kg = s.match(/(\d+(?:\.\d+)?)\s*(?:กก|กิโล|KGS?)/i);
+    return kg ? parseFloat(kg[1]) : 0;
+}
+// น้ำหนักต่อถัง/PAIL (กก.) — อ่านจากเลขกิโลใน size เช่น "200 ลิตร/DRUM (154 กก.)" = 154
+// มีค่าเฉพาะตัวที่เขียน "ลิตร" ไว้ด้วย ไม่งั้นเลขกิโลนั้นคือขนาดบรรจุเอง ไม่ใช่น้ำหนักเสริม
+function packKgOf(m) {
+    const s = String((m && m.size) || "");
+    if (!LITRE_RE.test(s)) return 0;
+    const mm = s.match(/(\d+(?:\.\d+)?)\s*(?:กก|กิโล|KGS?)/i);
     return mm ? parseFloat(mm[1]) : 0;
 }
-// คำเรียกภาชนะที่รับเข้า (ดูจาก size: PAIL / แกลลอน / ถัง)
+// ความถ่วงจำเพาะ (กก. ต่อ 1 ลิตร) — รู้ได้เฉพาะตัวที่เขียนทั้งลิตรและกิโลไว้
+function sgOf(m) {
+    const l = packSizeOf(m), k = packKgOf(m);
+    return (l > 0 && k > 0) ? k / l : 0;
+}
+// คำเรียกภาชนะที่รับเข้า (ดูจาก size: PAIL / DRUM / แกลลอน / ถัง)
 function packWordOf(m) {
     const s = String((m && m.size) || "");
     if (/PAIL/i.test(s)) return "PAIL";
+    if (/DRUM/i.test(s)) return "DRUM";
     if (/แกลลอน/i.test(s)) return "แกลลอน";
     return "ถัง";
 }
+// ── ราคาของวัสดุเหลว ──
+// หน้างานเบิกเป็นลิตรเสมอ แต่ใบกำกับมาได้ทั้ง ฿/ถัง ฿/กก. ฿/ลิตร
+// จึงให้เลือกวิธีคิดตอนกรอก แล้วแปลงเป็น ฿/ลิตร ก่อนเก็บ จะได้ไม่ปนหน่วยในฐานข้อมูล
+const SUP_PU = ["l", "pack", "kg"];   // รหัสหน่วยราคาของวัสดุสิ้นเปลือง ("l" = ต่อหน่วยที่เบิกจริง)
+function supplyPriceUnits(m) {
+    const w = unitWordOf(m.type, m.unit, m.size);
+    const out = [{ v: "l", l: "฿/" + w }];
+    // แก๊ส/กล่อง นับเป็นถัง/ใบ ตรง ๆ ไม่มีหน่วยซ้อน — มีตัวเลือกเดียวพอ
+    if (!isLiquidSupply(m)) return out;
+    const pk = packSizeOf(m), kg = packKgOf(m);
+    if (pk > 0) out.push({ v: "pack", l: "฿/" + packWordOf(m) + " (" + fmtQty(pk) + " " + w + ")" });
+    if (kg > 0) out.push({ v: "kg", l: "฿/กก. (น้ำหนักจริง)" });
+    return out;
+}
+// หน่วยราคาที่ใช้ได้จริงกับวัสดุตัวนี้ — กันค่าค้างจากวัตถุดิบ (kgs/pcs/coil/m)
+// และกัน "pack"/"kg" หลุดไปใช้กับแก๊ส/กล่อง ซึ่งไม่มีขนาดบรรจุซ้อน
+function supPriceUnit(m, u) {
+    if (!isLiquidSupply(m)) return "l";
+    return SUP_PU.indexOf(u) >= 0 ? u : "l";
+}
+function supplyPricePerLitre(m, price, unit) {
+    const p = parseFloat(price) || 0;
+    if (p <= 0) return 0;
+    if (unit === "pack") { const pk = packSizeOf(m); return pk > 0 ? p / pk : 0; }
+    if (unit === "kg") { const sg = sgOf(m); return sg > 0 ? p * sg : 0; }
+    return p;
+}
+// วัสดุตัวนี้คิดราคา/เก็บสต๊อกเป็นลิตรหรือไม่ (น้ำมัน/น้ำยา)
+function isLiquidSupply(m) { return !!m && isSupplyType(m.type) && supplyField(m.type) === "kgs"; }
 // แยก "ชื่อวัตถุดิบ" กับ "ขนาด" ออกจากข้อความชื่อเดียวกัน เพื่อให้ใบเบิกโชว์ขนาดตัวใหญ่ชัดๆ
 // ชื่อในระบบมี 2 แบบ: มีคำว่า "size:" คั่น (ลวดเชื่อม/แหวน) และไม่มีคั่นแต่ต่อท้ายด้วยขนาด (ท่อทุกชนิด)
 // ถ้าหาขนาดไม่เจอ คืนชื่อไว้ในช่องขนาด (บรรทัดใหญ่) เพื่อไม่ให้ขึ้นขีด "-" ให้งง
@@ -1207,7 +1258,7 @@ function LotDetailModal({ open, onClose, mat, lots, setLots, master, onNG, logAu
                                     : cand[0]) || {};
                                 return React.createElement("td", { style: { padding: "11px 14px", fontFamily: "monospace", fontSize: 11, color: r.inv ? "#57606a" : "#8c959f", borderBottom: "1px solid rgba(208,215,222,.7)", whiteSpace: "nowrap" } }, r.inv || "-");
                             })(),
-                            (() => { const lp = lotPriceOf(lotPriceMap, mat.id, lot.lotNo); return React.createElement("td", { style: { padding: "11px 14px", fontFamily: "monospace", fontSize: 12, fontWeight: lp ? 700 : 400, color: lp ? "#1a7f37" : "#8c959f", borderBottom: "1px solid rgba(208,215,222,.7)", whiteSpace: "nowrap" } }, lp ? "฿ " + fmtQty(lp.p, 2) + (lp.u ? " /" + priceUnitLabel(lp.u) : "") : "-"); })(),
+                            (() => { const lp = lotPriceOf(lotPriceMap, mat.id, lot.lotNo); return React.createElement("td", { style: { padding: "11px 14px", fontFamily: "monospace", fontSize: 12, fontWeight: lp ? 700 : 400, color: lp ? "#1a7f37" : "#8c959f", borderBottom: "1px solid rgba(208,215,222,.7)", whiteSpace: "nowrap" } }, lp ? "฿ " + fmtQty(lp.p, 2) + (lp.u ? " /" + (isSupplyType(mat.type) ? unitWordOf(mat.type, mat.unit, mat.size) : priceUnitLabel(lp.u)) : "") : "-"); })(),
                             ...uCols.map(c => { const k = c[0];
                                 const v = k === "kgs" ? lot.kgs : k === "pcs" ? lot.pcs : k === "coil" ? lot.coil : lot.m;
                                 return React.createElement("td", { key: "in-" + k, style: { padding: "11px 14px", fontFamily: "monospace", color: "#57606a", borderBottom: "1px solid rgba(208,215,222,.7)" } }, v != null ? fmtQty(v, c[2]) : "-");
@@ -2221,6 +2272,11 @@ function StoreFlow() {
     const today = new Date().toISOString().split("T")[0];
     const issuedByName = currentUser?.name || "พนักงานสโตร์";
 
+    // เก็บสถานะเดิมไว้ เผื่อต้องคืนกลับเมื่อเขียนประวัติลงฐานข้อมูลไม่สำเร็จ
+    const prevStatus = r.status, prevIssuedBy = r.issuedBy || null, prevIssuedDate = r.issuedDate || null;
+    // รายการ lot ที่ตัดไปแล้วในใบนี้ (เก็บค่าก่อนตัดไว้ด้วย) ใช้คืนยอดถ้าต้องยกเลิกกลางคัน
+    const appliedLots = [];
+
     // 2. Update Request Status (local + DB)
     setRequests(rs => rs.map(x => x.id === id ? {
         ...x, status: "issued", issuedBy: issuedByName, issuedDate: today
@@ -2243,6 +2299,8 @@ function StoreFlow() {
 
         // Logic for updating Lots: คำนวณยอดตัด แล้วบันทึกกลับเข้า DB (sf_lots)
         const ml = [...(workingLots[item.matId] || liveLots[item.matId] || lots[item.matId] || [])];
+        // สำเนาก่อนตัด — โค้ดข้างล่างใช้ ml[i] = {...ml[i]} (แทนที่ทั้งก้อน) ค่าเดิมจึงยังอยู่ครบ
+        const mlBefore = [...ml];
         const matInfo = materials.find(x => x.id === item.matId);
         const unit = item.unit || matInfo?.unit || "PCS";
         let rem = parseFloat(item.qty) || 0;
@@ -2353,21 +2411,6 @@ function StoreFlow() {
             }
             changedIdx.add(i);
         }
-        workingLots[item.matId] = ml;
-        setLots(ls => ({ ...ls, [item.matId]: ml }));
-        // บันทึกยอดคงเหลือที่ตัดแล้วกลับเข้าฐานข้อมูล (ก่อนหน้านี้ไม่ถูกบันทึก → สต๊อกกลางเพี้ยน)
-        for (const i of changedIdx) {
-            const lot = ml[i];
-            if (lot && lot._dbId) {
-                await updateLot(lot._dbId, {
-                    rem_kgs: lot.rem_kgs != null ? lot.rem_kgs : null,
-                    rem_pcs: lot.rem_pcs != null ? lot.rem_pcs : null,
-                    rem_coil: lot.rem_coil != null ? lot.rem_coil : null,
-                    rem_m: lot.rem_m != null ? lot.rem_m : null
-                });
-            }
-        }
-
         // 4. สร้างประวัติจาก "การตัดจริง" (cuts) → lot_no + จำนวน ตรงกับสต๊อกที่ตัดออกจริงทุก lot
         const cutSource = cuts.length > 0 ? cuts : [{ lotNo: item.lotNo, coil: item.coil, kgs: item.kgs, pcs: item.qty, m: item.m != null ? item.m : null }];
         const itemTp = (() => { if (item.temper && item.temper !== "-") return item.temper;
@@ -2387,9 +2430,62 @@ function StoreFlow() {
             return rec;
         });
 
-        // Insert to Supabase
-        const { error } = await sb.from('sf_issuehist').insert(recordsToInsert);
-        if (error) console.error("DB Error:", error);
+        // ── เขียนประวัติให้สำเร็จ "ก่อน" ตัดสต๊อก ──
+        // เดิมตัดสต๊อกก่อนแล้วค่อยเขียนประวัติ และถ้าเขียนพลาดก็แค่ console.error แล้วไปต่อ
+        // เกิดจริง 04/11/2026: สต๊อกถูกตัดแต่ประวัติหาย ใบขึ้นว่าจ่ายสำเร็จ เสียหาย 6 ใบ / 20 รายการ
+        // (ตอนนั้นสาเหตุคือ duplicate key เพราะตัวนับ id ของตารางตามหลังข้อมูลจริง)
+        let insErr = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            const { error } = await sb.from('sf_issuehist').insert(recordsToInsert);
+            if (!error) { insErr = null; break; }
+            insErr = error;
+            console.error("เขียนประวัติไม่สำเร็จ (ครั้งที่ " + attempt + "):", error);
+            if (attempt < 3) await new Promise(res => setTimeout(res, 400 * attempt));
+        }
+        if (insErr) {
+            // คืนยอดคงเหลือของ lot ที่ตัดไปแล้วในใบนี้ (รายการก่อนหน้า) แล้วคืนสถานะใบเบิก
+            for (const u of appliedLots.slice().reverse()) {
+                try { await updateLot(u.dbId, u.before); }
+                catch (e2) { console.error("คืนยอด lot ไม่สำเร็จ:", u.dbId, e2); }
+            }
+            setRequests(rs => rs.map(x => x.id === id
+                ? { ...x, status: prevStatus, issuedBy: prevIssuedBy, issuedDate: prevIssuedDate } : x));
+            try {
+                await sb.from('sf_requests').update({ status: prevStatus, issued_by: prevIssuedBy, issued_date: prevIssuedDate }).eq('id', id);
+            } catch (e3) { console.error("คืนสถานะใบเบิกไม่สำเร็จ:", e3); }
+            try { const fx = await loadLots(); if (fx && Object.keys(fx).length) setLots(fx); } catch (e4) { }
+            setModal(null);
+            setSelectedLots({}); setRealLots({}); setRealKgs({});
+            window.alert("❌ จ่ายไม่สำเร็จ — บันทึกประวัติลงฐานข้อมูลไม่ได้\n\n"
+                + "ใบเบิก: " + r.id + "\n"
+                + "รายการ: " + item.name + "\n"
+                + "สาเหตุ: " + (insErr.message || insErr.code || JSON.stringify(insErr)) + "\n\n"
+                + "ระบบคืนยอดสต๊อกและสถานะใบเบิกกลับให้แล้ว — ใบนี้ยัง \"ยังไม่จ่าย\"\n"
+                + "กรุณากดจ่ายใหม่อีกครั้ง ถ้ายังไม่ได้ให้แจ้งผู้ดูแลระบบทันที\n"
+                + "(ห้ามปล่อยผ่าน เพราะของจะออกจากคลังโดยไม่มีประวัติ)");
+            toast("❌ จ่ายไม่สำเร็จ — คืนสต๊อกและสถานะใบกลับแล้ว", "err");
+            return;
+        }
+
+        // 4.5 ประวัติลงฐานข้อมูลแล้ว ค่อยตัดยอดคงเหลือของ lot จริง
+        workingLots[item.matId] = ml;
+        setLots(ls => ({ ...ls, [item.matId]: ml }));
+        for (const i of changedIdx) {
+            const lot = ml[i], bf = mlBefore[i];
+            if (lot && lot._dbId) {
+                if (bf) appliedLots.push({ dbId: lot._dbId, before: {
+                    rem_kgs: bf.rem_kgs != null ? bf.rem_kgs : null,
+                    rem_pcs: bf.rem_pcs != null ? bf.rem_pcs : null,
+                    rem_coil: bf.rem_coil != null ? bf.rem_coil : null,
+                    rem_m: bf.rem_m != null ? bf.rem_m : null } });
+                await updateLot(lot._dbId, {
+                    rem_kgs: lot.rem_kgs != null ? lot.rem_kgs : null,
+                    rem_pcs: lot.rem_pcs != null ? lot.rem_pcs : null,
+                    rem_coil: lot.rem_coil != null ? lot.rem_coil : null,
+                    rem_m: lot.rem_m != null ? lot.rem_m : null
+                });
+            }
+        }
         
         newHistoryRecords.push(...recordsToInsert);
     }
@@ -2564,7 +2660,19 @@ function StoreFlow() {
                 if (String(dn || "").trim()) dnUpd.push({ name: histRecord.name, lotNo: histRecord.lotNo, date: histRecord.date, dn: dn });
             }
             // บันทึกราคา/หน่วย ต่อ lot ที่กรอกตอนรับ
-            g.lots.forEach(l => { const p = parseFloat(l.price); if (!isNaN(p) && p > 0) priceUpd[realMatId + "||" + l.lotNo] = { p: p, u: l.priceUnit || autoPriceUnit(l.kgs, l.pcs, l.coil, l.m) }; });
+            g.lots.forEach(l => {
+                const p = parseFloat(l.price);
+                if (isNaN(p) || p <= 0) return;
+                // วัสดุสิ้นเปลือง: กรอกได้ทั้ง ฿/DRUM ฿/PAIL ฿/กก. ฿/ลิตร ฿/ถัง ฿/ใบ
+                // แต่เก็บเป็น "฿ ต่อหน่วยที่เบิกจริง" เสมอ แล้วติดรหัสช่องที่เก็บจำนวนไว้
+                // (ของเหลวเก็บลิตรในช่อง kgs · แก๊ส/กล่องเก็บจำนวนในช่อง pcs) ข้อมูลเก่าไม่ต้องแก้
+                if (isSupplyType(g.mat && g.mat.type)) {
+                    const per = supplyPricePerLitre(g.mat, p, supPriceUnit(g.mat, l.priceUnit));
+                    if (per > 0) priceUpd[realMatId + "||" + l.lotNo] = { p: Math.round(per * 10000) / 10000, u: supplyField(g.mat.type) };
+                    return;
+                }
+                priceUpd[realMatId + "||" + l.lotNo] = { p: p, u: l.priceUnit || autoPriceUnit(l.kgs, l.pcs, l.coil, l.m) };
+            });
         }
         if (Object.keys(priceUpd).length) {
             const next = { ...lotPriceMap, ...priceUpd };
@@ -3007,7 +3115,7 @@ function StoreFlow() {
                 page === "ngreturn" && canEditStock && React.createElement(NgReturnPage, { ngReturns: ngReturns, onSave: saveNgReturns, currentUser: currentUser, toast: toast, onReceive: receiveReplacementStock, onEditRep: editReplacementStock, onRemoveRep: removeReplacementStock }),
                 page === "history" && React.createElement(HistPage, { issueHist: issueHist, setIssueHist: canEditStock ? setIssueHist : null, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null, group: "raw" }),
                 (page === "monthend" || page === "supplymonthend") && React.createElement(MonthEndPage, { key: page, materials: materials, lots: lots, issueHist: issueHist, recvHist: recvHist, group: page === "supplymonthend" ? "supply" : "raw" }),
-                page === "supplycost" && React.createElement(SupplyCostPage, { issueHist: issueHist, materials: materials, priceMap: priceMap }),
+                page === "supplycost" && React.createElement(SupplyCostPage, { issueHist: issueHist, recvHist: recvHist, materials: materials, priceMap: priceMap, lotPriceMap: lotPriceMap }),
                 page === "supplyhist" && React.createElement(HistPage, { issueHist: issueHist, priceMap: priceMap, setIssueHist: canEditStock ? setIssueHist : null, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null, group: "supply" }),
                 page === "users" && canManageUsers && React.createElement(UsersPage, { users: users, setUsers: setUsers, currentUser: currentUser, toast: toast, materials: materials }),
                 page === "matmaster" && canEditSettings && React.createElement(MatPage, { materials: materials, setMaterials: setMaterials, filter: mmFilter, setFilter: setMmFilter, master: master, onAdd: () => { setMmForm(emptyMm()); setMmErrors({}); setMmFromPartNo(false); setModal("mat"); }, onEdit: m => { setMmErrors({}); setMmFromPartNo(false); setMmForm({ editId: m.id, type: m.type, name: m.name, partNo: m.partNo, size: m.size, temper: m.temper, maker: m.maker, makerNew: "", extraMakers: m.extraMakers || [], customers: m.customers || [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: m.remark || "", productPartNos: m.productPartNos || [] }); setModal("mat"); }, onAddSize: m => { setMmErrors({}); setMmFromPartNo(false); setMmForm({ editId: "", type: m.type, name: m.name, partNo: m.partNo, size: "", temper: m.temper, maker: m.maker, makerNew: "", customers: [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: "", productPartNos: [] }); setModal("mat"); toast(`ℹ️ เพิ่ม Size ใหม่สำหรับ ${m.name}`, "info"); }, onToggle: async id => {
@@ -5722,6 +5830,19 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
         return (a.maker || "").localeCompare(b.maker || "");
     });
     const uCols = pickUCols(filtered);
+    // วัสดุสิ้นเปลือง: ช่อง kgs เก็บ "ลิตร" (น้ำมัน/น้ำยา) ส่วนช่อง pcs เก็บ "ถัง/ใบ" (แก๊ส/กล่อง)
+    // หัวตาราง KGS/PCS จึงอ่านผิดหน่วย → หน้าที่เป็นวัสดุสิ้นเปลืองล้วน ยุบเหลือคอลัมน์ "คงเหลือ" เดียว
+    // แล้วเขียนหน่วยจริงต่อท้ายตัวเลขทีละแถว เพราะบางตัวซื้อเป็นลิตร บางตัวเป็นกิโล
+    const supOnly = filtered.length > 0 && filtered.every(m => isSupplyType(m.type));
+    const supRem = m => (lots[m.id] || []).reduce((a, x) => a + ((supplyField(m.type) === "kgs" ? x.rem_kgs : x.rem_pcs) || 0), 0);
+    // เหลือกี่ถัง/กี่ PAIL — ถอดจาก คงเหลือ ÷ ขนาดบรรจุ (ใช้ตอนเดินนับสต๊อกหน้างาน)
+    const supPackTxt = (m, qty) => {
+        if (!isLiquidSupply(m)) return "";
+        const pk = packSizeOf(m);
+        if (!(pk > 0) || !(qty > 0)) return "";
+        const n = qty / pk;
+        return fmtQty(n, n % 1 === 0 ? 0 : 2) + " " + packWordOf(m);
+    };
     // ปุ่มเลื่อนตารางซ้าย-ขวา — บางจอแถบเลื่อนอยู่ล่างสุดจนมองไม่เห็น กดปุ่มนี้ง่ายกว่า
     const tblBox = React.useRef(null);
     const slide = dx => { if (tblBox.current) tblBox.current.scrollBy({ left: dx, behavior: "smooth" }); };
@@ -5734,7 +5855,9 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                     search && React.createElement("button", { onClick: () => setSearch(""), style: { position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: C.tx2, cursor: "pointer", fontSize: 13 } }, "\u00D7")),
                 React.createElement("button", { onClick: () => setShowNext(v => !v), title: "แสดง/ซ่อนคอลัมน์ Next Lot", style: { padding: "4px 11px", borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", border: `1px solid ${showNext ? "rgba(9,105,218,.4)" : C.brd}`, background: showNext ? "rgba(9,105,218,.1)" : "transparent", color: showNext ? C.acc : C.tx2, whiteSpace: "nowrap" } }, showNext ? "🙈 ซ่อน Next Lot" : "👁️ ดู Next Lot"),
                 React.createElement(Btn, { v: "success", sz: "sm", onClick: () => {
-                        const headers = ["ประเภท", "ชื่อ Material", "Maker", "Size", "Temper", "KGS คงเหลือ", "PCS คงเหลือ", "COIL คงเหลือ", "M คงเหลือ", "Next Lot", "จำนวน Lot", "Status"];
+                        const headers = supOnly
+                            ? ["ประเภท", "ชื่อ Material", "Maker", "ขนาดบรรจุ", "คงเหลือ", "หน่วย", "คงเหลือ (ภาชนะ)", "Next Lot", "จำนวน Lot", "Status"]
+                            : ["ประเภท", "ชื่อ Material", "Maker", "Size", "Temper", "KGS คงเหลือ", "PCS คงเหลือ", "COIL คงเหลือ", "M คงเหลือ", "Next Lot", "จำนวน Lot", "Status"];
                         const rows = filtered.map(m => {
                             const ml = lots[m.id] || [];
                             const s = { kgs: ml.reduce((a, x) => a + (x.rem_kgs || 0), 0), pcs: ml.reduce((a, x) => a + (x.rem_pcs || 0), 0), coil: ml.reduce((a, x) => a + (x.rem_coil || 0), 0), m: ml.reduce((a, x) => a + (x.rem_m || 0), 0) };
@@ -5742,9 +5865,12 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                             const low = ok && ((s.kgs > 0 && s.kgs < m.minStock) || (s.pcs > 0 && s.pcs < m.minStock));
                             const next = ml.find(x => (x.rem_kgs || 0) > 0 || (x.rem_pcs || 0) > 0 || (x.rem_coil || 0) > 0 || (x.rem_m || 0) > 0);
                             const activeLots = ml.filter(x => (x.rem_kgs || 0) > 0 || (x.rem_pcs || 0) > 0 || (x.rem_coil || 0) > 0 || (x.rem_m || 0) > 0).length;
+                            if (supOnly)
+                                return [m.type, m.name, m.maker, m.size, Math.round(supRem(m) * 100) / 100, unitWordOf(m.type, m.unit, m.size), supPackTxt(m, supRem(m)) || "-", (next === null || next === void 0 ? void 0 : next.lotNo) || "-", activeLots, !ok ? "หมด" : low ? "ต่ำ" : "ปกติ"];
                             return [m.type, m.name, m.maker, m.size, m.temper || "-", s.kgs > 0 ? Math.round(s.kgs * 100) / 100 : 0, s.pcs > 0 ? s.pcs : 0, s.coil > 0 ? s.coil : 0, (s.m || 0) > 0 ? Math.round(s.m * 100) / 100 : 0, (next === null || next === void 0 ? void 0 : next.lotNo) || "-", activeLots, !ok ? "หมด" : low ? "ต่ำ" : "ปกติ"];
                         });
-                        exportXLSX([{ name: "คลังวัตถุดิบ", headers, rows }], `คลังวัตถุดิบ_${new Date().toISOString().slice(0, 10)}.xlsx`);
+                        const xName = supOnly ? "คลังวัสดุสิ้นเปลือง" : "คลังวัตถุดิบ";
+                        exportXLSX([{ name: xName, headers, rows }], `${xName}_${new Date().toISOString().slice(0, 10)}.xlsx`);
                     } }, "\uD83D\uDCCA Export Excel"),
                 // \u0E2D\u0E22\u0E39\u0E48\u0E04\u0E25\u0E31\u0E07\u0E44\u0E2B\u0E19 \u0E43\u0E2B\u0E49\u0E1E\u0E32\u0E44\u0E1B\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E31\u0E1A\u0E02\u0E2D\u0E07\u0E04\u0E25\u0E31\u0E07\u0E19\u0E31\u0E49\u0E19 (\u0E04\u0E25\u0E31\u0E07\u0E27\u0E31\u0E2A\u0E14\u0E38\u0E2A\u0E34\u0E49\u0E19\u0E40\u0E1B\u0E25\u0E37\u0E2D\u0E07\u0E21\u0E35\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E31\u0E1A\u0E02\u0E2D\u0E07\u0E02\u0E2D\u0E07\u0E15\u0E31\u0E27\u0E40\u0E2D\u0E07)
                 React.createElement(Btn, { v: "primary", sz: "sm", onClick: () => goto((master.matTypes || []).some(t => isSupplyType(t.code)) ? "supplyrecv" : "receive") }, "\uD83D\uDCE5 \u0E23\u0E31\u0E1A\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"),
@@ -5756,9 +5882,9 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
             React.createElement("div", { ref: tblBox, className: "xscroll", style: { overflowY: "auto", flex: 1, minHeight: 240 } },
                 // minWidth = ถ้าจอแคบกว่านี้ ให้เลื่อนซ้าย-ขวาได้ ดีกว่าบีบคอลัมน์จนอ่านไม่ออก
                 React.createElement("table", { style: { width: "100%", minWidth: 1040, borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed" } },
-                    React.createElement("colgroup", null, [56, 96, "nm", "sz", 74, ...(showNext ? [88] : []), ...uCols.map(x => x[2]), 66, 72].map((w, ci) => React.createElement("col", { key: ci, style: w === "nm" ? { width: "15%" } : w === "sz" ? { width: "27%" } : { width: w } }))),
+                    React.createElement("colgroup", null, [56, 96, "nm", "sz", ...(supOnly ? [] : [74]), ...(showNext ? [88] : []), ...(supOnly ? [132] : uCols.map(x => x[2])), 66, 72].map((w, ci) => React.createElement("col", { key: ci, style: w === "nm" ? { width: "15%" } : w === "sz" ? { width: "27%" } : { width: w } }))),
                     React.createElement("thead", { style: { position: "sticky", top: 0, zIndex: 3 } },
-                        React.createElement("tr", { style: { background: C.sur2 } }, ["ประเภท", "Maker", "ชื่อ Material", "Size", "Temper", ...(showNext ? ["Next Lot"] : []), ...uCols.map(x => x[1]), "Status", ""].map(h => React.createElement("th", { key: h, title: h, style: { overflow: "hidden", textOverflow: "ellipsis", padding: "5px 6px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, h)))),
+                        React.createElement("tr", { style: { background: C.sur2 } }, ["ประเภท", "Maker", "ชื่อ Material", supOnly ? "ขนาดบรรจุ" : "Size", ...(supOnly ? [] : ["Temper"]), ...(showNext ? ["Next Lot"] : []), ...(supOnly ? ["คงเหลือ"] : uCols.map(x => x[1])), "Status", ""].map(h => React.createElement("th", { key: h, title: h, style: { overflow: "hidden", textOverflow: "ellipsis", padding: "5px 6px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, h)))),
                     React.createElement("tbody", null, filtered.map((m) => {
                         const s = { kgs: (lots[m.id] || []).reduce((a, x) => a + (x.rem_kgs || 0), 0), pcs: (lots[m.id] || []).reduce((a, x) => a + (x.rem_pcs || 0), 0), coil: (lots[m.id] || []).reduce((a, x) => a + (x.rem_coil || 0), 0), m: (lots[m.id] || []).reduce((a, x) => a + (x.rem_m || 0), 0), next: (lots[m.id] || []).find(x => (x.rem_kgs || 0) > 0 || (x.rem_pcs || 0) > 0 || (x.rem_coil || 0) > 0 || (x.rem_m || 0) > 0), count: (lots[m.id] || []).length };
                         const ok = s.kgs > 0 || s.pcs > 0 || s.coil > 0 || (s.m || 0) > 0;
@@ -5781,7 +5907,8 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                             React.createElement("td", { style: { padding: "5px 7px", fontWeight: 700, borderBottom: C.brd2, fontSize: 13, whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.3, verticalAlign: "middle", maxWidth: 210 } }, React.createElement("span", { title: m.name }, m.name)),
                             // Size ของ PART ASSY ยาวมาก (บางตัว 50+ ตัวอักษร) ให้ตัดบรรทัดแทนตัดหาง จะได้อ่านครบ
                             React.createElement("td", { title: sizeTxt(m.size), style: { padding: "5px 7px", fontFamily: "monospace", fontSize: 12.5, borderBottom: C.brd2, whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.3, fontWeight: 700, color: C.tx } }, sizeTxt(m.size)),
-                            (() => { const tc = getTemperColor(materials, m); const diff = tc.border !== 'transparent'; return React.createElement("td", { style: { padding: "5px 6px", maxWidth: 92, overflow: "hidden", fontSize: 11, borderBottom: C.brd2 } }, diff ? React.createElement(Tag, { color: tc.text, bg: tc.bg, brd: tc.border }, m.temper || "-") : React.createElement("span", { style: { color: C.tx2 } }, m.temper || "-")); })(),
+                            // Temper ไม่เกี่ยวกับวัสดุสิ้นเปลือง (น้ำยา/แก๊ส/กล่องไม่มี temper) — ซ่อนทั้งคอลัมน์
+                            !supOnly && (() => { const tc = getTemperColor(materials, m); const diff = tc.border !== 'transparent'; return React.createElement("td", { style: { padding: "5px 6px", maxWidth: 92, overflow: "hidden", fontSize: 11, borderBottom: C.brd2 } }, diff ? React.createElement(Tag, { color: tc.text, bg: tc.bg, brd: tc.border }, m.temper || "-") : React.createElement("span", { style: { color: C.tx2 } }, m.temper || "-")); })(),
                             showNext && React.createElement("td", { style: { padding: "5px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderBottom: C.brd2 } }, s.next ? React.createElement(React.Fragment, null,
                                 React.createElement(Tag, { color: C.acc, bg: "rgba(9,105,218,.1)", brd: "rgba(9,105,218,.3)" },
                                     "\u25B6 ",
@@ -5789,13 +5916,21 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
                                 React.createElement("div", { style: { fontSize: 9, color: C.tx2, marginTop: 1 } },
                                     s.count,
                                     " lots")) : React.createElement("span", { style: { color: C.tx3 } }, "-")),
-                            ...uCols.map(uc => {
+                            ...(supOnly ? [(() => {
+                                // คงเหลือของวัสดุสิ้นเปลือง — เขียนหน่วยจริงต่อท้ายเลข (ลิตร / กก. / ถัง / ใบ)
+                                const v = supRem(m);
+                                const pt = supPackTxt(m, v);
+                                return React.createElement("td", { key: "suprem", style: { padding: "5px 6px", whiteSpace: "nowrap", fontFamily: "monospace", fontWeight: 700, borderBottom: C.brd2, fontSize: 13, color: v > 0 ? C.tx : C.tx3 } },
+                                    v > 0 ? fmtQty(v, v % 1 === 0 ? 0 : 2) : "0",
+                                    React.createElement("span", { style: { fontSize: 10.5, fontWeight: 600, color: C.tx2, marginLeft: 4 } }, unitWordOf(m.type, m.unit, m.size)),
+                                    pt && React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: "#1a7f37", marginLeft: 5 } }, "(" + pt + ")"));
+                            })()] : uCols.map(uc => {
                                 const k = uc[0];
                                 const rel = unitsForMat(m)[k];
                                 const v = k === "kgs" ? s.kgs : k === "pcs" ? s.pcs : k === "coil" ? s.coil : (s.m || 0);
                                 // หน่วยที่ไม่เกี่ยวกับชนิดนี้ ทำจางไว้ ให้สายตาไปโฟกัสหน่วยที่ใช้จริง
                                 return React.createElement("td", { key: k, style: { padding: "5px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "monospace", fontWeight: 700, borderBottom: C.brd2, fontSize: 13, color: v > 0 ? C.tx : rel ? C.tx3 : "rgba(140,149,159,.35)" } }, v > 0 ? fmtQty(v, isSupplyType(m.type) ? 0 : (k === "pcs" || k === "coil" ? 0 : k === "kgs" ? 2 : 1)) : rel ? "-" : "");
-                            }),
+                            })),
                             React.createElement("td", { style: { padding: "5px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderBottom: C.brd2 } },
                                 React.createElement(Tag, { color: !ok ? C.err : low ? C.warn : C.ok, bg: !ok ? "rgba(248,81,73,.1)" : low ? "rgba(210,153,34,.1)" : "rgba(63,185,80,.1)", brd: !ok ? "rgba(248,81,73,.2)" : low ? "rgba(210,153,34,.2)" : "rgba(63,185,80,.2)" }, !ok ? "❌ หมด" : low ? "⚠️ ต่ำ" : "✅ ปกติ")),
                             React.createElement("td", { style: { padding: "5px 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderBottom: C.brd2 } },
@@ -6010,12 +6145,21 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist: _allRe
     const multiSize = famSizes.length > 0 || form.lots.some(l => l.matId);
     const lotMat = l => (l.matId ? materials.find(x => x.id === l.matId) : null) || selMat;
     // ตัวเลือกหน่วยราคา = เฉพาะหน่วยที่วัตถุดิบตัวนั้นใช้จริง (KU NOMURA รับเป็นเมตร ก็เห็น ฿/M)
+    // หน่วยราคาต้องมีเฉพาะหน่วยที่วัสดุตัวนั้นใช้จริง — วัสดุสิ้นเปลืองไม่มี COIL/M/KGS ของวัตถุดิบ
+    // น้ำมัน/น้ำยา: ใบกำกับคิดเป็น ฿/DRUM ฿/PAIL หรือ ฿/กก. ได้ ระบบแปลงเป็น ฿/ลิตร ตอนบันทึก
+    // แก๊ส/กล่อง: มีหน่วยเดียวคือ ฿/ถัง ฿/ใบ
     const priceUnitOpts = mm => {
-        if (!mm) return PRICE_UNITS;
+        if (mm && isSupplyType(mm.type)) return supplyPriceUnits(mm);
+        if (!mm) return isSupPage ? [{ v: "l", l: "฿/หน่วย" }] : PRICE_UNITS;
         const r = unitsForMat(mm);
         const out = PRICE_UNITS.filter(o => r[o.v]);
         return out.length ? out : PRICE_UNITS;
     };
+    // หน่วยราคาที่ควรโชว์ตอนนี้ — ถ้าเพิ่งสลับจากวัตถุดิบมาเป็นวัสดุสิ้นเปลือง ค่าเดิม (kgs/pcs/coil/m)
+    // ใช้ไม่ได้ ต้องดึงกลับเป็น "ต่อหน่วยที่เบิก" ไม่งั้นราคาถูกบันทึกผิดหน่วยแบบเงียบ ๆ
+    const defPriceUnit = (mm, l) => (mm ? isSupplyType(mm.type) : isSupPage)
+        ? supPriceUnit(mm, l && l.priceUnit)
+        : ((l && l.priceUnit) || autoPriceUnit(l.kgs, l.pcs, l.coil, l.m));
     const sizeTxt = m => (m ? (m.size || "").replace(/^size:/i, "") : "-");
     const lenOf = m => { const n = _nums(m && m.size); return n.length >= 3 ? fmtQty(n[2]) : sizeTxt(m); };
     // สร้างข้อความ Size ของความยาวใหม่ โดยแทนที่ "ตัวเลขตัวที่ 3" ในของเดิม
@@ -6031,8 +6175,9 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist: _allRe
     // เพิ่มบรรทัดของความยาวที่กด — ก๊อปราคาจากบรรทัดก่อนหน้ามาให้ด้วย
     // วัสดุสิ้นเปลืองไม่มี COIL / เมตร — ซ่อนช่องที่ไม่เกี่ยวออก กันคนเผลอพิมพ์ลงไป
     // (ARGON 21/10/2026 เคยมี -1 หลุดเข้าช่อง COIL จนยอดเพี้ยน)
-    const _selSup = selMat && isSupplyType(selMat.type);
-    const _selLiq = _selSup && supplyField(selMat.type) === "kgs";   // น้ำมัน/น้ำยา = ต้องมีช่องลิตร
+    // ยังไม่ได้เลือกรายการบนหน้าวัสดุสิ้นเปลือง ก็ต้องไม่โชว์ COIL/M/KGS ของวัตถุดิบ
+    const _selSup = selMat ? isSupplyType(selMat.type) : isSupPage;
+    const _selLiq = !!selMat && isSupplyType(selMat.type) && supplyField(selMat.type) === "kgs";   // น้ำมัน/น้ำยา = ต้องมีช่องลิตร
     const SHOW_COIL = !_selSup, SHOW_M = !_selSup, SHOW_KGS = !_selSup || _selLiq;
     const _qtyCols = ["1fr", SHOW_COIL ? "1fr" : "", SHOW_KGS ? "1fr" : "", SHOW_M ? "1fr" : ""].filter(Boolean).join(" ");
     const GCOLS = "26px " + (multiSize ? "1.6fr " : "") + "2fr " + _qtyCols + (samePrice ? " 74px" : " 1fr 1.2fr 74px");
@@ -6050,6 +6195,15 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist: _allRe
     const totalKgs = form.lots.reduce((s, l) => s + (parseFloat(l.kgs) || 0), 0);
     const totalPcs = form.lots.reduce((s, l) => s + (parseFloat(l.pcs) || 0), 0);
     const totalCoil = form.lots.reduce((s, l) => s + (parseFloat(l.coil) || 0), 0);
+    // น้ำมัน/น้ำยา: สโตร์กรอกเป็นจำนวนถัง/PAIL แล้วระบบคูณเป็นลิตรให้ — ต้องสรุปจำนวนภาชนะให้เห็นด้วย
+    // จะได้ทานกับใบส่งของได้ตรง ๆ ("รับ 2 PAIL" ไม่ใช่ "รับ 36 ลิตร" ซึ่งทานกับเอกสารยาก)
+    // ถ้าแถวไหนกรอกลิตรมาตรง ๆ (เช่นวางหลาย Lot ทีเดียว) ให้ถอดกลับเป็นจำนวนภาชนะจากขนาดบรรจุ
+    const totalPacks = form.lots.reduce((s, l) => {
+        const p = parseFloat(l._packs) || 0;
+        if (p > 0) return s + p;
+        const lm = lotMat(l), pk = packSizeOf(lm), q = parseFloat(l.kgs) || 0;
+        return s + (isLiquidSupply(lm) && pk > 0 && q > 0 ? q / pk : 0);
+    }, 0);
     return React.createElement("div", { onKeyDown: enterAsTab },
         React.createElement(Card, null,
             React.createElement(CHd, { title: "\uD83D\uDCE5 \u0E23\u0E31\u0E1A\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A\u0E40\u0E02\u0E49\u0E32\u0E04\u0E25\u0E31\u0E07",
@@ -6185,9 +6339,19 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist: _allRe
                         samePrice
                             ? React.createElement(React.Fragment, null,
                                 React.createElement("div", { style: { width: 130 } },
-                                    React.createElement(Inp, { type: "number", value: l0.price || "", onChange: v => { const u = l0.priceUnit || autoPriceUnit(l0.kgs, l0.pcs, l0.coil, l0.m); setForm(f => ({ ...f, lots: f.lots.map(x => ({ ...x, price: v, priceUnit: u })) })); }, placeholder: "ราคา ฿" })),
-                                React.createElement("div", { style: { width: 125 } },
-                                    React.createElement(Sel, { value: l0.priceUnit || autoPriceUnit(l0.kgs, l0.pcs, l0.coil, l0.m), onChange: v => setAllPrice("priceUnit", v), options: priceUnitOpts(selMat) })),
+                                    React.createElement(Inp, { type: "number", value: l0.price || "", onChange: v => { const u = l0.priceUnit || defPriceUnit(selMat, l0); setForm(f => ({ ...f, lots: f.lots.map(x => ({ ...x, price: v, priceUnit: u })) })); }, placeholder: "ราคา ฿" })),
+                                React.createElement("div", { style: { width: 170 } },
+                                    React.createElement(Sel, { value: l0.priceUnit || defPriceUnit(selMat, l0), onChange: v => setAllPrice("priceUnit", v), options: priceUnitOpts(selMat) })),
+                                // น้ำมัน/น้ำยา: โชว์ผลแปลงเป็น ฿/ลิตร ทันที จะได้เห็นว่าระบบคิดต้นทุนด้วยเลขไหน
+                                (() => {
+                                    if (!isLiquidSupply(selMat)) return null;
+                                    const u = supPriceUnit(selMat, l0.priceUnit);
+                                    const per = supplyPricePerLitre(selMat, l0.price, u);
+                                    if (!(per > 0)) return null;
+                                    return React.createElement("span", { style: { fontSize: 12, fontWeight: 800, color: "#1a7f37", fontFamily: "monospace", whiteSpace: "nowrap" } },
+                                        "= ฿ " + fmtQty(per, 2) + " /" + unitWordOf(selMat.type, selMat.unit, selMat.size)
+                                        + (u === "kg" && sgOf(selMat) > 0 ? "  (" + fmtQty(sgOf(selMat), 3) + " กก./ลิตร)" : ""));
+                                })(),
                                 React.createElement("span", { style: { fontSize: 11, color: C.tx3 } }, "→ ระบบใส่ราคานี้ให้ครบทุก Lot (" + form.lots.length + " Lot) ไม่ต้องพิมพ์ซ้ำ"))
                             : React.createElement("span", { style: { fontSize: 11, color: C.tx3 } }, "→ กรอกราคาแยกทีละ Lot ในตารางด้านล่าง"));
                 })(),
@@ -6236,7 +6400,8 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist: _allRe
                         // \u0E27\u0E31\u0E2A\u0E14\u0E38\u0E2A\u0E34\u0E49\u0E19\u0E40\u0E1B\u0E25\u0E37\u0E2D\u0E07\u0E43\u0E0A\u0E49\u0E04\u0E33\u0E17\u0E35\u0E48\u0E2A\u0E42\u0E15\u0E23\u0E4C\u0E04\u0E38\u0E49\u0E19 \u2014 \u0E41\u0E01\u0E4A\u0E2A=\u0E16\u0E31\u0E07 \u00B7 \u0E01\u0E25\u0E48\u0E2D\u0E07=\u0E43\u0E1A \u00B7 \u0E19\u0E49\u0E33\u0E21\u0E31\u0E19/\u0E19\u0E49\u0E33\u0E22\u0E32=\u0E23\u0E31\u0E1A\u0E40\u0E1B\u0E47\u0E19\u0E16\u0E31\u0E07/PAIL \u0E41\u0E25\u0E49\u0E27\u0E23\u0E30\u0E1A\u0E1A\u0E04\u0E39\u0E13\u0E40\u0E1B\u0E47\u0E19\u0E25\u0E34\u0E15\u0E23\u0E43\u0E2B\u0E49
                         React.createElement("span", null, (() => {
                             const m0 = materials.find(x => x.id === form.matId);
-                            if (!m0 || !isSupplyType(m0.type)) return "PCS";
+                            if (!m0) return isSupPage ? "จำนวน" : "PCS";
+                            if (!isSupplyType(m0.type)) return "PCS";
                             const t = String(m0.type).toUpperCase();
                             if (t === "GAS") return "\u0E08\u0E33\u0E19\u0E27\u0E19 (\u0E16\u0E31\u0E07)";
                             if (t === "BOX") return "\u0E08\u0E33\u0E19\u0E27\u0E19 (\u0E43\u0E1A)";
@@ -6270,7 +6435,7 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist: _allRe
                         SHOW_KGS && React.createElement(Inp, { type: "number", value: l.kgs, onChange: v => { updLot(i, "kgs", v); }, placeholder: "0.00" }),
                         SHOW_M && React.createElement(Inp, { type: "number", value: l.m, onChange: v => updLot(i, "m", v), placeholder: "0" }),
                         !samePrice && React.createElement(Inp, { type: "number", value: l.price, onChange: v => updLot(i, "price", v), placeholder: "\u0E23\u0E32\u0E04\u0E32" }),
-                        !samePrice && React.createElement(Sel, { value: l.priceUnit || autoPriceUnit(l.kgs, l.pcs, l.coil, l.m), onChange: v => updLot(i, "priceUnit", v), options: priceUnitOpts(lotMat(l)) }),
+                        !samePrice && React.createElement(Sel, { value: l.priceUnit || defPriceUnit(lotMat(l), l), onChange: v => updLot(i, "priceUnit", v), options: priceUnitOpts(lotMat(l)) }),
                         React.createElement("div", { style: { display: "flex", gap: 2, justifyContent: "flex-end" } },
                             (() => {
                                 const nav = (dir, lbl, on) => React.createElement("button", { onClick: () => moveLot(i, dir), disabled: !on,
@@ -6295,6 +6460,10 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist: _allRe
                             totalCoil > 0 && React.createElement("span", { style: { color: C.acc } },
                                 "COIL \u0E23\u0E27\u0E21: ",
                                 React.createElement("strong", null, totalCoil)),
+                            // \u0E08\u0E33\u0E19\u0E27\u0E19\u0E20\u0E32\u0E0A\u0E19\u0E30\u0E17\u0E35\u0E48\u0E23\u0E31\u0E1A\u0E08\u0E23\u0E34\u0E07 \u2014 \u0E15\u0E31\u0E27\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48\u0E15\u0E23\u0E07\u0E01\u0E31\u0E1A\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07\u0E21\u0E32\u0E01\u0E17\u0E35\u0E48\u0E2A\u0E38\u0E14 \u0E08\u0E36\u0E07\u0E40\u0E19\u0E49\u0E19\u0E2A\u0E35\u0E44\u0E27\u0E49
+                            isLiquidSupply(selMat) && totalPacks > 0 && React.createElement("span", { style: { color: "#1a7f37", fontWeight: 700 } },
+                                "\u0E23\u0E31\u0E1A\u0E23\u0E27\u0E21: ",
+                                React.createElement("strong", null, fmtQty(totalPacks, totalPacks % 1 === 0 ? 0 : 2) + " " + packWordOf(selMat))),
                             totalKgs > 0 && React.createElement("span", { style: { color: C.acc } },
                                 ((selMat && isSupplyType(selMat.type) && supplyField(selMat.type) === "kgs")
                                     ? unitWordOf(selMat.type, selMat.unit, selMat.size) + " \u0E23\u0E27\u0E21: " : "KGS \u0E23\u0E27\u0E21: "),
@@ -6310,6 +6479,7 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist: _allRe
                     " | ",
                     form.lots.length,
                     " Lot",
+                    isLiquidSupply(selMat) && totalPacks > 0 && ` | รับ ${fmtQty(totalPacks, totalPacks % 1 === 0 ? 0 : 2)} ${packWordOf(selMat)}`,
                     totalKgs > 0 && ` | รวม ${(selMat && isSupplyType(selMat.type)) ? fmtQty(totalKgs, 0) : totalKgs.toFixed(2)} ${(selMat && isSupplyType(selMat.type) && supplyField(selMat.type) === "kgs") ? unitWordOf(selMat.type, selMat.unit, selMat.size) : "KGS"}`,
                     totalPcs > 0 && ` | ${totalPcs} PCS`,
                     totalCoil > 0 && ` | ${totalCoil} COIL`),
@@ -6413,22 +6583,42 @@ function MonthEndPage({ materials, lots, issueHist, recvHist, group }) {
     const [openIds, setOpenIds] = useState({});
     const toggle = id => setOpenIds(s => { const n = { ...s }; if (n[id]) delete n[id]; else n[id] = 1; return n; });
     const uw = { pcs: "เส้น", coil: "ม้วน", kgs: "กก.", m: "ม." };
+    // วัสดุสิ้นเปลืองใช้คำเรียกของตัวเอง — ช่อง kgs ของน้ำมัน/น้ำยาเก็บ "ลิตร" ไม่ใช่กิโล
+    // และคอลัมน์ (กก.) ชุดที่สองก็ซ้ำกับช่องจำนวนอยู่แล้ว จึงตัดออกทั้งหมดในคลังนี้
+    const isSup = group === "supply";
+    const uwOf = x => isSupplyType(x.m.type) ? unitWordOf(x.m.type, x.m.unit, x.m.size) : uw[x.mainF];
     const num = (v, f) => (v === 0 || v == null) ? "-" : fmtQty(v, f === "kgs" ? 2 : 0);
     const monLbl = m => { if (!m) return "ทุกเดือน"; const [y, mm] = m.split("-"); return ["", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."][+mm] + " " + y; };
     const dl = () => exportXLSX([{ name: "สรุปสิ้นเดือน",
-            headers: ["วัตถุดิบ", "Size", "Temper", "Maker", "หน่วยนับ",
-                "ยกมา (จำนวน)", "รับเข้า (จำนวน)", "จ่ายออก (จำนวน)", "คงเหลือ (จำนวน)",
-                "ยกมา (กก.)", "รับเข้า (กก.)", "จ่ายออก (กก.)", "คงเหลือ (กก.)", "นับจริง", "ผลต่าง"],
-            rows: rows.map(x => [x.m.name, sizeTxt(x.m.size), x.m.temper && x.m.temper !== "-" ? x.m.temper : "", x.m.maker, uw[x.mainF],
-                x.open[x.mainF] || 0, x.rc[x.mainF] || 0, x.is[x.mainF] || 0, x.close[x.mainF] || 0,
-                Math.round((x.open.kgs || 0) * 100) / 100, Math.round((x.rc.kgs || 0) * 100) / 100,
-                Math.round((x.is.kgs || 0) * 100) / 100, Math.round((x.close.kgs || 0) * 100) / 100, "", ""]) },
+            headers: isSup
+                ? ["รายการ", "ขนาดบรรจุ", "Maker", "หน่วยนับ",
+                    "ยกมา", "รับเข้า", "จ่ายออก", "คงเหลือ", "นับจริง", "ผลต่าง"]
+                : ["วัตถุดิบ", "Size", "Temper", "Maker", "หน่วยนับ",
+                    "ยกมา (จำนวน)", "รับเข้า (จำนวน)", "จ่ายออก (จำนวน)", "คงเหลือ (จำนวน)",
+                    "ยกมา (กก.)", "รับเข้า (กก.)", "จ่ายออก (กก.)", "คงเหลือ (กก.)", "นับจริง", "ผลต่าง"],
+            rows: rows.map(x => isSup
+                ? [x.m.name, sizeTxt(x.m.size), x.m.maker, uwOf(x),
+                    x.open[x.mainF] || 0, x.rc[x.mainF] || 0, x.is[x.mainF] || 0, x.close[x.mainF] || 0, "", ""]
+                : [x.m.name, sizeTxt(x.m.size), x.m.temper && x.m.temper !== "-" ? x.m.temper : "", x.m.maker, uwOf(x),
+                    x.open[x.mainF] || 0, x.rc[x.mainF] || 0, x.is[x.mainF] || 0, x.close[x.mainF] || 0,
+                    Math.round((x.open.kgs || 0) * 100) / 100, Math.round((x.rc.kgs || 0) * 100) / 100,
+                    Math.round((x.is.kgs || 0) * 100) / 100, Math.round((x.close.kgs || 0) * 100) / 100, "", ""]) },
         // ชีตที่ 2 — รายการเคลื่อนไหวทีละบรรทัด พร้อมยอดคงเหลือสะสม (เทียบกับรายงานบัญชีได้ตรงๆ)
         { name: "รายการเคลื่อนไหว",
-            headers: ["วัตถุดิบ", "Size", "Temper", "Maker", "วันที่", "ประเภท", "เลขที่เอกสาร", "Lot No.",
-                "รับ (จำนวน)", "รับ (กก.)", "จ่าย (จำนวน)", "จ่าย (กก.)", "คงเหลือ (จำนวน)", "คงเหลือ (กก.)"],
+            headers: isSup
+                ? ["รายการ", "ขนาดบรรจุ", "Maker", "หน่วย", "วันที่", "ประเภท", "เลขที่เอกสาร", "Lot No.",
+                    "รับ", "จ่าย", "คงเหลือ"]
+                : ["วัตถุดิบ", "Size", "Temper", "Maker", "วันที่", "ประเภท", "เลขที่เอกสาร", "Lot No.",
+                    "รับ (จำนวน)", "รับ (กก.)", "จ่าย (จำนวน)", "จ่าย (กก.)", "คงเหลือ (จำนวน)", "คงเหลือ (กก.)"],
             rows: rows.reduce((acc, x) => {
                 const tm = x.m.temper && x.m.temper !== "-" ? x.m.temper : "";
+                if (isSup) {
+                    const hd = [x.m.name, sizeTxt(x.m.size), x.m.maker, uwOf(x)];
+                    acc.push(hd.concat(["", "ยอดยกมา", "", "", "", "", x.open[x.mainF] || 0]));
+                    movesOf(x).forEach(v => acc.push(hd.concat([v.d, v.ty, v.doc, v.lot,
+                        v.ty === "รับ" ? v.q : "", v.ty === "จ่าย" ? v.q : "", v.bq])));
+                    return acc;
+                }
                 acc.push([x.m.name, sizeTxt(x.m.size), tm, x.m.maker, "", "ยอดยกมา", "", "", "", "", "", "",
                     x.open[x.mainF] || 0, Math.round((x.open.kgs || 0) * 100) / 100]);
                 movesOf(x).forEach(v => acc.push([x.m.name, sizeTxt(x.m.size), tm, x.m.maker, v.d, v.ty, v.doc, v.lot,
@@ -6472,18 +6662,18 @@ function MonthEndPage({ materials, lots, issueHist, recvHist, group }) {
                 React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12 } },
                     React.createElement("thead", null,
                         React.createElement("tr", { style: { background: C.sur2 } },
-                            th("วัตถุดิบ / Size"), th("Maker"), th("หน่วย"),
-                            th("ยกมา", 1), th("รับเข้า", 1), th("จ่ายออก", 1), th("คงเหลือ", 1), th("คงเหลือ (กก.)", 1))),
+                            th(isSup ? "รายการ / ขนาดบรรจุ" : "วัตถุดิบ / Size"), th("Maker"), th("หน่วย"),
+                            th("ยกมา", 1), th("รับเข้า", 1), th("จ่ายออก", 1), th("คงเหลือ", 1), !isSup && th("คงเหลือ (กก.)", 1))),
                     React.createElement("tbody", null,
                         rows.length === 0 && React.createElement("tr", null,
-                            React.createElement("td", { colSpan: 8, style: { padding: 26, textAlign: "center", color: C.tx2 } }, "ไม่พบรายการ")),
+                            React.createElement("td", { colSpan: isSup ? 7 : 8, style: { padding: 26, textAlign: "center", color: C.tx2 } }, "ไม่พบรายการ")),
                         rows.map((x, i) => [React.createElement("tr", { key: "r" + i, onClick: () => toggle(x.m.id), style: { cursor: "pointer", background: openIds[x.m.id] ? "rgba(9,105,218,.05)" : "transparent" } },
                             React.createElement("td", { style: { padding: "8px 10px", borderBottom: C.brd2 } },
                                 React.createElement("span", { style: { color: C.tx3, marginRight: 6, fontFamily: "monospace" } }, openIds[x.m.id] ? "▼" : "▶"),
                                 React.createElement("span", { style: { fontWeight: 600 } }, x.m.name),
                                 React.createElement("span", { style: { color: C.acc, marginLeft: 6, fontFamily: "monospace" } }, sizeTxt(x.m.size)),
                                 x.m.temper && x.m.temper !== "-" ? React.createElement("span", { style: { marginLeft: 6, fontSize: 10, fontWeight: 700, color: "#7C3AED", background: "rgba(124,58,237,.1)", borderRadius: 4, padding: "1px 6px" } }, x.m.temper) : null),
-                            td(x.m.maker), td(uw[x.mainF]),
+                            td(x.m.maker), td(uwOf(x)),
                             // ยกมาติดลบ = ประวัติรับ-จ่ายกับยอดคงเหลือในคลังไม่สอดคล้องกัน (เคยปรับยอดด้วยมือโดยไม่ผ่านใบเบิก)
                             (x.open[x.mainF] || 0) < 0
                                 ? React.createElement("td", { title: "ยอดยกมาคำนวณแล้วติดลบ — แปลว่าประวัติรับ/จ่ายไม่ครบ หรือเคยปรับยอดคงเหลือด้วยมือโดยไม่มีใบเบิกรองรับ ต้องตรวจกับการ์ดก่อนใช้ตัวเลขนี้",
@@ -6493,87 +6683,139 @@ function MonthEndPage({ materials, lots, issueHist, recvHist, group }) {
                             td(num(x.rc[x.mainF], x.mainF), 1, 0, (x.rc[x.mainF] || 0) > 0 ? "#1a7f37" : null),
                             td(num(x.is[x.mainF], x.mainF), 1, 0, (x.is[x.mainF] || 0) > 0 ? C.err : null),
                             td(num(x.close[x.mainF], x.mainF), 1, 1),
-                            td(num(x.close.kgs, "kgs"), 1, 1)),
+                            !isSup && td(num(x.close.kgs, "kgs"), 1, 1)),
                         // แถวรายละเอียด — วันที่ เลขที่เอกสาร Lot รับ/จ่าย และยอดคงเหลือสะสม (รูปแบบเดียวกับรายงานบัญชี)
                         openIds[x.m.id] && React.createElement("tr", { key: "d" + i },
-                            React.createElement("td", { colSpan: 8, style: { padding: "0 10px 12px 34px", borderBottom: C.brd2, background: "rgba(9,105,218,.03)" } }, (() => {
+                            React.createElement("td", { colSpan: isSup ? 7 : 8, style: { padding: "0 10px 12px 34px", borderBottom: C.brd2, background: "rgba(9,105,218,.03)" } }, (() => {
                                 const mv = movesOf(x);
-                                if (!mv.length) return React.createElement("div", { style: { padding: "10px 0", fontSize: 12, color: C.tx2 } }, "ไม่มีการเคลื่อนไหวในงวดนี้ — ยอดคงเหลือ " + num(x.close[x.mainF], x.mainF) + " " + uw[x.mainF]);
+                                if (!mv.length) return React.createElement("div", { style: { padding: "10px 0", fontSize: 12, color: C.tx2 } }, "ไม่มีการเคลื่อนไหวในงวดนี้ — ยอดคงเหลือ " + num(x.close[x.mainF], x.mainF) + " " + uwOf(x));
                                 const dh = t => React.createElement("th", { key: t, style: { padding: "5px 8px", fontSize: 10, fontWeight: 700, color: C.tx2, textAlign: /จำนวน|กก\.|คงเหลือ/.test(t) ? "right" : "left", borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, t);
                                 const dd = (v, right, color, bold) => React.createElement("td", { style: { padding: "5px 8px", fontSize: 11.5, textAlign: right ? "right" : "left", fontFamily: right ? "monospace" : "inherit", color: color || C.tx, fontWeight: bold ? 700 : 400, whiteSpace: "nowrap" } }, v);
                                 return React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", marginTop: 6 } },
                                     React.createElement("thead", null, React.createElement("tr", null,
                                         dh("วันที่"), dh("เลขที่เอกสาร"), dh("Lot No."),
-                                        dh("รับ (จำนวน)"), dh("รับ (กก.)"), dh("จ่าย (จำนวน)"), dh("จ่าย (กก.)"),
-                                        dh("คงเหลือ (จำนวน)"), dh("คงเหลือ (กก.)"))),
+                                        dh("รับ (" + uwOf(x) + ")"), !isSup && dh("รับ (กก.)"),
+                                        dh("จ่าย (" + uwOf(x) + ")"), !isSup && dh("จ่าย (กก.)"),
+                                        dh("คงเหลือ (" + uwOf(x) + ")"), !isSup && dh("คงเหลือ (กก.)"))),
                                     React.createElement("tbody", null,
                                         React.createElement("tr", { style: { background: "rgba(0,0,0,.03)" } },
-                                            dd("ยอดยกมา"), dd(""), dd(""), dd("-", 1), dd("-", 1), dd("-", 1), dd("-", 1),
-                                            dd(num(x.open[x.mainF], x.mainF), 1, null, 1), dd(num(x.open.kgs, "kgs"), 1, null, 1)),
+                                            dd("ยอดยกมา"), dd(""), dd(""), dd("-", 1), !isSup && dd("-", 1), dd("-", 1), !isSup && dd("-", 1),
+                                            dd(num(x.open[x.mainF], x.mainF), 1, null, 1), !isSup && dd(num(x.open.kgs, "kgs"), 1, null, 1)),
                                         mv.map((v, j) => React.createElement("tr", { key: j },
                                             dd(fmtDate(v.d)), dd(v.doc), dd(v.lot, 0, C.acc),
                                             dd(v.ty === "รับ" ? num(v.q, x.mainF) : "-", 1, v.ty === "รับ" ? "#1a7f37" : null),
-                                            dd(v.ty === "รับ" ? num(v.k, "kgs") : "-", 1, v.ty === "รับ" ? "#1a7f37" : null),
+                                            !isSup && dd(v.ty === "รับ" ? num(v.k, "kgs") : "-", 1, v.ty === "รับ" ? "#1a7f37" : null),
                                             dd(v.ty === "จ่าย" ? num(v.q, x.mainF) : "-", 1, v.ty === "จ่าย" ? C.err : null),
-                                            dd(v.ty === "จ่าย" ? num(v.k, "kgs") : "-", 1, v.ty === "จ่าย" ? C.err : null),
+                                            !isSup && dd(v.ty === "จ่าย" ? num(v.k, "kgs") : "-", 1, v.ty === "จ่าย" ? C.err : null),
                                             dd(fmtQty(v.bq, x.mainF === "kgs" ? 2 : 0), 1, null, 1),
-                                            dd(fmtQty(v.bk, 2), 1, null, 1)))));
+                                            !isSup && dd(fmtQty(v.bk, 2), 1, null, 1)))));
                             })()))]))))));
 }
 // ════════════════════════════════════════════════════════════
 // SUPPLY COST PAGE — ดูต้นทุนวัสดุสิ้นเปลืองอย่างเดียว ไม่มีตารางรายการมาบัง
 // เลือกเดือนด้วยปุ่มใหญ่ เทียบกับเดือนก่อนให้เลย กด Excel ส่งบัญชีได้ทันที
 // ════════════════════════════════════════════════════════════
-function SupplyCostPage({ issueHist, materials, priceMap }) {
+function SupplyCostPage({ issueHist, recvHist, materials, priceMap, lotPriceMap }) {
     const sups = (materials || []).filter(m => isSupplyType(m.type));
+    // ราคาที่ตั้งไว้ใน Material มาก่อน — ถ้ายังไม่ได้ตั้ง ใช้ราคาที่สโตร์กรอกตอนรับของ (เฉลี่ยทุก lot) แทน
+    // ของเหลวเก็บราคาเป็น ฿/ลิตร อยู่แล้ว (แปลงจาก ฿/DRUM ฿/PAIL ฿/กก. ตอนบันทึกรับ) จึงเอามาใช้ตรง ๆ ได้
+    const lotAvg = {};
+    Object.keys(lotPriceMap || {}).forEach(k => {
+        const id = k.split("||")[0];
+        const v = (lotPriceMap || {})[k];
+        const p = (v && typeof v === "object") ? Number(v.p) : Number(v);
+        if (!(p > 0)) return;
+        (lotAvg[id] = lotAvg[id] || []).push(p);
+    });
+    const priceOf = m => {
+        const set = Number((priceMap || {})[m.id]);
+        if (set > 0) return { p: set, src: "mat" };
+        const ls = lotAvg[m.id];
+        if (ls && ls.length) return { p: ls.reduce((a, b) => a + b, 0) / ls.length, src: "lot" };
+        return { p: 0, src: "" };
+    };
     const byName = {};
     sups.forEach(m => { byName[String(m.name + " " + m.size).replace(/\s+/g, " ").trim().toLowerCase()] = m; });
     const matOf = r => byName[String((r && r.name) || "").replace(/\s+/g, " ").trim().toLowerCase()];
+    // ราคาตอนซื้อจริงของ lot นั้น ๆ — แม่นกว่าราคาเฉลี่ย เพราะซื้อแต่ละครั้งคนละราคา
+    const lotPriceAt = (m, lotNo) => {
+        const v = (lotPriceMap || {})[m.id + "||" + lotNo];
+        const p = (v && typeof v === "object") ? Number(v.p) : Number(v);
+        return p > 0 ? p : 0;
+    };
     const supRows = (issueHist || []).filter(r => !!matOf(r));
-    const months = [...new Set(supRows.map(r => String(r.date || "").slice(0, 7)).filter(x => x.length === 7))].sort().reverse();
+    const recRows = (recvHist || []).filter(r => !!matOf(r));
+    const months = [...new Set([].concat(supRows, recRows).map(r => String(r.date || "").slice(0, 7)).filter(x => x.length === 7))].sort().reverse();
     const [mon, setMon] = useState(months[0] || "");
     const [typ, setTyp] = useState("");
     const years = [...new Set(months.map(m => m.slice(0, 4)))].sort().reverse();
     const [year, setYear] = useState((months[0] || "").slice(0, 4) || String(new Date().getFullYear()));
     const TYPE_LBL = { GAS: "แก๊ส", OIL: "น้ำมัน", CHEM: "น้ำยาล้างงาน", BOX: "กล่องกระดาษ" };
     const TYPE_COL = { GAS: "#0969da", OIL: "#bc4c00", CHEM: "#8250df", BOX: "#1a7f37" };
-    // รวมยอดของเดือนที่เลือก (ถ้าไม่เลือก = ทุกเดือน)
+    // รวมยอดของเดือนที่เลือก (ถ้าไม่เลือก = ทุกเดือน) — คิดทั้งฝั่งซื้อเข้าและฝั่งเบิกใช้
+    // ฝั่งซื้อใช้ราคาของ lot ที่รับครั้งนั้น ฝั่งเบิกใช้ราคามาตรฐานของรายการ
     function summarise(month) {
-        const agg = {}; let total = 0;
+        const agg = {}; let total = 0, totalIn = 0;
+        const rowOf = m => {
+            if (!agg[m.id]) { const pr = priceOf(m); agg[m.id] = { m: m, qty: 0, baht: 0, inQty: 0, inBaht: 0, price: pr.p, src: pr.src }; }
+            return agg[m.id];
+        };
+        const inMonth = r => !month || String(r.date || "").slice(0, 7) === month;
+        const qtyOf = r => Number(r.pcs) || Number(r.kgs) || 0;
         supRows.forEach(r => {
-            if (month && String(r.date || "").slice(0, 7) !== month) return;
-            const m = matOf(r); if (!m) return;
-            if (typ && m.type !== typ) return;
-            const qty = Number(r.pcs) || Number(r.kgs) || 0;
-            if (!qty) return;
-            const k = m.id;
-            if (!agg[k]) agg[k] = { m: m, qty: 0, baht: 0, price: Number((priceMap || {})[m.id]) || 0 };
-            agg[k].qty += qty;
-            if (agg[k].price > 0) { agg[k].baht += agg[k].price * qty; total += agg[k].price * qty; }
+            if (!inMonth(r)) return;
+            const m = matOf(r); if (!m || (typ && m.type !== typ)) return;
+            const qty = qtyOf(r); if (!qty) return;
+            const a = rowOf(m);
+            a.qty += qty;
+            if (a.price > 0) { a.baht += a.price * qty; total += a.price * qty; }
         });
-        return { rows: Object.values(agg).sort((a, b) => b.baht - a.baht || b.qty - a.qty), total: total };
+        recRows.forEach(r => {
+            if (!inMonth(r)) return;
+            const m = matOf(r); if (!m || (typ && m.type !== typ)) return;
+            const qty = qtyOf(r); if (!qty) return;
+            const a = rowOf(m);
+            const up = lotPriceAt(m, r.lotNo) || a.price;
+            a.inQty += qty;
+            if (up > 0) { a.inBaht += up * qty; totalIn += up * qty; }
+        });
+        return { rows: Object.values(agg).sort((a, b) => (b.baht + b.inBaht) - (a.baht + a.inBaht) || b.qty - a.qty), total: total, totalIn: totalIn };
     }
     const cur = summarise(mon);
     const prevMon = mon ? months[months.indexOf(mon) + 1] : null;
     const prev = prevMon ? summarise(prevMon) : null;
     const diff = prev && prev.total > 0 ? ((cur.total - prev.total) / prev.total) * 100 : null;
     const noPrice = cur.rows.filter(x => !(x.price > 0));
-    const maxBaht = cur.rows.reduce((s, x) => Math.max(s, x.baht), 0);
+    const maxBaht = cur.rows.reduce((s, x) => Math.max(s, x.baht, x.inBaht), 0);
     const monLbl = m => { if (!m) return "ทุกเดือน"; const [y, mm] = m.split("-"); return ["", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."][+mm] + " " + y; };
-    const dl = () => exportXLSX([{ name: "ต้นทุนวัสดุสิ้นเปลือง",
-            headers: ["รายการ", "ประเภท", "ปริมาณที่เบิกใช้", "หน่วย", "ราคา/หน่วย (บาท)", "มูลค่า (บาท)"],
+    const r2 = n => Math.round((n || 0) * 100) / 100;
+    // ต่อท้ายจำนวนลิตรด้วยจำนวนภาชนะ เช่น "80 ลิตร (4 PAIL)" — ทานกับใบส่งของ/ใบเบิกได้ง่ายกว่า
+    const packTxt = (m, qty) => {
+        if (!isLiquidSupply(m)) return "";
+        const pk = packSizeOf(m);
+        if (!(pk > 0) || !(qty > 0)) return "";
+        const n = qty / pk;
+        return " (" + fmtQty(n, n % 1 === 0 ? 0 : 2) + " " + packWordOf(m) + ")";
+    };
+    const dl = () => exportXLSX([{ name: "รับเข้า-เบิกใช้ วัสดุสิ้นเปลือง",
+            headers: ["รายการ", "ประเภท", "หน่วย", "รับเข้า (จำนวน)", "มูลค่าที่ซื้อเข้า (บาท)",
+                "เบิกใช้ (จำนวน)", "มูลค่าที่ใช้จริง (บาท)", "ราคา/หน่วย (บาท)", "ส่วนต่าง ซื้อ−ใช้ (บาท)"],
             rows: cur.rows.map(x => [x.m.name + " " + sizeTxt(x.m.size), TYPE_LBL[x.m.type] || x.m.type,
-                Math.round(x.qty * 100) / 100, unitWordOf(x.m.type, x.m.unit, x.m.size),
-                x.price > 0 ? x.price : "", x.price > 0 ? Math.round(x.baht * 100) / 100 : ""])
-                .concat([["รวมทั้งหมด", "", "", "", "", Math.round(cur.total * 100) / 100]]) }],
-        `ต้นทุนวัสดุสิ้นเปลือง_${mon || "ทุกเดือน"}.xlsx`);
+                unitWordOf(x.m.type, x.m.unit, x.m.size),
+                r2(x.inQty), r2(x.inBaht), r2(x.qty), r2(x.baht),
+                x.price > 0 ? x.price : "", r2(x.inBaht - x.baht)])
+                .concat([["รวมทั้งหมด", "", "", "", r2(cur.totalIn), "", r2(cur.total), "", r2(cur.totalIn - cur.total)]]) }],
+        `รับเข้า-เบิกใช้_วัสดุสิ้นเปลือง_${mon || "ทุกเดือน"}.xlsx`);
     const chip = (active, label, onClick, key) => React.createElement("button", { key: key, onClick: onClick,
         style: { padding: "7px 16px", borderRadius: 20, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
             border: `1px solid ${active ? C.acc : C.brd}`, background: active ? C.acc : "transparent", color: active ? "#fff" : C.tx2, whiteSpace: "nowrap" } }, label);
     return React.createElement("div", null,
         React.createElement("div", { style: { marginBottom: 14 } },
             React.createElement("div", { style: { fontSize: 19, fontWeight: 800 } }, "💰 ต้นทุนวัสดุสิ้นเปลือง"),
-            React.createElement("div", { style: { fontSize: 12, color: C.tx2, marginTop: 3 } }, "คิดจาก ปริมาณที่เบิกใช้จริง × ราคา/หน่วย ที่ตั้งไว้ใน Material")),
+            React.createElement("div", { style: { fontSize: 12, color: C.tx2, marginTop: 3 } },
+                "เทียบ ", React.createElement("b", { style: { color: "#0969da" } }, "มูลค่าที่ซื้อเข้า"), " กับ ",
+                React.createElement("b", { style: { color: "#1a7f37" } }, "มูลค่าที่เบิกใช้จริง"),
+                " ในเดือนเดียวกัน — ฝั่งซื้อใช้ราคาที่กรอกไว้ตอนรับของแต่ละ Lot ฝั่งใช้คิดจาก ปริมาณที่เบิก × ราคา/หน่วย")),
         React.createElement(Card, null,
             // เลือกปีก่อน แล้วค่อยเลือกเดือนในปีนั้น — ดูย้อนหลังได้ไม่จำกัดจำนวนปี
             // (เดิมโชว์แค่ 12 เดือนล่าสุด พอใช้ข้ามปีเดือนเก่าจะหลุดหายไปจากรายการ)
@@ -6589,37 +6831,75 @@ function SupplyCostPage({ issueHist, materials, priceMap }) {
                 chip(typ === "", "ทุกประเภท", () => setTyp(""), "_t"),
                 ["GAS", "OIL", "CHEM", "BOX"].map(t => chip(typ === t, TYPE_LBL[t], () => setTyp(typ === t ? "" : t), t)))),
         React.createElement(Card, null,
-            React.createElement("div", { style: { padding: "20px 22px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 14, background: "rgba(26,127,55,.07)" } },
-                React.createElement("div", null,
-                    React.createElement("div", { style: { fontSize: 12.5, color: C.tx2, fontWeight: 600 } }, "ยอดรวม " + monLbl(mon) + (typ ? " · เฉพาะ" + TYPE_LBL[typ] : "")),
-                    React.createElement("div", { style: { fontFamily: "monospace", fontSize: 34, fontWeight: 800, color: "#1a7f37", lineHeight: 1.2 } }, fmtQty(cur.total, 2) + " บาท"),
-                    diff != null && React.createElement("div", { style: { fontSize: 12.5, marginTop: 4, color: diff > 0 ? C.err : "#1a7f37", fontWeight: 700 } },
-                        (diff > 0 ? "▲ สูงขึ้น " : diff < 0 ? "▼ ลดลง " : "เท่ากับ ") + fmtQty(Math.abs(diff), 1) + "% จาก" + monLbl(prevMon)
-                            + "  (" + fmtQty(prev.total, 2) + " บาท)")),
-                React.createElement(Btn, { v: "success", onClick: dl }, "📊 ดึง Excel ส่งบัญชี"))),
+            React.createElement("div", { style: { padding: "16px 22px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 14 } },
+                React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: C.tx } }, "📅 " + monLbl(mon) + (typ ? " · เฉพาะ" + TYPE_LBL[typ] : "")),
+                React.createElement(Btn, { v: "success", onClick: dl }, "📊 ดึง Excel ส่งบัญชี")),
+            // สองก้อนนี้คือหัวใจของหน้านี้ — ซื้อเข้าเท่าไหร่ ใช้จริงเท่าไหร่ ในเดือนเดียวกัน
+            React.createElement("div", { style: { display: "flex", flexWrap: "wrap", borderTop: `1px solid ${C.brd}` } },
+                (() => {
+                    const box = (lbl, val, col, bg, sub) => React.createElement("div", { key: lbl, style: { flex: "1 1 240px", padding: "18px 22px", background: bg, borderRight: `1px solid ${C.brd}` } },
+                        React.createElement("div", { style: { fontSize: 12.5, color: C.tx2, fontWeight: 700 } }, lbl),
+                        React.createElement("div", { style: { fontFamily: "monospace", fontSize: 30, fontWeight: 800, color: col, lineHeight: 1.25 } }, fmtQty(val, 2) + " ฿"),
+                        sub || null);
+                    const gap = cur.totalIn - cur.total;
+                    return [
+                        box("🛒 ซื้อเข้าเดือนนี้", cur.totalIn, "#0969da", "rgba(9,105,218,.06)",
+                            React.createElement("div", { style: { fontSize: 11.5, color: C.tx2, marginTop: 3 } }, "จากราคาที่กรอกตอนรับของ")),
+                        box("🔧 เบิกใช้จริงเดือนนี้", cur.total, "#1a7f37", "rgba(26,127,55,.06)",
+                            diff != null ? React.createElement("div", { style: { fontSize: 11.5, marginTop: 3, color: diff > 0 ? C.err : "#1a7f37", fontWeight: 700 } },
+                                (diff > 0 ? "▲ สูงขึ้น " : diff < 0 ? "▼ ลดลง " : "เท่ากับ ") + fmtQty(Math.abs(diff), 1) + "% จาก" + monLbl(prevMon)) : null),
+                        box(gap >= 0 ? "📦 ซื้อมากกว่าใช้ (เข้าสต๊อก)" : "📉 ใช้มากกว่าซื้อ (ดึงของเก่า)", Math.abs(gap), gap >= 0 ? "#9a6700" : "#8250df",
+                            gap >= 0 ? "rgba(210,153,34,.07)" : "rgba(130,80,223,.07)",
+                            React.createElement("div", { style: { fontSize: 11.5, color: C.tx2, marginTop: 3 } }, "ส่วนต่าง ซื้อ − ใช้"))
+                    ];
+                })())),
         cur.rows.length === 0
             ? React.createElement(Card, null, React.createElement("div", { style: { padding: 30, textAlign: "center", color: C.tx2, fontSize: 13, lineHeight: 1.8 } },
-                "ยังไม่มีการเบิกใช้ใน" + monLbl(mon) + (typ ? " ประเภท" + TYPE_LBL[typ] : ""),
+                "ยังไม่มีการซื้อเข้าหรือเบิกใช้ใน" + monLbl(mon) + (typ ? " ประเภท" + TYPE_LBL[typ] : ""),
                 React.createElement("br"), "ลองเลือกเดือนอื่น หรือดู \"ทุกเดือน\""))
             : React.createElement(Card, null,
-                React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 13 } },
-                    React.createElement("thead", null, React.createElement("tr", { style: { background: C.sur2 } },
-                        ["รายการ", "ปริมาณที่เบิกใช้", "ราคา/หน่วย", "มูลค่า", "สัดส่วน"].map((hh, hi) => React.createElement("th", { key: hi,
-                            style: { padding: "10px 13px", textAlign: hi === 0 ? "left" : "right", fontSize: 11, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, hh)))),
-                    React.createElement("tbody", null, cur.rows.map((x, i) => React.createElement("tr", { key: i },
-                        React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2 } },
-                            React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: "#fff", background: TYPE_COL[x.m.type] || C.tx2, borderRadius: 4, padding: "1px 7px", marginRight: 7 } }, TYPE_LBL[x.m.type] || x.m.type),
-                            React.createElement("span", { style: { fontWeight: 600 } }, x.m.name),
-                            React.createElement("span", { style: { color: C.tx2, marginLeft: 6, fontSize: 12 } }, sizeTxt(x.m.size))),
-                        React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2, textAlign: "right", fontFamily: "monospace", whiteSpace: "nowrap" } },
-                            fmtQty(x.qty, 0) + " " + unitWordOf(x.m.type, x.m.unit, x.m.size)),
-                        React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2, textAlign: "right", fontFamily: "monospace", color: C.tx2, whiteSpace: "nowrap" } },
-                            x.price > 0 ? fmtQty(x.price, 2) : "—"),
-                        React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2, textAlign: "right", fontFamily: "monospace", fontWeight: 800, whiteSpace: "nowrap", color: x.price > 0 ? C.tx : C.warn } },
-                            x.price > 0 ? fmtQty(x.baht, 2) : "ยังไม่ตั้งราคา"),
-                        React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2, width: 130 } },
-                            React.createElement("div", { style: { height: 8, borderRadius: 4, background: C.sur2, overflow: "hidden" } },
-                                React.createElement("div", { style: { height: "100%", width: (maxBaht > 0 ? (x.baht / maxBaht) * 100 : 0) + "%", background: TYPE_COL[x.m.type] || C.acc } })))))))),
+                React.createElement("div", { style: { overflowX: "auto" } },
+                React.createElement("table", { style: { width: "100%", minWidth: 880, borderCollapse: "collapse", fontSize: 13 } },
+                    React.createElement("thead", null,
+                        // หัวสองชั้น — ซ้ายเป็นฝั่งซื้อ ขวาเป็นฝั่งใช้ อ่านเทียบกันได้ในแถวเดียว
+                        React.createElement("tr", { style: { background: C.sur2 } },
+                            React.createElement("th", { rowSpan: 2, style: { padding: "8px 13px", textAlign: "left", fontSize: 11, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}` } }, "รายการ"),
+                            React.createElement("th", { colSpan: 2, style: { padding: "6px 13px", textAlign: "center", fontSize: 11, fontWeight: 800, color: "#0969da", background: "rgba(9,105,218,.08)", borderBottom: `1px solid ${C.brd}` } }, "🛒 ซื้อเข้า"),
+                            React.createElement("th", { colSpan: 2, style: { padding: "6px 13px", textAlign: "center", fontSize: 11, fontWeight: 800, color: "#1a7f37", background: "rgba(26,127,55,.08)", borderBottom: `1px solid ${C.brd}` } }, "🔧 เบิกใช้จริง"),
+                            React.createElement("th", { rowSpan: 2, style: { padding: "8px 13px", textAlign: "right", fontSize: 11, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, "ราคา/หน่วย"),
+                            React.createElement("th", { rowSpan: 2, style: { padding: "8px 13px", textAlign: "left", fontSize: 11, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, width: 120 } }, "สัดส่วน")),
+                        React.createElement("tr", { style: { background: C.sur2 } },
+                            ["จำนวน", "มูลค่า", "จำนวน", "มูลค่า"].map((hh, hi) => React.createElement("th", { key: hi,
+                                style: { padding: "6px 13px", textAlign: "right", fontSize: 10.5, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap", background: hi < 2 ? "rgba(9,105,218,.05)" : "rgba(26,127,55,.05)" } }, hh)))),
+                    React.createElement("tbody", null, cur.rows.map((x, i) => {
+                        const uw = unitWordOf(x.m.type, x.m.unit, x.m.size);
+                        const num = (v, col, bold) => React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2, textAlign: "right", fontFamily: "monospace", whiteSpace: "nowrap", fontWeight: bold ? 800 : 400, color: col || C.tx } }, v);
+                        return React.createElement("tr", { key: i },
+                            React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2 } },
+                                React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: "#fff", background: TYPE_COL[x.m.type] || C.tx2, borderRadius: 4, padding: "1px 7px", marginRight: 7 } }, TYPE_LBL[x.m.type] || x.m.type),
+                                React.createElement("span", { style: { fontWeight: 600 } }, x.m.name),
+                                React.createElement("span", { style: { color: C.tx2, marginLeft: 6, fontSize: 12 } }, sizeTxt(x.m.size))),
+                            num(x.inQty > 0 ? fmtQty(x.inQty, 0) + " " + uw + packTxt(x.m, x.inQty) : "—", x.inQty > 0 ? C.tx : C.tx3),
+                            num(x.inBaht > 0 ? fmtQty(x.inBaht, 2) : "—", x.inBaht > 0 ? "#0969da" : C.tx3, true),
+                            num(x.qty > 0 ? fmtQty(x.qty, 0) + " " + uw + packTxt(x.m, x.qty) : "—", x.qty > 0 ? C.tx : C.tx3),
+                            num(x.qty > 0 ? (x.price > 0 ? fmtQty(x.baht, 2) : "ยังไม่ตั้งราคา") : "—",
+                                x.qty <= 0 ? C.tx3 : x.price > 0 ? "#1a7f37" : C.warn, true),
+                            num(x.price > 0 ? fmtQty(x.price, 2) : "—", C.tx2),
+                            React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2, width: 120 } },
+                                // แท่งบน = ซื้อเข้า · แท่งล่าง = เบิกใช้ เทียบความยาวกันได้ทันที
+                                React.createElement("div", { style: { height: 7, borderRadius: 4, background: C.sur2, overflow: "hidden", marginBottom: 3 } },
+                                    React.createElement("div", { style: { height: "100%", width: (maxBaht > 0 ? (x.inBaht / maxBaht) * 100 : 0) + "%", background: "#0969da" } })),
+                                React.createElement("div", { style: { height: 7, borderRadius: 4, background: C.sur2, overflow: "hidden" } },
+                                    React.createElement("div", { style: { height: "100%", width: (maxBaht > 0 ? (x.baht / maxBaht) * 100 : 0) + "%", background: "#1a7f37" } }))));
+                    })),
+                    React.createElement("tfoot", null,
+                        React.createElement("tr", { style: { background: C.sur2 } },
+                            React.createElement("td", { style: { padding: "11px 13px", fontWeight: 800 } }, "รวมทั้งหมด"),
+                            React.createElement("td", { style: { borderTop: `2px solid ${C.brd}` } }),
+                            React.createElement("td", { style: { padding: "11px 13px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: "#0969da", borderTop: `2px solid ${C.brd}`, whiteSpace: "nowrap" } }, fmtQty(cur.totalIn, 2)),
+                            React.createElement("td", { style: { borderTop: `2px solid ${C.brd}` } }),
+                            React.createElement("td", { style: { padding: "11px 13px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: "#1a7f37", borderTop: `2px solid ${C.brd}`, whiteSpace: "nowrap" } }, fmtQty(cur.total, 2)),
+                            React.createElement("td", { colSpan: 2, style: { borderTop: `2px solid ${C.brd}` } })))))),
         noPrice.length > 0 && React.createElement("div", { style: { background: "rgba(210,153,34,.1)", border: "1px solid rgba(210,153,34,.35)", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#9a6700", lineHeight: 1.7 } },
             React.createElement("strong", null, "⚠️ มี " + noPrice.length + " รายการที่ยังไม่ได้ตั้งราคา/หน่วย"),
             " — ยอดรวมจึงยังไม่ครบ: ", noPrice.map(x => x.m.name).join(", "),
@@ -6648,8 +6928,28 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
         return supNameOnly.some(x => n === x || n.indexOf(x + " ") === 0);
     };
     const inGroup = r => group === "supply" ? rowIsSupply(r) : (group === "raw" ? !rowIsSupply(r) : true);
+    // วัสดุสิ้นเปลืองเก็บปริมาณในช่อง kgs (ลิตร/กก.) หรือ pcs (ถัง/ใบ) — หัวตาราง KGS/PCS จึงอ่านผิดหน่วย
+    // ยุบเหลือคอลัมน์ "จำนวน" เดียว แล้วเขียนหน่วยจริงต่อท้ายเลขทีละแถว
+    const isSupPg = group === "supply";
+    const _uwCache = {};
+    const uwOfRow = r => {
+        const m = findMatOfHist(materials, (r && r.name) || "", (r && r.maker) || "", _uwCache);
+        return (m && isSupplyType(m.type)) ? unitWordOf(m.type, m.unit, m.size) : "";
+    };
+    const supQty = r => { const k = Number(r && r.kgs) || 0; return k > 0 ? k : (Number(r && r.pcs) || 0); };
+    // รับมากี่ถัง / กี่ PAIL — ถอดจากปริมาณ ÷ ขนาดบรรจุ เพราะสโตร์ทานกับใบส่งของด้วยจำนวนถัง ไม่ใช่ลิตร
+    // (แก๊ส/กล่องนับเป็นถัง/ใบอยู่แล้ว ไม่ต้องถอดซ้ำ)
+    const packTxtOf = (r, qty) => {
+        const m = findMatOfHist(materials, (r && r.name) || "", (r && r.maker) || "", _uwCache);
+        if (!m || !isLiquidSupply(m)) return "";
+        const pk = packSizeOf(m);
+        if (!(pk > 0) || !(qty > 0)) return "";
+        const n = qty / pk;
+        return fmtQty(n, n % 1 === 0 ? 0 : 2) + " " + packWordOf(m);
+    };
     // แสดงเฉพาะคอลัมน์หน่วยที่มีข้อมูลจริงในรายการที่กำลังแสดง (ไม่มี COIL/M ก็ไม่ต้องโชว์ให้รก)
     const unitColsOf = rows => {
+        if (isSupPg) return [["_sup", "จำนวน", 2]];
         const has = k => (rows || []).some(r => { const v = r[k]; return v != null && v !== "" && Number(v) > 0; });
         const out = [["pcs", "PCS", 0], ["coil", "COIL", 0], ["kgs", "KGS", 2], ["m", "M", 2]].filter(c => has(c[0]));
         return out.length ? out : [["kgs", "KGS", 2]];
@@ -7345,10 +7645,10 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
                 })(),
                 tab === "issue" && !issueSum && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11 } },
                     React.createElement("thead", { style: { position: "sticky", top: 0, zIndex: 3 } },
-                        React.createElement("tr", { style: { background: C.sur2 } }, ["วันที่", "เลขที่ใบเบิก", "วัตถุดิบ", "Maker", "Lot No.", "QTY", "Unit", "KGS", "M", "Forecast/PO", "แผนก", "ผู้เบิก", "ผู้อนุมัติ", "ผู้จ่าย", ...(setIssueHist ? ["แก้ไข"] : [])].map(h => React.createElement("th", { key: h, style: { padding: "5px 7px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap", background: C.sur2 } }, h)))),
+                        React.createElement("tr", { style: { background: C.sur2 } }, ["วันที่", "เลขที่ใบเบิก", isSupPg ? "รายการ" : "วัตถุดิบ", "Maker", "Lot No.", isSupPg ? "จำนวน" : "QTY", isSupPg ? "หน่วย" : "Unit", ...(isSupPg ? [] : ["KGS", "M"]), "Forecast/PO", "แผนก", "ผู้เบิก", "ผู้อนุมัติ", "ผู้จ่าย", ...(setIssueHist ? ["แก้ไข"] : [])].map(h => React.createElement("th", { key: h, style: { padding: "5px 7px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap", background: C.sur2 } }, h)))),
                     React.createElement("tbody", null,
                         filtered.length === 0 && React.createElement("tr", null,
-                            React.createElement("td", { colSpan: 13, style: { padding: 24, textAlign: "center", color: C.tx2 } }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25")),
+                            React.createElement("td", { colSpan: isSupPg ? 11 : 13, style: { padding: 24, textAlign: "center", color: C.tx2 } }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25")),
                         filtered.map((r, i) => { const _ed = setIssueHist && editIsIdx === r._gi; return React.createElement("tr", { key: i, style: { background: _ed ? "rgba(88,166,255,.06)" : "transparent" } },
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, whiteSpace: "nowrap" } }, fmtDate(r.date)),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10, color: C.acc, whiteSpace: "nowrap" } }, r.reqId),
@@ -7364,10 +7664,13 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace", fontWeight: 700 } },
                                 _ed ? React.createElement("input", { type: "number", step: "1", value: editIsForm.qty != null ? editIsForm.qty : "", onChange: e => setEditIsForm(f => ({ ...f, qty: e.target.value })),
                                     style: { width: 70, background: C.sur, border: "1px solid " + C.acc, borderRadius: 5, padding: "3px 6px", color: C.tx, fontFamily: "monospace", fontSize: 11, outline: "none", textAlign: "right" } })
+                                    : isSupPg ? (supQty(r) > 0 ? fmtQty(supQty(r), supQty(r) % 1 === 0 ? 0 : 2) : "-")
                                     : (r.pcs != null ? r.pcs : (r.coil != null ? r.coil : "-"))),
-                            React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2 } },
-                                React.createElement(Tag, null, r.unit || "PCS")),
-                            React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace" } },
+                            React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, whiteSpace: "nowrap" } },
+                                React.createElement(Tag, null, isSupPg ? (uwOfRow(r) || r.unit || "-") : (r.unit || "PCS")),
+                                // เบิกเป็นลิตร แต่ให้เห็นด้วยว่าคิดเป็นกี่ถัง/กี่ PAIL (ต่อท้ายบรรทัดเดียวกัน)
+                                isSupPg && (() => { const pt = packTxtOf(r, supQty(r)); return pt ? React.createElement("span", { style: { marginLeft: 6, fontSize: 10.5, fontWeight: 700, color: "#1a7f37" } }, "= " + pt) : null; })()),
+                            !isSupPg && React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace" } },
                                 _ed ? React.createElement("input", { type: "number", step: "0.01", value: editIsForm.kgs != null ? editIsForm.kgs : "", onChange: e => setEditIsForm(f => ({ ...f, kgs: e.target.value })),
                                     style: { width: 80, background: C.sur, border: "1px solid " + C.acc, borderRadius: 5, padding: "3px 6px", color: C.tx, fontFamily: "monospace", fontSize: 11, outline: "none", textAlign: "right" } })
                                     : (() => {
@@ -7385,7 +7688,7 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
                                             k.per > 0 && React.createElement("div", { style: { fontSize: 9, color: k.susp ? "#cf222e" : C.tx3, fontFamily: "inherit" } },
                                                 fmtQty(k.per, 2) + " kg/" + uw + (k.susp ? " (ปกติ " + fmtQty(k.ref, 2) + ")" : "")));
                                     })()),
-                            React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace" } }, r.m != null && r.m !== "" ? fmtQty(r.m, 2) : "-"),
+                            !isSupPg && React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace" } }, r.m != null && r.m !== "" ? fmtQty(r.m, 2) : "-"),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, color: C.acc3, fontSize: 11 } }, r.forecast || "-"),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2 } }, r.dept),
                             React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2 } }, r.requester),
@@ -7450,11 +7753,13 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
                         React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11.5 } },
                             React.createElement("thead", { style: { position: "sticky", top: 0, zIndex: 4 } },
                                 React.createElement("tr", { style: { background: C.sur2 } },
-                                    ["วันที่", "วัตถุดิบ", "Maker", "จำนวน Lot", "รวม KGS", "รวม PCS", "รวม COIL", "รวม M", "PO No.", "DN", "Invoice", ""].map(h =>
+                                    (isSupPg
+                                        ? ["วันที่", "รายการ", "Maker", "จำนวน Lot", "รวม", "PO No.", "DN", "Invoice", ""]
+                                        : ["วันที่", "วัตถุดิบ", "Maker", "จำนวน Lot", "รวม KGS", "รวม PCS", "รวม COIL", "รวม M", "PO No.", "DN", "Invoice", ""]).map(h =>
                                         React.createElement("th", { key: h, style: { padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: "1px solid " + C.brd, whiteSpace: "nowrap", background: C.sur2 } }, h)))),
                             React.createElement("tbody", null,
                                 groups.length === 0 && React.createElement("tr", null,
-                                    React.createElement("td", { colSpan: 12, style: { padding: 24, textAlign: "center", color: C.tx2 } }, "ไม่พบข้อมูล")),
+                                    React.createElement("td", { colSpan: isSupPg ? 9 : 12, style: { padding: 24, textAlign: "center", color: C.tx2 } }, "ไม่พบข้อมูล")),
                                 groups.map((x, gi) => {
                                     const noInv = x.invs.size === 0;
                                     const hit = isHit(x);
@@ -7467,10 +7772,20 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
                                         React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2 } },
                                             React.createElement(Tag, { color: C.acc2, bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, x.maker)),
                                         React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", textAlign: "center" } }, x.rows.length),
-                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontWeight: 800, color: C.acc } }, show(x.kgs, 2)),
-                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontWeight: 700 } }, show(x.pcs, 0)),
-                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace" } }, show(x.coil, 0)),
-                                        React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace" } }, show(x.m, 2)),
+                                        isSupPg
+                                            ? React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontWeight: 800, color: C.acc, whiteSpace: "nowrap" } },
+                                                (() => {
+                                                    const q = x.kgs > 0 ? x.kgs : x.pcs;
+                                                    if (!(q > 0)) return "-";
+                                                    const pt = packTxtOf(x, q);
+                                                    return React.createElement(React.Fragment, null,
+                                                        fmtQty(q, q % 1 === 0 ? 0 : 2) + " " + uwOfRow(x),
+                                                        pt && React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: "#1a7f37" } }, "= " + pt));
+                                                })())
+                                            : [React.createElement("td", { key: "kgs", style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontWeight: 800, color: C.acc } }, show(x.kgs, 2)),
+                                                React.createElement("td", { key: "pcs", style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontWeight: 700 } }, show(x.pcs, 0)),
+                                                React.createElement("td", { key: "coil", style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace" } }, show(x.coil, 0)),
+                                                React.createElement("td", { key: "m", style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace" } }, show(x.m, 2))],
                                         React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10.5 } }, x.pos.size ? [...x.pos].join(", ") : "-"),
                                         React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10.5, color: C.tx2 } }, x.dns.size ? [...x.dns].join(", ") : "-"),
                                         React.createElement("td", { style: { padding: "6px 8px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10.5 } },
@@ -7530,8 +7845,17 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
                                     React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2 } },
                                         React.createElement(Tag, { color: C.acc2, bg: "rgba(88,166,255,.1)", brd: "rgba(88,166,255,.2)" }, r.maker)),
                                     React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace", fontSize: 10, color: C.acc } }, r.lotNo),
-                                    ...rU.map(c => React.createElement("td", { key: c[0], style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace", fontWeight: c[0] === "kgs" ? 700 : 400 } },
-                                        (r[c[0]] != null && r[c[0]] !== "" && Number(r[c[0]]) > 0) ? fmtQty(Number(r[c[0]]), c[2]) : "-")),
+                                    ...rU.map(c => React.createElement("td", { key: c[0], style: { padding: "5px 7px", borderBottom: C.brd2, fontFamily: "monospace", fontWeight: (c[0] === "kgs" || c[0] === "_sup") ? 700 : 400, whiteSpace: "nowrap" } },
+                                        c[0] === "_sup"
+                                            ? (() => {
+                                                const q = supQty(r);
+                                                if (!(q > 0)) return "-";
+                                                const pt = packTxtOf(r, q);
+                                                return React.createElement(React.Fragment, null,
+                                                    fmtQty(q, q % 1 === 0 ? 0 : 2) + " " + uwOfRow(r),
+                                                    pt && React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: "#1a7f37" } }, "= " + pt));
+                                            })()
+                                            : (r[c[0]] != null && r[c[0]] !== "" && Number(r[c[0]]) > 0) ? fmtQty(Number(r[c[0]]), c[2]) : "-")),
                                     React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2 } }, r.rohs || "-"),
                                     React.createElement("td", { style: { padding: "5px 7px", borderBottom: C.brd2 } }, setRecvHist && React.createElement("div", { style: { display: "flex", gap: 4 } },
                                         React.createElement("button", { onClick: () => isEditing ? setEditRecvIdx(null) : startEditRecv(gi, r), style: { background: isEditing ? "rgba(210,153,34,.2)" : "rgba(88,166,255,.15)", border: `1px solid ${isEditing ? "rgba(210,153,34,.4)" : "rgba(88,166,255,.3)"}`, borderRadius: 4, color: isEditing ? C.warn : "#0969da", cursor: "pointer", padding: "3px 8px", fontSize: 11 } }, isEditing ? "✕ ปิด" : "✏️"),
