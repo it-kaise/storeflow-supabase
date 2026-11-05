@@ -223,6 +223,25 @@ function fmtDate(d) {
     if (!m) return s;
     return m[3] + "/" + m[2] + "/" + m[1];
 }
+// ── เวลาในใบเบิก ──────────────────────────────────────────
+// ฐานข้อมูลเก็บเวลาเป็น UTC ต้องแปลงเป็นเวลาไทย (+7) ก่อนแสดงเสมอ
+// ที่มาของเวลาแต่ละขั้น: ขอเบิก = sf_requests.created_at · อนุมัติ = approved_at
+//                        จ่าย   = created_at ของแถวแรกใน sf_issuehist ของใบนั้น
+function thTime(iso) {
+    if (!iso) return "";
+    try { return new Date(iso).toLocaleTimeString("th-TH", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit" }); }
+    catch (e) { return ""; }
+}
+function thDateTime(iso, withYear) {
+    if (!iso) return "";
+    try {
+        const o = { timeZone: "Asia/Bangkok", day: "2-digit", month: "2-digit" };
+        if (withYear) o.year = "numeric";
+        const ds = new Date(iso).toLocaleDateString("th-TH", o);
+        const ts = thTime(iso);
+        return ts ? (ds + " " + ts + " น.") : ds;
+    } catch (e) { return ""; }
+}
 // เลข Lot ของ maker บางเจ้า (เช่น NASTOA) มีขีดคั่น แต่สโตร์พิมพ์ไม่เหมือนกันทุกครั้ง
 // (บางคนใส่ขีด บางคนไม่ใส่ บางทีเว้นวรรค) — ถ้าตัวอักษร/ตัวเลขเหมือนกัน ถือเป็น Lot เดียวกัน
 // ใช้ค่านี้เป็นตัวเทียบทุกที่ (ค้นหา / ตัดสต๊อก / กัน Lot ซ้ำ) เพื่อให้สไตล์การพิมพ์ไม่มีผล
@@ -295,6 +314,28 @@ function packWordOf(m) {
     if (/DRUM/i.test(s)) return "DRUM";
     if (/แกลลอน/i.test(s)) return "แกลลอน";
     return "ถัง";
+}
+// จำนวนภาชนะต้องเป็น "จำนวนเต็ม" เสมอ — ของจริงนับเป็นถัง/PAIL ไม่มี 1.92 ถัง
+// ปัดขึ้น เพราะถังที่ใช้ไปบางส่วนก็ยังเป็น 1 ถังที่วางอยู่หน้างาน (เดินนับแล้วต้องเจอ)
+// ลบ 1e-6 ก่อนปัด กันเลขทศนิยมของคอมพิวเตอร์ เช่น 34.6/17.3 = 2.0000000000000004 แล้วกลายเป็น 3
+function packCount(qty, pk) {
+    const q = parseFloat(qty) || 0, p = parseFloat(pk) || 0;
+    if (!(p > 0) || !(q > 0)) return 0;
+    return Math.max(1, Math.ceil((q / p) - 1e-6));
+}
+// ── ราคาลอตของวัสดุสิ้นเปลืองเหลว : ซ่อมตัวเองตอนอ่าน ──────────────
+// มีลอตเก่าหลายตัวเก็บเป็น "ราคาต่อถัง" แทน "ราคาต่อลิตร" เพราะสโตร์กรอกราคาต่อถัง
+// แต่ไม่ได้เปลี่ยนหน่วยในช่องราคา ทำให้ต้นทุนเพี้ยนเป็นล้าน
+// ตรวจโดยเทียบกับราคาที่ตั้งไว้ที่ Material: ถ้าหารด้วยขนาดบรรจุแล้วเข้าใกล้กว่ามาก = เป็นราคาต่อถัง
+// ทำที่ "ตอนอ่าน" เพื่อให้รายงานถูกทันทีโดยไม่ต้องไล่แก้ข้อมูลเก่าทีละลอต
+function supplyUnitPrice(m, rawP, basePrice) {
+    const p = parseFloat(rawP) || 0;
+    if (!(p > 0) || !isLiquidSupply(m)) return p;
+    const pk = packSizeOf(m), base = parseFloat(basePrice) || 0;
+    if (!(pk > 1) || !(base > 0)) return p;
+    const asPack = p / pk;
+    const offNow = Math.abs(p / base - 1), offPack = Math.abs(asPack / base - 1);
+    return (offNow > 0.5 && offPack < 0.2) ? asPack : p;
 }
 // ── ราคาของวัสดุเหลว ──
 // หน้างานเบิกเป็นลิตรเสมอ แต่ใบกำกับมาได้ทั้ง ฿/ถัง ฿/กก. ฿/ลิตร
@@ -852,7 +893,8 @@ function reqFromDb(db) {
         approvedAt: db.approved_at,
         issuedBy: db.issued_by,
         issuedDate: db.issued_date,
-        revisedFrom: db.revised_from
+        revisedFrom: db.revised_from,
+        createdAt: db.created_at   // เวลาที่เขียนใบเบิก (ใช้แสดงเวลาของ "ผู้ขอเบิก")
     };
 }
 
@@ -1494,16 +1536,31 @@ function StoreFlow() {
         if (error) toast(`❌ บันทึกประวัติคืน NG ไม่สำเร็จ: ${error.message}`, "err");
     }
     // ── ราคา/หน่วย ต่อ lot (บาท) เก็บใน sf_master id='lotprices' (map: "matId||lotNo" -> ราคา) ──
+    // sf_master.part_names เป็น jsonb ก้อนเดียว ถ้าเขียนทับทั้งก้อนจากสำเนาในหน่วยความจำ
+    // แท็บที่เปิดค้างไว้นาน ๆ จะลบงานที่คนอื่น (หรือผู้ดูแล) แก้ไปแล้วทิ้งทั้งหมด
+    // เกิดจริง 05/11/2026: ราคาลอตวัสดุสิ้นเปลืองที่แก้แล้วถูกเขียนทับกลับเป็นค่าผิด 2 รอบ
+    // จึงต้อง "อ่านของล่าสุดจากฐานข้อมูลก่อน แล้วค่อยรวมเฉพาะคีย์ที่เปลี่ยน" ทุกครั้ง
+    async function saveMasterMerge(id, patch, removeKeys) {
+        try {
+            const { data } = await sb.from('sf_master').select('part_names').eq('id', id).single();
+            const raw = data && data.part_names;
+            const cur = (raw && typeof raw === "object" && !Array.isArray(raw)) ? raw : {};
+            const next = { ...cur, ...(patch || {}) };
+            (removeKeys || []).forEach(k => { delete next[k]; });
+            const { error } = await sb.from('sf_master').upsert({ id: id, part_names: next });
+            return { error: error || null, next: next };
+        } catch (e) { return { error: e, next: null }; }
+    }
     const [lotPriceMap, setLotPriceMap] = useState({});
     async function saveLotPrice(matId, lotNo, price, oldLotNo, unit) {
         const key = matId + "||" + lotNo;
-        const next = { ...lotPriceMap };
-        if (oldLotNo && oldLotNo !== lotNo) delete next[matId + "||" + oldLotNo];
-        if (price == null || price === "" || isNaN(parseFloat(price))) delete next[key];
-        else next[key] = { p: parseFloat(price), u: unit || null };
+        const patch = {}, rm = [];
+        if (oldLotNo && oldLotNo !== lotNo) rm.push(matId + "||" + oldLotNo);
+        if (price == null || price === "" || isNaN(parseFloat(price))) rm.push(key);
+        else patch[key] = { p: parseFloat(price), u: unit || null };
+        const { error, next } = await saveMasterMerge('lotprices', patch, rm);
+        if (error) { toast("❌ บันทึกราคาไม่สำเร็จ", "err"); return; }
         setLotPriceMap(next);
-        const { error } = await sb.from('sf_master').upsert({ id: 'lotprices', part_names: next });
-        if (error) toast("❌ บันทึกราคาไม่สำเร็จ", "err");
     }
     // ── เลขที่ DN / ใบส่งของชั่วคราว ──
     // sf_recvhist ไม่มีคอลัมน์ DN และเพิ่มคอลัมน์เองไม่ได้จากตรงนี้
@@ -1527,15 +1584,15 @@ function StoreFlow() {
     // ใส่ราคาหลาย lot พร้อมกัน — ต้องรวมเป็นรอบเดียว
     // (ถ้าวน saveLotPrice ทีละตัว แต่ละรอบจะอ่าน lotPriceMap ตัวเก่าจาก closure แล้วเขียนทับกันเอง เหลือแค่ตัวสุดท้าย)
     async function saveLotPricesBulk(list) {
-        const next = { ...lotPriceMap };
+        const patch = {}, rm = [];
         (list || []).forEach(x => {
             const key = x.matId + "||" + x.lotNo;
-            if (x.price == null || x.price === "" || isNaN(parseFloat(x.price))) delete next[key];
-            else next[key] = { p: parseFloat(x.price), u: x.unit || null };
+            if (x.price == null || x.price === "" || isNaN(parseFloat(x.price))) rm.push(key);
+            else patch[key] = { p: parseFloat(x.price), u: x.unit || null };
         });
-        setLotPriceMap(next);
-        const { error } = await sb.from('sf_master').upsert({ id: 'lotprices', part_names: next });
+        const { error, next } = await saveMasterMerge('lotprices', patch, rm);
         if (error) { toast("❌ บันทึกราคาไม่สำเร็จ", "err"); return false; }
+        setLotPriceMap(next);
         return true;
     }
     // ── sync การแก้ Lot (หน้าคลัง) กลับไปที่ประวัติการรับ ให้ข้อมูลตรงกัน ──
@@ -1583,11 +1640,11 @@ function StoreFlow() {
     // ── ราคา/หน่วย ต่อ material (fallback สำหรับ lot ที่ยังไม่มีราคาต่อ lot) เก็บใน sf_master id='prices' ──
     const [priceMap, setPriceMap] = useState({});
     async function savePrice(matId, price) {
-        const next = { ...priceMap, [matId]: price };
-        if (price == null || price === "" || isNaN(parseFloat(price))) delete next[matId];
-        else next[matId] = parseFloat(price);
+        const bad = (price == null || price === "" || isNaN(parseFloat(price)));
+        const { error, next } = await saveMasterMerge('prices',
+            bad ? {} : { [matId]: parseFloat(price) }, bad ? [matId] : []);
+        if (error) { toast("❌ บันทึกราคาไม่สำเร็จ", "err"); return; }
         setPriceMap(next);
-        sb.from('sf_master').upsert({ id: 'prices', part_names: next }).then(({ error }) => { if (error) console.warn('price save failed:', error); });
     }
     // ── ประวัติการแก้ไข (เฉพาะจุดสำคัญ: สต๊อก + เคลม NG) เก็บใน sf_master id='auditlog' (เก็บล่าสุด 500 รายการ) ──
     const [auditLog, setAuditLog] = useState([]);
@@ -1785,7 +1842,8 @@ function StoreFlow() {
                     dept: h.dept,
                     requester: h.requester,
                     approver: h.approver,
-                    issuedBy: h.issued_by
+                    issuedBy: h.issued_by,
+                    createdAt: h.created_at   // เวลาที่บันทึกการจ่าย (ใช้แสดงเวลาของ "ผู้จ่ายของ")
                 })));
                 console.log('✅ โหลด Issue History:', issueData?.length || 0, 'รายการ');
                 
@@ -2719,7 +2777,24 @@ function StoreFlow() {
                 // แต่เก็บเป็น "฿ ต่อหน่วยที่เบิกจริง" เสมอ แล้วติดรหัสช่องที่เก็บจำนวนไว้
                 // (ของเหลวเก็บลิตรในช่อง kgs · แก๊ส/กล่องเก็บจำนวนในช่อง pcs) ข้อมูลเก่าไม่ต้องแก้
                 if (isSupplyType(g.mat && g.mat.type)) {
-                    const per = supplyPricePerLitre(g.mat, p, supPriceUnit(g.mat, l.priceUnit));
+                    let per = supplyPricePerLitre(g.mat, p, supPriceUnit(g.mat, l.priceUnit));
+                    // กันพิมพ์ราคา "ต่อถัง" แต่ลืมเปลี่ยนหน่วยเป็น ฿/DRUM — เคยทำให้ต้นทุนเพี้ยนเป็นล้าน
+                    // (เช่น Proformer กรอก 23,998 ฿/ถัง แต่หน่วยเป็น ฿/ลิตร -> 200 ลิตร = 4.8 ล้านบาท)
+                    // ตรวจโดยหารด้วยขนาดบรรจุแล้วเทียบกับราคาที่ตั้งไว้ที่ Material ถ้าตรงกว่ามาก = พิมพ์ต่อถัง
+                    const pk0 = packSizeOf(g.mat), base = parseFloat((priceMap || {})[realMatId]) || 0;
+                    if (per > 0 && pk0 > 1 && base > 0 && supPriceUnit(g.mat, l.priceUnit) === "l") {
+                        const asPack = per / pk0;
+                        const offNow = Math.abs(per / base - 1), offPack = Math.abs(asPack / base - 1);
+                        if (offNow > 0.5 && offPack < 0.2) {
+                            const w = packWordOf(g.mat), uwx = unitWordOf(g.mat.type, g.mat.unit, g.mat.size);
+                            if (window.confirm("⚠️ ตรวจสอบราคา: " + (g.mat.name || "") + "\n\n"
+                                + "กรอกไว้ " + fmtQty(p, 2) + " ฿/" + uwx + "  (" + fmtQty(per * pk0, 2) + " ฿/" + w + ")\n"
+                                + "แต่ราคาที่ตั้งไว้ที่รายการนี้คือ " + fmtQty(base, 2) + " ฿/" + uwx + "\n\n"
+                                + "ดูเหมือนตัวเลขที่กรอกเป็นราคา \"ต่อ " + w + "\" ไม่ใช่ \"ต่อ " + uwx + "\"\n\n"
+                                + "กด OK = ให้ระบบแปลงเป็น " + fmtQty(asPack, 2) + " ฿/" + uwx + " ให้\n"
+                                + "กด Cancel = ใช้ตามที่กรอก (" + fmtQty(per, 2) + " ฿/" + uwx + ")")) per = asPack;
+                        }
+                    }
                     if (per > 0) priceUpd[realMatId + "||" + l.lotNo] = { p: Math.round(per * 10000) / 10000, u: supplyField(g.mat.type) };
                     return;
                 }
@@ -2727,9 +2802,9 @@ function StoreFlow() {
             });
         }
         if (Object.keys(priceUpd).length) {
-            const next = { ...lotPriceMap, ...priceUpd };
-            setLotPriceMap(next);
-            await sb.from('sf_master').upsert({ id: 'lotprices', part_names: next });
+            const { error: pe, next } = await saveMasterMerge('lotprices', priceUpd, []);
+            if (pe) toast("⚠️ รับของแล้วแต่บันทึกราคาไม่สำเร็จ — กรุณาใส่ราคาซ้ำที่หน้าประวัติ", "err");
+            else setLotPriceMap(next);
         }
         if (dnUpd.length) await saveDnBulk(dnUpd);
         const g0 = groups[0];
@@ -4459,6 +4534,13 @@ function ReqPage({ requests: _allReqs, materials, filter, setFilter, role, me, s
     // admin แก้ได้ทุกใบไว้กู้สถานการณ์ เช่น คนเขียนลาหยุดแล้วใบติดค้าง
     const _norm = v => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
     const canEditReq = r => role === "admin" || (!!me && _norm(r.requester) === _norm(me));
+    // เวลาที่จ่ายจริงของแต่ละใบ — ตาราง sf_requests เก็บแค่ "วันที่จ่าย" ไม่มีเวลา
+    // จึงใช้เวลาที่บันทึกประวัติการจ่ายแถวแรกของใบนั้นแทน (ตรงกับตอนสโตร์กดจ่าย)
+    const issuedAtMap = {};
+    (issueHist || []).forEach(h => {
+        if (!h || !h.reqId || !h.createdAt) return;
+        if (!issuedAtMap[h.reqId] || h.createdAt < issuedAtMap[h.reqId]) issuedAtMap[h.reqId] = h.createdAt;
+    });
     // Temper ของรายการในใบเบิก: ใช้ค่าที่บันทึกไว้ ถ้าเป็นใบเก่าให้ย้อนหาจาก matId
     const itemTemper = it => {
         if (it.temper && it.temper !== "-") return it.temper;
@@ -4628,9 +4710,10 @@ function ReqPage({ requests: _allReqs, materials, filter, setFilter, role, me, s
             + "<th style='width:106px'>PART NO. / ลูกค้า</th><th style='width:96px'>W/O No. / FORECAST</th><th style='width:92px' class='r'>จำนวน</th><th style='width:118px'>LOT NO. / จ่ายจริง</th></tr></thead>"
             + "<tbody>" + (rows || "<tr><td colspan='7' class='c'>- ไม่มีรายการ -</td></tr>") + "</tbody></table>"
             + "<div class='nt'><b>หมายเหตุ:</b> " + esc(r.note || "-") + "</div>"
-            + "<div class='sgs'>" + sign("ผู้ขอเบิก", r.requester, (r.date || "").slice(0, 10))
-            + sign("ผู้อนุมัติ", r.approvedBy, (r.approvedAt || "").slice(0, 10))
-            + sign("ผู้จ่ายของ", r.issuedBy, r.issuedDate) + "</div>"
+            // ใบพิมพ์ลงวันที่ + เวลาไทย เพื่อให้ตรวจย้อนลำดับขั้นตอนได้ว่าขอ/อนุมัติ/จ่าย ห่างกันเท่าไร
+            + "<div class='sgs'>" + sign("ผู้ขอเบิก", r.requester, thDateTime(r.createdAt, true) || fmtDate(r.date))
+            + sign("ผู้อนุมัติ", r.approvedBy, thDateTime(r.approvedAt, true))
+            + sign("ผู้จ่ายของ", r.issuedBy, thDateTime(issuedAtMap[r.id], true) || (r.issuedDate ? fmtDate(r.issuedDate) : "")) + "</div>"
             // เลขที่ขึ้นทะเบียนเอกสาร ISO — ต้องอยู่มุมขวาล่างของใบเบิกทุกใบ
             + "<div class='ft'><span>พิมพ์เมื่อ " + new Date().toLocaleString("th-TH") + "</span><span>" + esc(r.id) + "</span>"
             + "<span class='iso'>" + (isSupplyReq(r) ? ISO_DOC_SUP : ISO_DOC_REQ) + "</span></div>"
@@ -4790,11 +4873,11 @@ function ReqPage({ requests: _allReqs, materials, filter, setFilter, role, me, s
                         const apSt = (es === "approved" || es === "issued") ? "done" : es === "pending" ? "now" : es === "rejected" ? "bad" : "off";
                         const isSt = es === "issued" ? "done" : es === "approved" ? "now" : "off";
                         return React.createElement(React.Fragment, null,
-                            node("REQUESTED BY", "done", "✓", r.requester, (r.date || "").slice(5)),
+                            node("REQUESTED BY", "done", "✓", r.requester, thDateTime(r.createdAt) || fmtDate(r.date)),
                             conn(),
-                            node("APPROVED BY", apSt, apSt === "done" ? "✓" : apSt === "bad" ? "✕" : "2", apSt === "done" ? r.approvedBy : apSt === "bad" ? "ไม่อนุมัติ" : apSt === "now" ? "รอดำเนินการ" : "-", apSt === "done" ? (r.approvedAt || "").slice(5, 10) : ""),
+                            node("APPROVED BY", apSt, apSt === "done" ? "✓" : apSt === "bad" ? "✕" : "2", apSt === "done" ? r.approvedBy : apSt === "bad" ? "ไม่อนุมัติ" : apSt === "now" ? "รอดำเนินการ" : "-", apSt === "done" ? (thDateTime(r.approvedAt) || "") : ""),
                             conn(),
-                            node("ISSUED BY", isSt, isSt === "done" ? "✓" : "3", isSt === "done" ? r.issuedBy : isSt === "now" ? "รอดำเนินการ" : "-", isSt === "done" ? (r.issuedDate || "").slice(5) : ""));
+                            node("ISSUED BY", isSt, isSt === "done" ? "✓" : "3", isSt === "done" ? r.issuedBy : isSt === "now" ? "รอดำเนินการ" : "-", isSt === "done" ? (thDateTime(issuedAtMap[r.id]) || fmtDate(r.issuedDate)) : ""));
                     })(),
                     React.createElement("div", { style: { marginLeft: "auto", display: "flex", gap: 6 } },
                         (es === "pending" || es === "approved") && canEditReq(r) && React.createElement(Btn, { v: "ghost", sz: "xs", onClick: () => onEdit && onEdit(r) }, "แก้ไข"),
@@ -5895,10 +5978,8 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
     // เหลือกี่ถัง/กี่ PAIL — ถอดจาก คงเหลือ ÷ ขนาดบรรจุ (ใช้ตอนเดินนับสต๊อกหน้างาน)
     const supPackTxt = (m, qty) => {
         if (!isLiquidSupply(m)) return "";
-        const pk = packSizeOf(m);
-        if (!(pk > 0) || !(qty > 0)) return "";
-        const n = qty / pk;
-        return fmtQty(n, n % 1 === 0 ? 0 : 2) + " " + packWordOf(m);
+        const n = packCount(qty, packSizeOf(m));
+        return n > 0 ? (fmtQty(n, 0) + " " + packWordOf(m)) : "";
     };
     // ปุ่มเลื่อนตารางซ้าย-ขวา — บางจอแถบเลื่อนอยู่ล่างสุดจนมองไม่เห็น กดปุ่มนี้ง่ายกว่า
     const tblBox = React.useRef(null);
@@ -6258,8 +6339,8 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist: _allRe
     const totalPacks = form.lots.reduce((s, l) => {
         const p = parseFloat(l._packs) || 0;
         if (p > 0) return s + p;
-        const lm = lotMat(l), pk = packSizeOf(lm), q = parseFloat(l.kgs) || 0;
-        return s + (isLiquidSupply(lm) && pk > 0 && q > 0 ? q / pk : 0);
+        const lm = lotMat(l), q = parseFloat(l.kgs) || 0;
+        return s + (isLiquidSupply(lm) ? packCount(q, packSizeOf(lm)) : 0);
     }, 0);
     return React.createElement("div", { onKeyDown: enterAsTab },
         React.createElement(Card, null,
@@ -6520,7 +6601,7 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist: _allRe
                             // \u0E08\u0E33\u0E19\u0E27\u0E19\u0E20\u0E32\u0E0A\u0E19\u0E30\u0E17\u0E35\u0E48\u0E23\u0E31\u0E1A\u0E08\u0E23\u0E34\u0E07 \u2014 \u0E15\u0E31\u0E27\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48\u0E15\u0E23\u0E07\u0E01\u0E31\u0E1A\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07\u0E21\u0E32\u0E01\u0E17\u0E35\u0E48\u0E2A\u0E38\u0E14 \u0E08\u0E36\u0E07\u0E40\u0E19\u0E49\u0E19\u0E2A\u0E35\u0E44\u0E27\u0E49
                             isLiquidSupply(selMat) && totalPacks > 0 && React.createElement("span", { style: { color: "#1a7f37", fontWeight: 700 } },
                                 "\u0E23\u0E31\u0E1A\u0E23\u0E27\u0E21: ",
-                                React.createElement("strong", null, fmtQty(totalPacks, totalPacks % 1 === 0 ? 0 : 2) + " " + packWordOf(selMat))),
+                                React.createElement("strong", null, fmtQty(totalPacks, 0) + " " + packWordOf(selMat))),
                             totalKgs > 0 && React.createElement("span", { style: { color: C.acc } },
                                 ((selMat && isSupplyType(selMat.type) && supplyField(selMat.type) === "kgs")
                                     ? unitWordOf(selMat.type, selMat.unit, selMat.size) + " \u0E23\u0E27\u0E21: " : "KGS \u0E23\u0E27\u0E21: "),
@@ -6536,7 +6617,7 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist: _allRe
                     " | ",
                     form.lots.length,
                     " Lot",
-                    isLiquidSupply(selMat) && totalPacks > 0 && ` | รับ ${fmtQty(totalPacks, totalPacks % 1 === 0 ? 0 : 2)} ${packWordOf(selMat)}`,
+                    isLiquidSupply(selMat) && totalPacks > 0 && ` | รับ ${fmtQty(totalPacks, 0)} ${packWordOf(selMat)}`,
                     totalKgs > 0 && ` | รวม ${(selMat && isSupplyType(selMat.type)) ? fmtQty(totalKgs, 0) : totalKgs.toFixed(2)} ${(selMat && isSupplyType(selMat.type) && supplyField(selMat.type) === "kgs") ? unitWordOf(selMat.type, selMat.unit, selMat.size) : "KGS"}`,
                     totalPcs > 0 && ` | ${totalPcs} PCS`,
                     totalCoil > 0 && ` | ${totalCoil} COIL`),
@@ -6689,6 +6770,14 @@ function MonthEndPage({ materials, lots, issueHist, recvHist, group }) {
             border: `1px solid ${active ? C.acc : C.brd}`, background: active ? C.acc : "transparent", color: active ? "#fff" : C.tx2, whiteSpace: "nowrap" } }, label);
     const th = (t, right) => React.createElement("th", { key: t, style: { padding: "8px 10px", textAlign: right ? "right" : "left", fontSize: 10.5, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap" } }, t);
     const td = (v, right, bold, color) => React.createElement("td", { style: { padding: "8px 10px", borderBottom: C.brd2, textAlign: right ? "right" : "left", fontFamily: right ? "monospace" : "inherit", fontWeight: bold ? 800 : 400, color: color || C.tx, whiteSpace: "nowrap" } }, v);
+    // ช่องจำนวนของวัสดุสิ้นเปลือง: บรรทัดบน = ลิตร (ไม่ปัดเศษ) · บรรทัดล่าง = จำนวนภาชนะ
+    // ใส่บรรทัดที่ 2 เพื่อให้ทานกับของจริงหน้างานได้ โดยไม่ต้องหารเอง
+    const tdQty = (x, v, bold, color) => {
+        const n = (isSup && isLiquidSupply(x.m)) ? packCount(v, packSizeOf(x.m)) : 0;
+        return React.createElement("td", { style: { padding: "8px 10px", borderBottom: C.brd2, textAlign: "right", fontFamily: "monospace", fontWeight: bold ? 800 : 400, color: color || C.tx, whiteSpace: "nowrap" } },
+            num(v, x.mainF),
+            n > 0 ? React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: "#1a7f37", marginTop: 2 } }, "= " + fmtQty(n, 0) + " " + packWordOf(x.m)) : null);
+    };
     return React.createElement("div", null,
         React.createElement("div", { style: { marginBottom: 12 } },
             React.createElement("div", { style: { fontSize: 19, fontWeight: 800 } }, "📋 สรุปสิ้นเดือน — " + (group === "supply" ? "วัสดุสิ้นเปลือง" : "วัตถุดิบ")),
@@ -6736,10 +6825,10 @@ function MonthEndPage({ materials, lots, issueHist, recvHist, group }) {
                                 ? React.createElement("td", { title: "ยอดยกมาคำนวณแล้วติดลบ — แปลว่าประวัติรับ/จ่ายไม่ครบ หรือเคยปรับยอดคงเหลือด้วยมือโดยไม่มีใบเบิกรองรับ ต้องตรวจกับการ์ดก่อนใช้ตัวเลขนี้",
                                     style: { padding: "8px 10px", borderBottom: C.brd2, textAlign: "right", fontFamily: "monospace", color: C.warn, fontWeight: 700, whiteSpace: "nowrap" } },
                                     "⚠️ " + num(x.open[x.mainF], x.mainF))
-                                : td(num(x.open[x.mainF], x.mainF), 1),
-                            td(num(x.rc[x.mainF], x.mainF), 1, 0, (x.rc[x.mainF] || 0) > 0 ? "#1a7f37" : null),
-                            td(num(x.is[x.mainF], x.mainF), 1, 0, (x.is[x.mainF] || 0) > 0 ? C.err : null),
-                            td(num(x.close[x.mainF], x.mainF), 1, 1),
+                                : tdQty(x, x.open[x.mainF]),
+                            tdQty(x, x.rc[x.mainF], 0, (x.rc[x.mainF] || 0) > 0 ? "#1a7f37" : null),
+                            tdQty(x, x.is[x.mainF], 0, (x.is[x.mainF] || 0) > 0 ? C.err : null),
+                            tdQty(x, x.close[x.mainF], 1),
                             !isSup && td(num(x.close.kgs, "kgs"), 1, 1)),
                         // แถวรายละเอียด — วันที่ เลขที่เอกสาร Lot รับ/จ่าย และยอดคงเหลือสะสม (รูปแบบเดียวกับรายงานบัญชี)
                         openIds[x.m.id] && React.createElement("tr", { key: "d" + i },
@@ -6798,7 +6887,9 @@ function SupplyCostPage({ issueHist, recvHist, materials, priceMap, lotPriceMap 
     const lotPriceAt = (m, lotNo) => {
         const v = (lotPriceMap || {})[m.id + "||" + lotNo];
         const p = (v && typeof v === "object") ? Number(v.p) : Number(v);
-        return p > 0 ? p : 0;
+        if (!(p > 0)) return 0;
+        // ลอตเก่าบางตัวเก็บเป็นราคาต่อถัง — ซ่อมตอนอ่านโดยเทียบกับราคาที่ตั้งไว้ที่ Material
+        return supplyUnitPrice(m, p, (priceMap || {})[m.id]);
     };
     const supRows = (issueHist || []).filter(r => !!matOf(r));
     const recRows = (recvHist || []).filter(r => !!matOf(r));
@@ -6849,10 +6940,8 @@ function SupplyCostPage({ issueHist, recvHist, materials, priceMap, lotPriceMap 
     // ต่อท้ายจำนวนลิตรด้วยจำนวนภาชนะ เช่น "80 ลิตร (4 PAIL)" — ทานกับใบส่งของ/ใบเบิกได้ง่ายกว่า
     const packTxt = (m, qty) => {
         if (!isLiquidSupply(m)) return "";
-        const pk = packSizeOf(m);
-        if (!(pk > 0) || !(qty > 0)) return "";
-        const n = qty / pk;
-        return " (" + fmtQty(n, n % 1 === 0 ? 0 : 2) + " " + packWordOf(m) + ")";
+        const n = packCount(qty, packSizeOf(m));
+        return n > 0 ? ("= " + fmtQty(n, 0) + " " + packWordOf(m)) : "";
     };
     const dl = () => exportXLSX([{ name: "รับเข้า-เบิกใช้ วัสดุสิ้นเปลือง",
             headers: ["รายการ", "ประเภท", "หน่วย", "รับเข้า (จำนวน)", "มูลค่าที่ซื้อเข้า (บาท)",
@@ -6931,14 +7020,19 @@ function SupplyCostPage({ issueHist, recvHist, materials, priceMap, lotPriceMap 
                     React.createElement("tbody", null, cur.rows.map((x, i) => {
                         const uw = unitWordOf(x.m.type, x.m.unit, x.m.size);
                         const num = (v, col, bold) => React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2, textAlign: "right", fontFamily: "monospace", whiteSpace: "nowrap", fontWeight: bold ? 800 : 400, color: col || C.tx } }, v);
+                        // ช่องจำนวน: บรรทัดบน = ลิตร (ห้ามปัดเศษ 34.6 ต้องเป็น 34.6 ไม่ใช่ 35)
+                        //            บรรทัดล่าง = จำนวนภาชนะ ไว้ทานกับใบส่งของ/ของจริงหน้างาน
+                        const qtyCell = (v, col) => React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2, textAlign: "right", fontFamily: "monospace", whiteSpace: "nowrap", color: v > 0 ? (col || C.tx) : C.tx3 } },
+                            v > 0 ? fmtQty(v, v % 1 === 0 ? 0 : 2) + " " + uw : "—",
+                            (v > 0 && packTxt(x.m, v)) ? React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: "#1a7f37", marginTop: 2 } }, packTxt(x.m, v)) : null);
                         return React.createElement("tr", { key: i },
                             React.createElement("td", { style: { padding: "10px 13px", borderBottom: C.brd2 } },
                                 React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: "#fff", background: TYPE_COL[x.m.type] || C.tx2, borderRadius: 4, padding: "1px 7px", marginRight: 7 } }, TYPE_LBL[x.m.type] || x.m.type),
                                 React.createElement("span", { style: { fontWeight: 600 } }, x.m.name),
                                 React.createElement("span", { style: { color: C.tx2, marginLeft: 6, fontSize: 12 } }, sizeTxt(x.m.size))),
-                            num(x.inQty > 0 ? fmtQty(x.inQty, 0) + " " + uw + packTxt(x.m, x.inQty) : "—", x.inQty > 0 ? C.tx : C.tx3),
+                            qtyCell(x.inQty),
                             num(x.inBaht > 0 ? fmtQty(x.inBaht, 2) : "—", x.inBaht > 0 ? "#0969da" : C.tx3, true),
-                            num(x.qty > 0 ? fmtQty(x.qty, 0) + " " + uw + packTxt(x.m, x.qty) : "—", x.qty > 0 ? C.tx : C.tx3),
+                            qtyCell(x.qty),
                             num(x.qty > 0 ? (x.price > 0 ? fmtQty(x.baht, 2) : "ยังไม่ตั้งราคา") : "—",
                                 x.qty <= 0 ? C.tx3 : x.price > 0 ? "#1a7f37" : C.warn, true),
                             num(x.price > 0 ? fmtQty(x.price, 2) : "—", C.tx2),
@@ -6999,10 +7093,8 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
     const packTxtOf = (r, qty) => {
         const m = findMatOfHist(materials, (r && r.name) || "", (r && r.maker) || "", _uwCache);
         if (!m || !isLiquidSupply(m)) return "";
-        const pk = packSizeOf(m);
-        if (!(pk > 0) || !(qty > 0)) return "";
-        const n = qty / pk;
-        return fmtQty(n, n % 1 === 0 ? 0 : 2) + " " + packWordOf(m);
+        const n = packCount(qty, packSizeOf(m));
+        return n > 0 ? (fmtQty(n, 0) + " " + packWordOf(m)) : "";
     };
     // แสดงเฉพาะคอลัมน์หน่วยที่มีข้อมูลจริงในรายการที่กำลังแสดง (ไม่มี COIL/M ก็ไม่ต้องโชว์ให้รก)
     const unitColsOf = rows => {
