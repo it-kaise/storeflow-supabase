@@ -323,6 +323,23 @@ function packCount(qty, pk) {
     if (!(p > 0) || !(q > 0)) return 0;
     return Math.max(1, Math.ceil((q / p) - 1e-6));
 }
+// ── ลอตที่คุมเป็น coil (ทองแดงม้วน): 1 ลอต = 1 coil เสมอ ──────────────────────────
+// ตรวจความสอดคล้องของยอดคงเหลือ แล้วคืนข้อความปัญหา (ว่าง = ปกติ)
+//   • coil คงเหลือต้องเป็น 0 หรือ เต็ม coil เท่านั้น (ห้ามเป็นเศษ เช่น 0.84)
+//   • ถ้าเต็ม coil กิโลคงเหลือต้องเท่าน้ำหนักรับ (น้ำหนักบนป้าย tag)
+//   • ถ้า coil เป็น 0 กิโลคงเหลือต้องเป็น 0
+// เหตุผล: 05/11/2026 Lot 613346144 รับ 1 coil/113.8 kg (ตรงป้าย tag) แต่ถูกแก้ด้วยมือเหลือ 0.84 coil/96 kg
+// โดยไม่มีเอกสารรองรับ ทำให้ ST จ่ายใบเบิก 2 coil ไม่ได้ (เลือกได้ 1.84) — แก้ด้วยหน้า "แก้ Lot" ตรง ๆ
+function coilLotProblem(l) {
+    const coil = Number(l && l.coil) || 0;
+    if (!(coil > 0) || (Number(l && l.pcs) || 0) > 0) return "";      // ไม่ใช่ลอตแบบม้วน
+    const rc = Number(l.rem_coil == null ? coil : l.rem_coil), rk = Number(l.rem_kgs == null ? 0 : l.rem_kgs), kg = Number(l.kgs) || 0;
+    if (rc < -0.001 || rc > coil + 0.001) return "coil คงเหลือ (" + rc + ") ต้องอยู่ระหว่าง 0 ถึง " + coil;
+    if (Math.abs(rc - Math.round(rc)) > 0.001) return "coil คงเหลือเป็นเศษ (" + rc + ") — ม้วนต้องเหลือ 0 หรือเต็ม " + coil + " เท่านั้น";
+    if (Math.round(rc) >= coil && kg > 0 && Math.abs(rk - kg) > 0.05) return "coil ยังเต็มแต่กิโลคงเหลือ " + rk + " ไม่เท่าน้ำหนักรับ " + kg;
+    if (Math.round(rc) === 0 && rk > 0.05) return "coil เป็น 0 แต่กิโลยังเหลือ " + rk;
+    return "";
+}
 // ── ราคาลอตของวัสดุสิ้นเปลืองเหลว : ซ่อมตัวเองตอนอ่าน ──────────────
 // มีลอตเก่าหลายตัวเก็บเป็น "ราคาต่อถัง" แทน "ราคาต่อลิตร" เพราะสโตร์กรอกราคาต่อถัง
 // แต่ไม่ได้เปลี่ยนหน่วยในช่องราคา ทำให้ต้นทุนเพี้ยนเป็นล้าน
@@ -1054,6 +1071,29 @@ const INIT_USERS = [
     { id: "u4", name: "พนักงานสโตร์", pin: "3333", role: "store", active: true },
     { id: "u5", name: "ฝ่ายผลิต", pin: "4444", role: "production", active: true },
 ];
+// เปลี่ยนเลข Lot ในประวัติเบิก "เฉพาะ material เดียว" (ใช้ร่วมกันทั้งหน้าคลังและหน้าประวัติการรับ)
+// - ต้องรู้ชื่อ material เสมอ ไม่งั้นไม่แก้ (กันแก้ข้าม material ที่ใช้เลข Lot ซ้ำ เช่น PART ASSY ใช้วันที่เป็นเลข Lot)
+// - ถ้า material เดียวกันยังมี Lot อื่นใช้เลขเดิมอยู่ = แยกไม่ได้ว่าประวัติแถวไหนเป็นของ Lot ไหน -> ไม่แก้ แล้วแจ้งเตือน
+async function renameLotInIssueHist(matId, matName, oldLotNo, newLotNo) {
+    if (!oldLotNo || !newLotNo || oldLotNo === newLotNo) return { ok: false };
+    if (!matName) return { ok: false, reason: "ไม่ได้เปลี่ยนเลข Lot ในประวัติเบิก (ไม่รู้ว่าเป็น material ไหน) — แจ้งผู้ดูแล" };
+    try {
+        let dup = 0;
+        if (matId) {
+            const { data } = await sb.from('sf_lots').select('id').eq('material_id', matId).eq('lot_no', oldLotNo);
+            dup = (data || []).length;
+        } else {
+            const { data } = await sb.from('sf_recvhist').select('id').eq('material_name', matName).eq('lot_no', oldLotNo);
+            dup = (data || []).length;
+        }
+        if (dup > 0) return { ok: false, reason: "ไม่ได้เปลี่ยนเลข Lot \"" + oldLotNo + "\" ในประวัติเบิก เพราะ material นี้ยังมี Lot อื่นใช้เลขเดียวกันอยู่ (แยกไม่ได้ว่าใบเบิกไหนเป็นของ Lot ไหน) — แจ้งผู้ดูแลให้ตรวจ" };
+        const { error } = await sb.from('sf_issuehist').update({ lot_no: newLotNo }).eq('lot_no', oldLotNo).eq('material_name', matName);
+        if (error) return { ok: false, reason: "เปลี่ยนเลข Lot ในประวัติเบิกไม่สำเร็จ: " + error.message };
+        return { ok: true };
+    } catch (e) {
+        return { ok: false, reason: "เปลี่ยนเลข Lot ในประวัติเบิกไม่สำเร็จ: " + (e && e.message || e) };
+    }
+}
 const INIT_MASTER = {
     // ประเภทวัตถุดิบ — เพิ่มได้
     matTypes: [
@@ -1222,6 +1262,8 @@ function LotDetailModal({ open, onClose, mat, lots, setLots, master, onNG, logAu
     const uCols = (() => {
         const r = unitsForMat(mat);
         const u = { kgs: !!r.kgs, pcs: !!r.pcs, coil: !!r.coil, m: !!r.m };
+        // วัสดุสิ้นเปลืองมีหน่วยเดียว: น้ำมัน/น้ำยา = ลิตร · แก๊ส/กล่อง = ถัง/ใบ ไม่ต้องโชว์ KGS/PCS/COIL/M ที่ไม่เกี่ยว
+        if (isSupplyType(mat.type)) { const f = supplyField(mat.type); u.kgs = f === "kgs"; u.pcs = f === "pcs"; u.coil = false; u.m = false; }
         ml.forEach(l => {
             if ((l.kgs || 0) > 0 || (l.rem_kgs || 0) > 0) u.kgs = true;
             if ((l.pcs || 0) > 0 || (l.rem_pcs || 0) > 0) u.pcs = true;
@@ -1229,8 +1271,14 @@ function LotDetailModal({ open, onClose, mat, lots, setLots, master, onNG, logAu
             if ((l.m || 0) > 0 || (l.rem_m || 0) > 0) u.m = true;
         });
         if (!u.kgs && !u.pcs && !u.coil && !u.m) u.kgs = true;
-        return [["kgs", "KGS", 2], ["pcs", "PCS", 0], ["coil", "COIL", 0], ["m", "M", 2]].filter(x => u[x[0]]);
+        // วัสดุสิ้นเปลือง: ช่อง kgs ของน้ำมัน/น้ำยาเก็บ "ลิตร" และช่อง pcs ของแก๊ส/กล่องเก็บ "ถัง/ใบ" — ต้องเรียกตามหน่วยจริง ไม่ใช่ KGS/PCS
+        const _sup = isSupplyType(mat.type), _sw = _sup ? unitWordOf(mat.type, mat.unit, mat.size) : "";
+        const _kl = (_sup && supplyField(mat.type) === "kgs") ? _sw : "KGS";
+        const _pl = (_sup && supplyField(mat.type) === "pcs") ? _sw : "PCS";
+        return [["kgs", _kl, 2], ["pcs", _pl, 0], ["coil", "COIL", 0], ["m", "M", 2]].filter(x => u[x[0]]);
     })();
+    const kgsLbl = (uCols.find(c => c[0] === "kgs") || [0, "KGS"])[1];
+    const pcsLbl = (uCols.find(c => c[0] === "pcs") || [0, "PCS"])[1];
     const mc = master.matTypes.find(t => t.code === mat.type) || {};
     const totKgs = ml.reduce((s, l) => s + (l.rem_kgs || 0), 0);
     const totPcs = ml.reduce((s, l) => s + (l.rem_pcs || 0), 0);
@@ -1250,10 +1298,10 @@ function LotDetailModal({ open, onClose, mat, lots, setLots, master, onNG, logAu
                         (mat.temper && mat.temper !== "-") ? React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: "#8250df", background: "rgba(130,80,223,.1)", border: "1px solid rgba(130,80,223,.3)", borderRadius: 5, padding: "1px 8px" } }, "Temper: " + mat.temper) : null)),
                 React.createElement("div", { style: { display: "flex", gap: 12, fontSize: 13, marginRight: 8 } },
                     totKgs > 0 && React.createElement("div", { style: { textAlign: "center" } },
-                        React.createElement("div", { style: { fontSize: 11, color: "#57606a" } }, "\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D KGS"),
+                        React.createElement("div", { style: { fontSize: 11, color: "#57606a" } }, "\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D " + kgsLbl),
                         React.createElement("div", { style: { fontFamily: "monospace", fontWeight: 800, color: "#0969da", fontSize: 18 } }, fmtQty(totKgs, 2))),
                     totPcs > 0 && React.createElement("div", { style: { textAlign: "center" } },
-                        React.createElement("div", { style: { fontSize: 11, color: "#57606a" } }, "\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D PCS"),
+                        React.createElement("div", { style: { fontSize: 11, color: "#57606a" } }, "\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D " + pcsLbl),
                         React.createElement("div", { style: { fontFamily: "monospace", fontWeight: 800, color: "#0969da", fontSize: 18 } }, fmtQty(totPcs))),
                     totM > 0 && React.createElement("div", { style: { textAlign: "center" } },
                         React.createElement("div", { style: { fontSize: 11, color: "#57606a" } }, "คงเหลือ M"),
@@ -1418,7 +1466,10 @@ function LotDetailModal({ open, onClose, mat, lots, setLots, master, onNG, logAu
                                             const issued = Math.max(0, got0 - rem0);          // เบิกไปแล้วเท่าไหร่
                                             const got1 = merged[u];
                                             merged["rem_" + u] = (got1 != null && got1 !== "") ? Math.max(0, Number(got1) - issued) : null;
-                                        }); setLots(ls => ({ ...ls, [mat.id]: ls[mat.id].map((x, xi) => xi === i ? merged : x) })); if (lot._dbId) await updateLot(lot._dbId, { lot_no: merged.lotNo, lot_date: merged.date, po: merged.po, kgs: merged.kgs, pcs: merged.pcs, coil: merged.coil, rem_kgs: merged.rem_kgs, rem_pcs: merged.rem_pcs, rem_coil: merged.rem_coil, m: merged.m != null ? merged.m : null, rem_m: merged.rem_m != null ? merged.rem_m : null }); if (onSaveLotPrice) await onSaveLotPrice(mat.id, merged.lotNo, editForm.price, lot.lotNo, editForm.priceUnit); if (onSyncRecv) await onSyncRecv(mat, lot, merged); if (logAudit) logAudit("สต๊อก", "แก้ Lot", `${mat.name} ${(mat.size || "").replace(/^size:/i, "")} · lot ${lot.lotNo}${merged.lotNo !== lot.lotNo ? " → " + merged.lotNo : ""}`); setEditIdx(null); }, style: { background: "#1a7f37", border: "none", borderRadius: 5, color: "#fff", cursor: "pointer", padding: "5px 12px", fontSize: 13, fontWeight: 700 } }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01"),
+                                        });
+                                        // ลอตม้วน (1 ลอต = 1 coil) ห้ามบันทึกยอดที่เป็นเศษหรือกิโลไม่สอดคล้องกับ coil
+                                        { const _cp = coilLotProblem(merged); if (_cp) { window.alert("⛔ บันทึกไม่ได้ — ยอดของ Lot นี้ไม่สอดคล้องกัน\n\n" + _cp + "\n\nLot ทองแดงม้วนต้องเหลือ \"0\" หรือ \"เต็ม coil (น้ำหนักตรงป้าย tag)\" เท่านั้น\nถ้าน้ำหนักบนป้ายผิด ให้แก้ที่ช่อง \"น้ำหนักที่รับ\" ไม่ใช่ช่องคงเหลือ"); return; } }
+                                        setLots(ls => ({ ...ls, [mat.id]: ls[mat.id].map((x, xi) => xi === i ? merged : x) })); if (lot._dbId) await updateLot(lot._dbId, { lot_no: merged.lotNo, lot_date: merged.date, po: merged.po, kgs: merged.kgs, pcs: merged.pcs, coil: merged.coil, rem_kgs: merged.rem_kgs, rem_pcs: merged.rem_pcs, rem_coil: merged.rem_coil, m: merged.m != null ? merged.m : null, rem_m: merged.rem_m != null ? merged.rem_m : null }); if (onSaveLotPrice) await onSaveLotPrice(mat.id, merged.lotNo, editForm.price, lot.lotNo, editForm.priceUnit); if (onSyncRecv) await onSyncRecv(mat, lot, merged); if (logAudit) logAudit("สต๊อก", "แก้ Lot", `${mat.name} ${(mat.size || "").replace(/^size:/i, "")} · lot ${lot.lotNo}${merged.lotNo !== lot.lotNo ? " → " + merged.lotNo : ""}`); setEditIdx(null); }, style: { background: "#1a7f37", border: "none", borderRadius: 5, color: "#fff", cursor: "pointer", padding: "5px 12px", fontSize: 13, fontWeight: 700 } }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01"),
                                         React.createElement("button", { onClick: () => setEditIdx(null), style: { background: "transparent", border: "1px solid #d0d7de", borderRadius: 5, color: "#57606a", cursor: "pointer", padding: "5px 10px", fontSize: 13 } }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01")))));
                     })))),
             React.createElement("div", { style: { padding: "10px 16px", borderTop: "1px solid #d0d7de", display: "flex", justifyContent: "flex-end", flexShrink: 0 } },
@@ -1512,7 +1563,7 @@ function StoreFlow() {
         partnos: canEditSettings, masterdata: canEditSettings, auditlog: canEditSettings,
         emailsettings: canEditSettings, users: canManageUsers, healthcheck: canEditSettings,
         supplyissue: canEditStock, supplyrecv: canEditStock,
-        history: canViewReports, monthend: canViewReports,
+        monthend: canViewReports,
         supplyhist: canViewReports, supplymonthend: canViewReports, supplycost: canViewReports };
     const [master, setMaster] = useState(INIT_MASTER);
     const [materials, setMaterials] = useState([]);
@@ -1599,7 +1650,10 @@ function StoreFlow() {
     async function syncRecvFromLot(mat, oldLot, merged) {
         const nm = `${mat.name} ${mat.size}`;
         const mk = oldLot.maker || mat.maker;
-        setRecvHist(h => h.map(r => (r.name === nm && r.lotNo === oldLot.lotNo && (!mk || !r.maker || r.maker === mk))
+        // ⚠️ ล็อกด้วย "วันที่รับเดิม" ด้วย — material เดียวกันมีหลาย Lot ใช้เลขเดียวกันได้ (PART ASSY ใช้วันที่เป็นเลข Lot)
+        // เหตุการณ์จริง 2026-11: แก้ Lot ที่รับ 2/11 (คีย์เลขผิดเป็น 2/10/26) -> ใบรับ 2/10 จำนวน 2,500 ถูกเขียนทับเป็น 2/11 1,600 ไปด้วย
+        const od = oldLot.date || null;
+        setRecvHist(h => h.map(r => (r.name === nm && r.lotNo === oldLot.lotNo && (!mk || !r.maker || r.maker === mk) && (!od || r.date === od))
             ? { ...r, date: merged.date, lotNo: merged.lotNo, po: merged.po, kgs: merged.kgs, pcs: merged.pcs, coil: merged.coil, m: merged.m != null ? merged.m : null }
             : r));
         const payload = {
@@ -1609,29 +1663,33 @@ function StoreFlow() {
         if (RECVHIST_HAS_M) payload.m = merged.m != null ? merged.m : null;   // หน่วยเมตรต้องซิงค์ด้วย (เดิมตกไป)
         let q = sb.from('sf_recvhist').update(payload).eq('material_name', nm).eq('lot_no', oldLot.lotNo);
         if (mk) q = q.eq('maker', mk);
-        const { error } = await q;
-        if (error) console.warn('sync recvhist failed:', error);
-        // เปลี่ยนเลข Lot → ต้องไล่แก้ให้ทุกที่ที่อ้างถึงเลขเดิม ไม่งั้นประวัติเบิก/เคลม NG จะชี้ไป Lot ที่ไม่มีอยู่แล้ว
-        // (เดิมทำเฉพาะตอนแก้จากหน้าประวัติการรับ แก้จากหน้าคลังแล้วข้อมูลหลุดจากกัน)
+        if (od) q = q.eq('receive_date', od);
+        const { error, data: upRows } = await q.select('id');
+        if (error) { console.warn('sync recvhist failed:', error); toast("⚠️ แก้ Lot แล้ว แต่ซิงค์ประวัติรับไม่สำเร็จ — แจ้งผู้ดูแล", "err"); }
+        else if (!upRows || upRows.length === 0) console.warn('sync recvhist: ไม่พบแถวประวัติรับที่ตรงกับ Lot นี้ (ไม่ได้แก้อะไร)', nm, oldLot.lotNo, od);
+        // เปลี่ยนเลข Lot → แก้ประวัติเบิก/เคลม NG ให้ตาม แต่ "เฉพาะ material นี้" เท่านั้น
         if (merged.lotNo && merged.lotNo !== oldLot.lotNo) {
-            await syncLotRename(oldLot.lotNo, merged.lotNo);
+            await syncLotRename(oldLot.lotNo, merged.lotNo, { matId: mat.id, matName: nm });
         }
     }
-    // ── เปลี่ยนเลขที่ Lot: ไล่ซิงค์ให้ ประวัติเบิก + เคลม NG ตรงกันทั้งหมด ──
-    async function syncLotRename(oldLotNo, newLotNo) {
+    // ── เปลี่ยนเลขที่ Lot: ซิงค์ ประวัติเบิก + เคลม NG ของ material เดียวกันเท่านั้น ──
+    // เดิมแก้ทุกแถวที่ lot_no ตรงกันทั้งฐานข้อมูล -> PART ASSY ที่ใช้วันที่เป็นเลข Lot (เช่น 2/10/26)
+    // ของ material อื่นโดนเปลี่ยนไปด้วย (เจอ 20 แถว 7 รายการ 2026-11-09)
+    async function syncLotRename(oldLotNo, newLotNo, scope) {
         if (!oldLotNo || !newLotNo || oldLotNo === newLotNo) return;
-        setIssueHist(h => h.map(x => x.lotNo === oldLotNo ? { ...x, lotNo: newLotNo } : x));
-        const { error } = await sb.from('sf_issuehist').update({ lot_no: newLotNo }).eq('lot_no', oldLotNo);
-        if (error) console.warn('sync issuehist lot rename failed:', error);
-        if (ngReturns && ngReturns.length) {
+        const r = await renameLotInIssueHist(scope && scope.matId, scope && scope.matName, oldLotNo, newLotNo);
+        if (r.ok) setIssueHist(h => h.map(x => (x.lotNo === oldLotNo && x.name === scope.matName) ? { ...x, lotNo: newLotNo } : x));
+        else if (r.reason) toast("⚠️ " + r.reason, "err");
+        if (r.ok && ngReturns && ngReturns.length) {
             let touched = false;
-            const up = ngReturns.map(r => {
-                let r2 = r;
-                if (r.lotNo === oldLotNo) { r2 = { ...r2, lotNo: newLotNo }; touched = true; }
-                if (r.replacements && r.replacements.some(x => x.lotNo === oldLotNo)) {
+            const up = ngReturns.map(r0 => {
+                if (r0.matId !== scope.matId) return r0;
+                let r2 = r0;
+                if (r0.lotNo === oldLotNo) { r2 = { ...r2, lotNo: newLotNo }; touched = true; }
+                if (r0.replacements && r0.replacements.some(x => x.lotNo === oldLotNo)) {
                     r2 = { ...r2, replacements: r2.replacements.map(x => x.lotNo === oldLotNo ? { ...x, lotNo: newLotNo } : x) }; touched = true;
                 }
-                if (r.replaceLotNo === oldLotNo) { r2 = { ...r2, replaceLotNo: newLotNo }; touched = true; }
+                if (r0.replaceLotNo === oldLotNo) { r2 = { ...r2, replaceLotNo: newLotNo }; touched = true; }
                 return r2;
             });
             if (touched) await saveNgReturns(up);
@@ -2981,6 +3039,8 @@ function StoreFlow() {
         } catch (e) { console.warn('supply issue precheck failed:', e); }
         try {
         const today = new Date().toISOString().split("T")[0];
+        // วันที่เบิกที่ผู้ขอเลือกในใบ (ไม่เกินวันนี้) ใช้เป็นวันที่ในประวัติเบิก/ต้นทุน — ของที่เบิกไปแล้วแต่สโตร์มาบันทึกทีหลังจะได้ลงเดือนที่ถูก
+        const issueDay = (r.date && String(r.date).slice(0, 10) <= today) ? String(r.date).slice(0, 10) : today;
         const by = (currentUser && currentUser.name) || "พนักงานสโตร์";
         const short = [];
         (r.items || []).forEach(it => {
@@ -3007,7 +3067,7 @@ function StoreFlow() {
                 l[fld] = Math.round((av - take) * 100) / 100;
                 rem -= take;
                 if (l._dbId) await updateLot(l._dbId, { [fld]: l[fld] });
-                const rec = { issue_date: today, req_id: r.id, material_name: it.name, maker: it.maker || "",
+                const rec = { issue_date: issueDay, req_id: r.id, material_name: it.name, maker: it.maker || "",
                     lot_no: l.lotNo || "-", pcs: key === "pcs" ? take : null, kgs: key === "kgs" ? take : null,
                     coil: null, unit: key === "pcs" ? "PCS" : "KGS", forecast: it.forecast || r.forecast || null,
                     dept: r.dept, requester: r.requester, approver: r.approvedBy || null, issued_by: by };
@@ -3096,7 +3156,8 @@ function StoreFlow() {
         // เรียงให้จบฝั่งวัตถุดิบก่อน (คลัง → รายงาน) แล้วค่อยขึ้นบล็อกวัสดุสิ้นเปลือง
         // จะได้ไม่ต้องกระโดดสลับหัวข้อไปมา
         { lbl: "รายงานวัตถุดิบ", items: [
-                { id: "history", icon: "📜", lbl: "ประวัติการเบิกวัตถุดิบ", can: canViewReports },
+                // ฝ่ายผลิตขอให้เปิดดูได้ (05/11/2026) — ดูอย่างเดียว ปุ่มแก้/ลบ/ใส่ราคาผูกกับสิทธิ์สโตร์อยู่แล้ว
+                { id: "history", icon: "📜", lbl: "ประวัติการเบิกวัตถุดิบ" },
                 { id: "monthend", icon: "📋", lbl: "สรุปสิ้นเดือน", can: canViewReports },
                 { id: "deadstock", icon: "🗃️", lbl: "วัตถุดิบไม่เคลื่อนไหว" },
             ] },
@@ -3245,7 +3306,7 @@ function StoreFlow() {
                 page === "auditlog" && canEditSettings && React.createElement(AuditLogPage, { auditLog: auditLog }),
                 page === "healthcheck" && canEditSettings && React.createElement(HealthCheckPage, { materials: materials, lots: lots, issueHist: issueHist, requests: requests }),
                 page === "ngreturn" && canEditStock && React.createElement(NgReturnPage, { ngReturns: ngReturns, onSave: saveNgReturns, currentUser: currentUser, toast: toast, onReceive: receiveReplacementStock, onEditRep: editReplacementStock, onRemoveRep: removeReplacementStock }),
-                page === "history" && canViewReports && React.createElement(HistPage, { issueHist: issueHist, setIssueHist: canEditStock ? setIssueHist : null, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null, group: "raw" }),
+                page === "history" && React.createElement(HistPage, { issueHist: issueHist, setIssueHist: canEditStock ? setIssueHist : null, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null, group: "raw" }),
                 (page === "monthend" || page === "supplymonthend") && canViewReports && React.createElement(MonthEndPage, { key: page, materials: materials, lots: lots, issueHist: issueHist, recvHist: recvHist, group: page === "supplymonthend" ? "supply" : "raw" }),
                 page === "supplycost" && canViewReports && React.createElement(SupplyCostPage, { issueHist: issueHist, recvHist: recvHist, materials: materials, priceMap: priceMap, lotPriceMap: lotPriceMap }),
                 page === "supplyhist" && canViewReports && React.createElement(HistPage, { issueHist: issueHist, priceMap: priceMap, setIssueHist: canEditStock ? setIssueHist : null, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null, group: "supply" }),
@@ -5103,6 +5164,10 @@ function ReqForm({ form, setForm, materials: _allMats, lots, master: _allMaster,
             modeBar,
             errBox,
             React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10, marginBottom: 14 } },
+                // วันที่เบิก — ฟอร์มวัตถุดิบมีอยู่แล้ว ฟอร์มวัสดุสิ้นเปลืองแบบสั้นเคยไม่มี ทำให้เลือกวันย้อนหลังไม่ได้
+                React.createElement("div", null, lb("วันที่เบิก *"),
+                    React.createElement("input", { type: "date", value: form.date || "", max: new Date().toISOString().slice(0, 10),
+                        onChange: e => setForm(f => ({ ...f, date: e.target.value })), style: inpS })),
                 React.createElement("div", null, lb("ชื่อผู้เบิก *"),
                     React.createElement("input", { value: form.requester || "", readOnly: lockedRequester,
                         onChange: e => { setForm(f => ({ ...f, requester: e.target.value })); clearErr && clearErr("requester"); },
@@ -5986,7 +6051,12 @@ function StkPage({ materials, lots, filter, setFilter, master, goto, onLotDetail
     const slide = dx => { if (tblBox.current) tblBox.current.scrollBy({ left: dx, behavior: "smooth" }); };
     return React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "calc(100vh - 80px)" } },
         React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" } },
-            [["all", "ทั้งหมด"], ...master.matTypes.map(t => [t.code, matTypeLabel(t)])].map(([f, l]) => (React.createElement("button", { key: f, onClick: () => setFilter(f), style: { padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", border: `1px solid ${filter === f ? C.acc : C.brd}`, background: filter === f ? C.acc : "transparent", color: filter === f ? "#fff" : C.tx2, fontFamily: "inherit" } }, l))),
+            // ลำดับปุ่มหมวดในคลังวัตถุดิบ (เรียงเฉพาะการแสดงผล ไม่แตะข้อมูล master) — หมวดที่ไม่อยู่ในรายการไปต่อท้ายตามเดิม
+            [["all", "ทั้งหมด"], ...(() => {
+                const _ord = ["CU", "AL", "SUS", "ST", "JFE430", "BRASS", "PART"];
+                const _rk = t => { const c = String((t && t.code) || "").toUpperCase(); const i = _ord.findIndex(o => c === o || (o === "PART" && c.indexOf("PART") === 0) || (o === "ST" && c === "FE")); return i < 0 ? 99 : i; };
+                return (master.matTypes || []).map((t, i) => ({ t, i, r: _rk(t) })).sort((a, b) => a.r - b.r || a.i - b.i).map(x => [x.t.code, matTypeLabel(x.t)]);
+            })()].map(([f, l]) => (React.createElement("button", { key: f, onClick: () => setFilter(f), style: { padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", border: `1px solid ${filter === f ? C.acc : C.brd}`, background: filter === f ? C.acc : "transparent", color: filter === f ? "#fff" : C.tx2, fontFamily: "inherit" } }, l))),
             React.createElement("div", { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" } },
                 React.createElement("div", { style: { position: "relative" } },
                     React.createElement("input", { value: search, onChange: e => setSearch(e.target.value), placeholder: "\uD83D\uDD0D \u0E04\u0E49\u0E19\u0E2B\u0E32 Size / \u0E0A\u0E37\u0E48\u0E2D / Maker...", style: { background: C.sur2, border: `1px solid ${C.brd}`, borderRadius: 7, padding: "5px 10px", color: C.tx, fontFamily: "inherit", fontSize: 11, width: 220, outline: "none" } }),
@@ -6646,13 +6716,32 @@ function MonthEndPage({ materials, lots, issueHist, recvHist, group }) {
     const mats = (materials || []).filter(m => group === "supply" ? isSupplyType(m.type) : !isSupplyType(m.type));
     const _k = v => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
     // จับคู่แถวประวัติกับ material ด้วย ชื่อ+Maker ก่อน (ชื่อซ้ำกันได้ ต่างกันที่ Temper/Maker) แล้วค่อย fallback เป็นชื่ออย่างเดียว
-    const byNameMk = {}, byName = {};
+    const byNameMk = {}, byName = {}, byNameMkAll = {};
     mats.forEach(m => {
         const n = _k(m.name + " " + m.size);
         byNameMk[n + "||" + _k(m.maker)] = m;
+        (byNameMkAll[n + "||" + _k(m.maker)] = byNameMkAll[n + "||" + _k(m.maker)] || []).push(m);
         if (!byName[n]) byName[n] = m;
     });
-    const matOf = r => byNameMk[_k(r && r.name) + "||" + _k(r && r.maker)] || byName[_k(r && r.name)];
+    // ชื่อ+Maker เดียวกันแต่คนละ Temper (เช่น Ø6.35x0.5xLWC FUGEN แบบ O กับ OL) ต้องแยกกัน
+    // ไม่งั้นประวัติรับ/จ่ายของ temper หนึ่งไปถูกนับเข้าอีก temper หนึ่ง ทำให้ยอดยกมาติดลบ
+    // ลำดับตัดสิน: temper ในแถวประวัติ -> เลข Lot ที่อยู่ใน material นั้น -> ตัวแรก (พฤติกรรมเดิม)
+    const _tp = v => { const t = _k(v); return t === "-" ? "" : t; };
+    const matOf = r => {
+        const key = _k(r && r.name) + "||" + _k(r && r.maker);
+        const c = byNameMkAll[key];
+        if (c && c.length > 1) {
+            const t = _tp(r && r.temper);
+            const byT = t ? c.filter(m => _tp(m.temper) === t) : [];
+            if (byT.length === 1) return byT[0];
+            const pool = byT.length > 1 ? byT : c;
+            const ln = String((r && r.lotNo) == null ? "" : r.lotNo);
+            const byL = ln ? pool.filter(m => (lots[m.id] || []).some(l => String(l.lotNo) === ln)) : [];
+            if (byL.length >= 1) return byL[0];
+            return pool[0];
+        }
+        return byNameMk[key] || byName[_k(r && r.name)];
+    };
     const months = [...new Set([].concat((recvHist || []).map(r => String(r.date || "").slice(0, 7)),
         (issueHist || []).map(r => String(r.date || "").slice(0, 7))).filter(x => x.length === 7))].sort().reverse();
     const [mon, setMon] = useState(months[0] || "");
@@ -7402,9 +7491,15 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
         else await sb.from("sf_recvhist").update(recvPatch).eq('lot_no', oldLotNo).eq('receive_date', oldR.date).eq('material_name', oldR.name);
         // 3) ถ้าเลข lot เปลี่ยน → ซิงค์ไปประวัติเคลม NG + ประวัติเบิก
         if (newLotNo !== oldLotNo) {
-            if (saveNgReturns && ngReturns) {
+            // เฉพาะ material ของใบรับนี้เท่านั้น (เดิมแก้ทุก material ที่ใช้เลข Lot เดียวกัน)
+            const _fromId = editRecvForm._fromMat || matchedMatId || null;
+            const _rn = await renameLotInIssueHist(_fromId, oldR.name, oldLotNo, newLotNo);
+            if (_rn.ok) setIssueHist(h => h.map(x => (x.lotNo === oldLotNo && x.name === oldR.name) ? { ...x, lotNo: newLotNo } : x));
+            else if (_rn.reason && toast) toast("⚠️ " + _rn.reason, "err");
+            if (_rn.ok && saveNgReturns && ngReturns) {
                 let touched = false;
                 const upNg = ngReturns.map(r => {
+                    if (_fromId && r.matId && r.matId !== _fromId) return r;
                     let r2 = r;
                     if (r.lotNo === oldLotNo) { r2 = { ...r2, lotNo: newLotNo }; touched = true; }
                     if (r.replacements && r.replacements.some(x => x.lotNo === oldLotNo)) { r2 = { ...r2, replacements: r2.replacements.map(x => x.lotNo === oldLotNo ? { ...x, lotNo: newLotNo } : x) }; touched = true; }
@@ -7413,7 +7508,6 @@ function HistPage({ issueHist, setIssueHist, recvHist, setRecvHist, lots, setLot
                 });
                 if (touched) await saveNgReturns(upNg);
             }
-            await sb.from('sf_issuehist').update({ lot_no: newLotNo }).eq('lot_no', oldLotNo);
         }
         setEditRecvIdx(null);
         if (logAudit) logAudit("สต๊อก", "แก้ประวัติรับ/Lot", `${oldR.name || ""} · lot ${oldLotNo}${newLotNo !== oldLotNo ? " → " + newLotNo : ""} · จำนวน ${[newKgs ? newKgs + "K" : null, newCoil ? newCoil + "C" : null, newPcs ? newPcs + "PCS" : null].filter(Boolean).join("/") || "-"}`);
@@ -8840,6 +8934,7 @@ function HealthCheckPage({ materials, lots, issueHist, requests }) {
 
             // ── 2) ลอตที่ยอดคงเหลือติดลบ (เป็นไปไม่ได้ทางกายภาพ) ──
             const neg = [];
+            const coilBad = [];
             // ── 3) ลอตที่น้ำหนักคงเหลือไม่สอดคล้องกับจำนวนคงเหลือ (เพี้ยนเกิน 20%) ──
             const badRatio = [];
             // ── 4) ลอตที่ "รับเข้า − จ่ายตามประวัติ" ไม่เท่ากับยอดคงเหลือ ──
@@ -8864,6 +8959,9 @@ function HealthCheckPage({ materials, lots, issueHist, requests }) {
                     const rp = parseFloat(l.rem_pcs) || 0, rk = parseFloat(l.rem_kgs) || 0, rc = parseFloat(l.rem_coil) || 0;
                     if (rp < -0.001 || rk < -0.001 || rc < -0.001 || (parseFloat(l.rem_m) || 0) < -0.001)
                         neg.push({ mat: full, lot: l.lotNo, txt: rp + " PCS / " + num(rk) + " KGS / " + rc + " COIL" });
+                    // ลอตม้วน: coil เป็นเศษ / กิโลไม่ตรงน้ำหนักป้าย (เคส 613346144 เหลือ 0.84 coil)
+                    const _cp = coilLotProblem({ coil: l.coil, pcs: l.pcs, kgs: l.kgs, rem_coil: l.rem_coil, rem_kgs: l.rem_kgs });
+                    if (_cp) coilBad.push({ mat: full, lot: l.lotNo, txt: _cp });
 
                     // สัดส่วนของลอตเอง (กก./ชิ้น) เทียบกับสัดส่วนของยอดคงเหลือ
                     const base = (parseFloat(l.kgs) || 0) / (parseFloat(l.pcs) || 0);
@@ -8937,7 +9035,7 @@ function HealthCheckPage({ materials, lots, issueHist, requests }) {
                 } catch (e) { seq.push({ t: p.t, ok: false, msg: "ตรวจไม่สำเร็จ: " + (e.message || e) }); }
             }
 
-            setRes({ at: new Date().toLocaleString("th-TH"), noHist, neg, badRatio, mismatch, seq, oldMismatch, oldRatio, win: WIN_DAYS });
+            setRes({ at: new Date().toLocaleString("th-TH"), noHist, neg, coilBad, badRatio, mismatch, seq, oldMismatch, oldRatio, win: WIN_DAYS });
         } finally { setRunning(false); }
     };
 
@@ -8975,6 +9073,11 @@ function HealthCheckPage({ materials, lots, issueHist, requests }) {
             React.createElement(Card, { icon: "🔴", title: "ลอตที่ยอดคงเหลือติดลบ", n: res.neg.length, good: "ไม่พบ" },
                 rows(res.neg, x => [x.lot, x.mat, x.txt])),
 
+            React.createElement(Card, { icon: "🔴", title: "ลอตทองแดงม้วนที่ coil เป็นเศษ / กิโลไม่ตรงน้ำหนักป้าย", n: (res.coilBad || []).length, good: "ปกติทุกลอต" },
+                React.createElement("div", { style: { fontSize: 11.5, color: C.err, marginBottom: 8 } },
+                    "ม้วนต้องเหลือ 0 หรือเต็ม coil เท่านั้น — ถ้าเป็นเศษ ST จะเลือก Lot จ่ายให้ครบจำนวน coil ไม่ได้"),
+                rows(res.coilBad || [], x => [x.lot, x.mat, x.txt])),
+
             React.createElement(Card, { icon: "🔴", title: "ตัวนับ id ของตาราง", n: res.seq.filter(s => !s.ok).length, good: "ปกติทุกตาราง" },
                 rows(res.seq.filter(s => !s.ok), x => [x.t, x.msg])),
 
@@ -8997,7 +9100,7 @@ function HealthCheckPage({ materials, lots, issueHist, requests }) {
                 "ส่วนใหญ่มาจากยุคก่อนใช้ระบบเต็มตัว (ตอนคีย์ยกยอดใส่คงเหลือตามของจริงแต่ใส่ยอดรับเต็มใบ) ",
                 "ยอดคงเหลือปัจจุบันถูกต้อง ไม่ต้องรีบแก้ — แก้ทีละ size ตอนไล่สต๊อกการ์ดได้"),
 
-            (res.noHist.length === 0 && res.neg.length === 0 && res.seq.every(s => s.ok)) &&
+            (res.noHist.length === 0 && res.neg.length === 0 && (res.coilBad || []).length === 0 && res.seq.every(s => s.ok)) &&
                 React.createElement("div", { style: { background: "#ecfdf5", border: "1px solid #6ee7b7", borderRadius: 8, padding: 12, fontSize: 12.5, color: "#065f46", fontWeight: 700 } },
                     "✅ ไม่พบปัญหาร้ายแรง — ระบบบันทึกข้อมูลได้ปกติ และไม่มีของออกจากคลังโดยไม่มีประวัติ")));
 }
