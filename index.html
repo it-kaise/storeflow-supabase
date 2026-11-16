@@ -1741,22 +1741,35 @@ function StoreFlow() {
         setTimeout(() => toast("📌 รอระบุ lot ทดแทนที่หน้า 'คืน/เคลม NG' เมื่อของใหม่มาถึง", "info"), 700);
     }
     // ── รับงานทดแทน NG เข้าสต๊อกจริง (สร้าง lot ใหม่ + ลงประวัติรับ) ──
+    // material ที่งานทดแทนเข้าไปจริง — ปกติคือตัวเดิม แต่กรณี maker ส่งผิดสเปค (เช่น สั่ง Temper O ส่งมาเป็น OL)
+    // ของที่มาแลกจะเป็นอีก material หนึ่ง (Temper O) จึงต้องเลือกได้ และจำไว้ใน rep.matId
+    function repTargetMat(rec, rep) {
+        const id = (rep && rep.matId) || rec.matId;
+        const m = (materials || []).find(x => x.id === id);
+        if (m) return { id: m.id, name: m.name, size: m.size, maker: m.maker, temper: m.temper || "" };
+        return { id: rec.matId, name: rec.name, size: rec.size, maker: rec.maker, temper: rec.temper || "" };
+    }
     async function receiveReplacementStock(rec, rep) {
-        if (!rec.matId) { toast("⚠️ ไม่พบ material ในคลังสำหรับ lot ทดแทนนี้", "warn"); return; }
-        const newLot = { lotNo: rep.lotNo, date: rep.date, po: "", maker: rec.maker,
+        if (!rec.matId && !(rep && rep.matId)) { toast("⚠️ ไม่พบ material ในคลังสำหรับ lot ทดแทนนี้", "warn"); return; }
+        const tm = repTargetMat(rec, rep);
+        const newLot = { lotNo: rep.lotNo, date: rep.date, po: "", maker: tm.maker,
             pcs: rep.pcs || null, coil: rep.coil || null, kgs: rep.kgs || null, m: rep.m || null,
             rem_kgs: rep.kgs || null, rem_pcs: rep.pcs || null, rem_coil: rep.coil || null, rem_m: rep.m || null, rohs: "ROHS" };
-        await saveLot(rec.matId, newLot);
-        setLots(ls => ({ ...ls, [rec.matId]: [...(ls[rec.matId] || []), newLot] }));
+        const newId = await saveLot(tm.id, newLot);
+        if (!newId) { toast("❌ รับงานทดแทนเข้าสต๊อกไม่สำเร็จ — ลองใหม่อีกครั้ง", "err"); return; }
+        if (typeof newId === "number" || typeof newId === "string") newLot._dbId = newId;
+        setLots(ls => ({ ...ls, [tm.id]: [...(ls[tm.id] || []), newLot] }));
         const invNote = "ทดแทน NG (lot เดิม " + rec.lotNo + ")";
-        const repTemper = (rec.temper && rec.temper !== "-") ? rec.temper : "";
-        const repPayload = { receive_date: rep.date, po: null, inv: invNote, material_name: rec.name + " " + rec.size, maker: rec.maker, lot_no: rep.lotNo, pcs: newLot.pcs, coil: newLot.coil, kgs: newLot.kgs, rohs: "ROHS" };
+        const repTemper = (tm.temper && tm.temper !== "-") ? tm.temper : "";
+        const repPayload = { receive_date: rep.date, po: null, inv: invNote, material_name: tm.name + " " + tm.size, maker: tm.maker, lot_no: rep.lotNo, pcs: newLot.pcs, coil: newLot.coil, kgs: newLot.kgs, rohs: "ROHS" };
         if (RECVHIST_HAS_TEMPER) repPayload.temper = repTemper || null;
         if (RECVHIST_HAS_M) repPayload.m = newLot.m || null;
-        await sb.from('sf_recvhist').insert(repPayload);
-        setRecvHist(h => [{ date: rep.date, po: "", inv: invNote, name: rec.name + " " + rec.size, temper: repTemper, maker: rec.maker, lotNo: rep.lotNo, pcs: newLot.pcs, coil: newLot.coil, kgs: newLot.kgs, m: newLot.m, rohs: "ROHS" }, ...h]);
-        logAudit("NG", "รับงานทดแทน", `${rec.name} ${(rec.size || "").replace(/^size:/i, "")} · lot ทดแทน ${rep.lotNo} (${[rep.kgs ? rep.kgs + "K" : null, rep.coil ? rep.coil + "C" : null, rep.pcs ? rep.pcs + "PCS" : null, rep.m ? rep.m + "M" : null].filter(Boolean).join("/")}) · เคลม lot เดิม ${rec.lotNo}`);
-        toast(`📥 รับงานทดแทน lot ${rep.lotNo} เข้าสต๊อกแล้ว`);
+        const { error: rhErr } = await sb.from('sf_recvhist').insert(repPayload);
+        if (rhErr) toast("⚠️ เข้าสต๊อกแล้ว แต่บันทึกประวัติรับไม่สำเร็จ — แจ้งผู้ดูแล", "err");
+        setRecvHist(h => [{ date: rep.date, po: "", inv: invNote, name: tm.name + " " + tm.size, temper: repTemper, maker: tm.maker, lotNo: rep.lotNo, pcs: newLot.pcs, coil: newLot.coil, kgs: newLot.kgs, m: newLot.m, rohs: "ROHS" }, ...h]);
+        const moved = tm.id !== rec.matId ? ` · รับเข้าเป็น ${tm.size}${repTemper ? " Temper " + repTemper : ""} (${tm.maker})` : "";
+        logAudit("NG", "รับงานทดแทน", `${rec.name} ${(rec.size || "").replace(/^size:/i, "")} · lot ทดแทน ${rep.lotNo} (${[rep.kgs ? rep.kgs + "K" : null, rep.coil ? rep.coil + "C" : null, rep.pcs ? rep.pcs + "PCS" : null, rep.m ? rep.m + "M" : null].filter(Boolean).join("/")}) · เคลม lot เดิม ${rec.lotNo}${moved}`);
+        toast(`📥 รับงานทดแทน lot ${rep.lotNo} เข้าสต๊อกแล้ว${moved}`);
     }
     // ── แก้ไขงานทดแทน (จากหน้าเคลม NG) → ซิงค์ไปสต๊อก + ประวัติรับ ──
     async function editReplacementStock(rec, idx, newRep) {
@@ -1768,18 +1781,20 @@ function StoreFlow() {
         const newReps = reps.map((x, i) => i === idx ? { ...x, ...newRep, lotNo: newLot2 } : x);
         const upNg = ngReturns.map(r => { if (r.id !== rec.id) return r; const nr = { ...r, replacements: newReps, replaceLotNo: undefined, replaceDate: undefined, replaceBy: undefined }; nr.status = ngStatus(nr); return nr; });
         await saveNgReturns(upNg);
-        // 2) อัปเดต lot ในสต๊อก (จับด้วยเลข lot เดิม)
-        if (rec.matId) {
-            const cur = (lots[rec.matId] || []).find(l => l.lotNo === oldLot);
+        // 2) อัปเดต lot ในสต๊อก (จับด้วยเลข lot เดิม ใน material ที่งานทดแทนเข้าไปจริง)
+        const tm = repTargetMat(rec, oldRep);
+        if (tm.id) {
+            const cur = (lots[tm.id] || []).find(l => l.lotNo === oldLot);
             if (cur) {
                 const upd = { lotNo: newLot2, kgs: newRep.kgs || null, pcs: newRep.pcs || null, coil: newRep.coil || null, rem_kgs: newRep.kgs || null, rem_pcs: newRep.pcs || null, rem_coil: newRep.coil || null, date: newRep.date || cur.date };
-                setLots(ls => ({ ...ls, [rec.matId]: (ls[rec.matId] || []).map(l => (l.lotNo === oldLot && l._dbId === cur._dbId) ? { ...l, ...upd } : l) }));
+                setLots(ls => ({ ...ls, [tm.id]: (ls[tm.id] || []).map(l => (l.lotNo === oldLot && l._dbId === cur._dbId) ? { ...l, ...upd } : l) }));
                 if (cur._dbId) await updateLot(cur._dbId, { lot_no: upd.lotNo, lot_date: upd.date, kgs: upd.kgs, pcs: upd.pcs, coil: upd.coil, rem_kgs: upd.rem_kgs, rem_pcs: upd.rem_pcs, rem_coil: upd.rem_coil });
             }
         }
-        // 3) อัปเดตประวัติรับ (แถวที่เป็นงานทดแทนของ lot เดิม)
-        setRecvHist(h => h.map(x => x.lotNo === oldLot ? { ...x, lotNo: newLot2, kgs: newRep.kgs || null, pcs: newRep.pcs || null, coil: newRep.coil || null, date: newRep.date || x.date } : x));
-        await sb.from('sf_recvhist').update({ lot_no: newLot2, kgs: newRep.kgs || null, pcs: newRep.pcs || null, coil: newRep.coil || null, receive_date: newRep.date || oldRep.date }).eq('lot_no', oldLot);
+        // 3) อัปเดตประวัติรับ — เฉพาะแถว "ทดแทน NG" ของ material นี้ (เดิมจับด้วยเลข lot อย่างเดียว -> โดนใบรับของ material อื่นที่เลขซ้ำ)
+        const tmName = tm.name + " " + tm.size, invNote = "ทดแทน NG (lot เดิม " + rec.lotNo + ")";
+        setRecvHist(h => h.map(x => (x.lotNo === oldLot && x.name === tmName && x.inv === invNote) ? { ...x, lotNo: newLot2, kgs: newRep.kgs || null, pcs: newRep.pcs || null, coil: newRep.coil || null, date: newRep.date || x.date } : x));
+        await sb.from('sf_recvhist').update({ lot_no: newLot2, kgs: newRep.kgs || null, pcs: newRep.pcs || null, coil: newRep.coil || null, receive_date: newRep.date || oldRep.date }).eq('lot_no', oldLot).eq('material_name', tmName).eq('inv', invNote);
         logAudit("NG", "แก้งานทดแทน", `${rec.name} · lot ${oldLot}${newLot2 !== oldLot ? " → " + newLot2 : ""} · จำนวน ${[newRep.kgs ? newRep.kgs + "K" : null, newRep.coil ? newRep.coil + "C" : null, newRep.pcs ? newRep.pcs + "PCS" : null].filter(Boolean).join("/")}`);
         toast("💾 แก้ไขงานทดแทนแล้ว — ซิงค์ คลัง/ประวัติรับ ตรงกัน");
     }
@@ -1792,13 +1807,16 @@ function StoreFlow() {
         const newReps = reps.filter((_, i) => i !== idx);
         const upNg = ngReturns.map(r => { if (r.id !== rec.id) return r; const nr = { ...r, replacements: newReps, replaceLotNo: undefined, replaceDate: undefined, replaceBy: undefined }; nr.status = ngStatus(nr); return nr; });
         await saveNgReturns(upNg);
-        if (rec.matId) {
-            const cur = (lots[rec.matId] || []).find(l => l.lotNo === rep.lotNo);
-            setLots(ls => ({ ...ls, [rec.matId]: (ls[rec.matId] || []).filter(l => l.lotNo !== rep.lotNo) }));
+        const tm = repTargetMat(rec, rep);
+        if (tm.id) {
+            const cur = (lots[tm.id] || []).find(l => l.lotNo === rep.lotNo);
+            setLots(ls => ({ ...ls, [tm.id]: (ls[tm.id] || []).filter(l => !(l.lotNo === rep.lotNo && (!cur || l._dbId === cur._dbId))) }));
             if (cur && cur._dbId) await sb.from('sf_lots').delete().eq('id', cur._dbId);
         }
-        setRecvHist(h => h.filter(x => x.lotNo !== rep.lotNo));
-        await sb.from('sf_recvhist').delete().eq('lot_no', rep.lotNo);
+        // ลบเฉพาะแถว "ทดแทน NG" ของ material นี้ (เดิมลบทุกแถวที่เลข lot ตรง = ลบใบรับของ material อื่นได้)
+        const tmName = tm.name + " " + tm.size, invNote = "ทดแทน NG (lot เดิม " + rec.lotNo + ")";
+        setRecvHist(h => h.filter(x => !(x.lotNo === rep.lotNo && x.name === tmName && x.inv === invNote)));
+        await sb.from('sf_recvhist').delete().eq('lot_no', rep.lotNo).eq('material_name', tmName).eq('inv', invNote);
         logAudit("NG", "ลบงานทดแทน", `${rec.name} · lot ทดแทน ${rep.lotNo} (เอาออกจากสต๊อก) · เคลม lot เดิม ${rec.lotNo}`);
         toast(`🗑️ ลบงานทดแทน lot ${rep.lotNo} + เอาออกจากสต๊อกแล้ว`, "warn");
     }
@@ -3305,7 +3323,7 @@ function StoreFlow() {
                 page === "receive" && canEditStock && React.createElement(RecvPage, { form: rvForm, setForm: setRvForm, materials: rawMats, master: rawMaster, onSubmit: submitRecv, recvHist: recvHist, addMaker: (n, t) => addMaker(n, [t]), onAddLength: addLengthMat }),
                 page === "auditlog" && canEditSettings && React.createElement(AuditLogPage, { auditLog: auditLog }),
                 page === "healthcheck" && canEditSettings && React.createElement(HealthCheckPage, { materials: materials, lots: lots, issueHist: issueHist, requests: requests }),
-                page === "ngreturn" && canEditStock && React.createElement(NgReturnPage, { ngReturns: ngReturns, onSave: saveNgReturns, currentUser: currentUser, toast: toast, onReceive: receiveReplacementStock, onEditRep: editReplacementStock, onRemoveRep: removeReplacementStock }),
+                page === "ngreturn" && canEditStock && React.createElement(NgReturnPage, { ngReturns: ngReturns, materials: materials, onSave: saveNgReturns, currentUser: currentUser, toast: toast, onReceive: receiveReplacementStock, onEditRep: editReplacementStock, onRemoveRep: removeReplacementStock }),
                 page === "history" && React.createElement(HistPage, { issueHist: issueHist, setIssueHist: canEditStock ? setIssueHist : null, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null, group: "raw" }),
                 (page === "monthend" || page === "supplymonthend") && canViewReports && React.createElement(MonthEndPage, { key: page, materials: materials, lots: lots, issueHist: issueHist, recvHist: recvHist, group: page === "supplymonthend" ? "supply" : "raw" }),
                 page === "supplycost" && canViewReports && React.createElement(SupplyCostPage, { issueHist: issueHist, recvHist: recvHist, materials: materials, priceMap: priceMap, lotPriceMap: lotPriceMap }),
@@ -3762,10 +3780,16 @@ function AuditLogPage({ auditLog }) {
                             React.createElement("td", { style: { ...tdS, fontSize: 11.5, color: C.tx2 } }, e.detail),
                             React.createElement("td", { style: { ...tdS, fontSize: 11.5 } }, e.by))))))));
 }
-function NgReturnPage({ ngReturns, onSave, currentUser, toast, onReceive, onEditRep, onRemoveRep }) {
+function NgReturnPage({ ngReturns, materials, onSave, currentUser, toast, onReceive, onEditRep, onRemoveRep }) {
     const [filter, setFilter] = useState("all");
     const [linkId, setLinkId] = useState(null);
-    const [lf, setLf] = useState({ lotNo: "", date: new Date().toISOString().slice(0, 10), kgs: "", pcs: "", coil: "" });
+    const [lf, setLf] = useState({ lotNo: "", date: new Date().toISOString().slice(0, 10), kgs: "", pcs: "", coil: "", matId: "" });
+    // ตัวเลือก "รับทดแทนเข้าเป็น" = material ชื่อ+Size เดียวกัน (ต่าง Temper/Maker ได้)
+    // ใช้กรณี maker ส่งผิดสเปค เช่น สั่ง Temper O แต่ส่ง OL มา -> ของที่มาแลกต้องเข้าเป็น Temper O
+    const _nk = v => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
+    const siblingsOf = r => (materials || []).filter(m => m.active !== false && _nk(m.name) === _nk(r.name) && _nk(m.size) === _nk(r.size));
+    const matLbl = m => (m.maker || "-") + ((m.temper && m.temper !== "-") ? " · Temper " + m.temper : "");
+    const matById = id => (materials || []).find(m => m.id === id);
     const [editRep, setEditRep] = useState(null); // { recId, idx }
     const [erf, setErf] = useState({});
     // หน่วยที่ NG record ใช้
@@ -3781,7 +3805,9 @@ function NgReturnPage({ ngReturns, onSave, currentUser, toast, onReceive, onEdit
         if (!lf.lotNo || !lf.lotNo.trim()) { toast("กรุณากรอกเลข Lot ทดแทน", "err"); return; }
         const rk = parseFloat(lf.kgs) || 0, rp = parseFloat(lf.pcs) || 0, rc = parseFloat(lf.coil) || 0, rm = parseFloat(lf.m) || 0;
         if (rk <= 0 && rp <= 0 && rc <= 0 && rm <= 0) { toast("กรุณาระบุจำนวนที่รับทดแทน", "err"); return; }
+        if (siblingsOf(rec).length > 1 && !lf.matId) { toast("กรุณาเลือกว่ารับทดแทนเข้าเป็น Maker / Temper ไหน", "err"); return; }
         const rep = { lotNo: lf.lotNo.trim(), date: lf.date, by: (currentUser && currentUser.name) || "-", kgs: rk || null, pcs: rp || null, coil: rc || null, m: rm || null };
+        if (lf.matId && lf.matId !== rec.matId) rep.matId = lf.matId;   // รับเข้าเป็นอีก material (เช่น Temper ที่ถูกต้อง)
         onSave((ngReturns || []).map(r => {
             if (r.id !== rec.id) return r;
             const reps = [...repsOf(r), rep];
@@ -3858,19 +3884,31 @@ function NgReturnPage({ ngReturns, onSave, currentUser, toast, onReceive, onEdit
                                                 React.createElement(Btn, { v: "success", sz: "xs", onClick: () => { if (onEditRep) onEditRep(r, xi, { lotNo: (erf.lotNo || "").trim() || x.lotNo, date: erf.date, kgs: parseFloat(erf.kgs) || null, pcs: parseFloat(erf.pcs) || null, coil: parseFloat(erf.coil) || null, m: parseFloat(erf.m) || null, by: (currentUser && currentUser.name) || x.by }); setEditRep(null); } }, "✓"),
                                                 React.createElement(Btn, { v: "ghost", sz: "xs", onClick: () => setEditRep(null) }, "✕"))
                                             : React.createElement("div", { key: xi, style: { fontSize: 10.5, fontFamily: "monospace", color: C.tx, marginBottom: 1, display: "flex", alignItems: "center", gap: 4 } },
-                                                React.createElement("span", null, "→ " + x.lotNo + " (" + [x.kgs > 0 ? fmtQty(x.kgs, 2) + "K" : null, x.coil > 0 ? fmtQty(x.coil) + "C" : null, x.pcs > 0 ? fmtQty(x.pcs) + "PCS" : null, x.m > 0 ? fmtQty(x.m, 2) + "M" : null].filter(Boolean).join("/") + ")" + (x.date ? " " + fmtDate(x.date) : "")),
+                                                React.createElement("span", null, "→ " + x.lotNo + " (" + [x.kgs > 0 ? fmtQty(x.kgs, 2) + "K" : null, x.coil > 0 ? fmtQty(x.coil) + "C" : null, x.pcs > 0 ? fmtQty(x.pcs) + "PCS" : null, x.m > 0 ? fmtQty(x.m, 2) + "M" : null].filter(Boolean).join("/") + ")" + (x.date ? " " + fmtDate(x.date) : "")
+                                                    + ((x.matId && x.matId !== r.matId && matById(x.matId)) ? " ⇒ เข้าเป็น " + matLbl(matById(x.matId)) : "")),
                                                 React.createElement("span", { onClick: () => { setEditRep({ recId: r.id, idx: xi }); setErf({ lotNo: x.lotNo, date: x.date || "", kgs: x.kgs || "", pcs: x.pcs || "", coil: x.coil || "", m: x.m || "" }); }, title: "แก้ไข", style: { color: C.acc2, cursor: "pointer", fontSize: 11 } }, "✏️"),
                                                 React.createElement("span", { onClick: () => onRemoveRep ? onRemoveRep(r, xi) : null, title: "ลบ", style: { color: C.err, cursor: "pointer", fontSize: 11 } }, "🗑️")))),
                                         uStr(rc) && React.createElement("div", { style: { fontSize: 10, color: C.ok, marginTop: 2 } }, "รวมรับแล้ว: " + uStr(rc)),
                                         uStr(rem) && React.createElement("div", { style: { fontSize: 10.5, color: "#9a6700", fontWeight: 700, marginTop: 1 } }, "⚠ ค้างอีก: " + uStr(rem)),
                                         st !== "replaced" && (linkId === r.id
                                             ? React.createElement("div", { style: { marginTop: 6, padding: 8, background: "rgba(9,105,218,.05)", borderRadius: 6, display: "flex", gap: 5, flexWrap: "wrap", alignItems: "flex-end" } },
+                                                siblingsOf(r).length > 1 && React.createElement("div", { style: { flexBasis: "100%" } },
+                                                    React.createElement("div", { style: { fontSize: 9, color: C.tx2 } }, "รับทดแทนเข้าเป็น (Maker / Temper) *"),
+                                                    React.createElement("select", { value: lf.matId || "", onChange: e => setLf(x => ({ ...x, matId: e.target.value })),
+                                                        style: { ...inputStyle, width: "100%", maxWidth: 320, fontWeight: 700, borderColor: lf.matId ? C.brd : C.warn } },
+                                                        React.createElement("option", { value: "" }, "-- เลือก --"),
+                                                        siblingsOf(r).map(m => React.createElement("option", { key: m.id, value: m.id }, matLbl(m) + (m.id === r.matId ? "  (ตัวที่คืน)" : "")))),
+                                                    React.createElement("div", { style: { fontSize: 9.5, color: "#9a6700", marginTop: 2 } }, "ถ้า maker ส่งผิดสเปค (เช่น สั่ง Temper O แต่ส่ง OL มา) ให้เลือก Temper ที่ถูกต้อง ของที่มาแลกจะเข้าคลังตัวนั้น")),
+                                                siblingsOf(r).length <= 1 && /ผิดสเปค/.test(r.reason || "") && React.createElement("div", { style: { flexBasis: "100%", fontSize: 10.5, color: C.err, fontWeight: 700, lineHeight: 1.5 } },
+                                                    "⚠️ ของทดแทนจะเข้าเป็น " + matLbl(r) + " (ตัวเดิม) — ถ้าของที่มาแลกเป็น Temper/Maker อื่น ให้เพิ่ม Size นั้นในหน้า \"ข้อมูล Material\" ก่อน แล้วกลับมากดรับทดแทน จะมีช่องให้เลือก"),
                                                 React.createElement("div", null, React.createElement("div", { style: { fontSize: 9, color: C.tx2 } }, "Lot ทดแทน"), React.createElement(Inp, { value: lf.lotNo, onChange: v => setLf(x => ({ ...x, lotNo: v })), placeholder: "เลข Lot", style: { width: 110, fontFamily: "monospace" } })),
                                                 React.createElement("div", null, React.createElement("div", { style: { fontSize: 9, color: C.tx2 } }, "วันที่รับ"), React.createElement(Inp, { type: "date", value: lf.date, onChange: v => setLf(x => ({ ...x, date: v })), style: { width: 120 } })),
                                                 unitsOf(r).map(u => React.createElement("div", { key: u }, React.createElement("div", { style: { fontSize: 9, color: C.tx2 } }, "รับ " + (u === "kgs" ? "KGS" : u === "coil" ? "COIL" : u === "m" ? "M (เมตร)" : "PCS")), React.createElement(Inp, { type: "number", value: lf[u] || "", onChange: v => setLf(x => ({ ...x, [u]: v })), placeholder: "ค้าง " + (Math.round(rem[u] * 100) / 100), style: { width: 90 } }))),
                                                 React.createElement(Btn, { v: "success", sz: "xs", onClick: () => saveLink(r) }, "✓ บันทึกรับ"),
                                                 React.createElement(Btn, { v: "ghost", sz: "xs", onClick: () => setLinkId(null) }, "✕"))
-                                            : React.createElement("button", { onClick: () => { setLinkId(r.id); setLf({ lotNo: "", date: new Date().toISOString().slice(0, 10), kgs: "", pcs: "", coil: "" }); }, style: { display: "block", marginTop: 5, background: "rgba(9,105,218,.1)", border: "1px solid rgba(9,105,218,.3)", borderRadius: 5, color: C.acc2, cursor: "pointer", padding: "3px 9px", fontSize: 11, fontWeight: 700, fontFamily: "inherit" } }, "🔗 + รับ lot ทดแทน")));
+                                            : React.createElement("button", { onClick: () => { setLinkId(r.id); setLf({ lotNo: "", date: new Date().toISOString().slice(0, 10), kgs: "", pcs: "", coil: "",
+                                                    // เคลมเพราะผิดสเปค + มีหลาย Temper -> บังคับเลือกเอง (ของที่มาแลกมักเป็นอีก Temper) · อย่างอื่น = ตัวเดิม
+                                                    matId: (/ผิดสเปค/.test(r.reason || "") && siblingsOf(r).length > 1) ? "" : (r.matId || "") }); }, style: { display: "block", marginTop: 5, background: "rgba(9,105,218,.1)", border: "1px solid rgba(9,105,218,.3)", borderRadius: 5, color: C.acc2, cursor: "pointer", padding: "3px 9px", fontSize: 11, fontWeight: 700, fontFamily: "inherit" } }, "🔗 + รับ lot ทดแทน")));
                                 })()));
                         }))))));
 }
