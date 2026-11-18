@@ -1603,6 +1603,25 @@ function StoreFlow() {
         } catch (e) { return { error: e, next: null }; }
     }
     const [lotPriceMap, setLotPriceMap] = useState({});
+    // ── ปิดงวดสรุปสิ้นเดือน: ภาพถ่ายตัวเลขที่บัญชียืนยันแล้ว เก็บใน sf_master id='monthclose' (คีย์ "raw:2026-10") ──
+    // เขียนแบบ merge เสมอ (อ่านของล่าสุดก่อน) — กันแท็บที่เปิดค้างเขียนทับงวดที่คนอื่นปิดไว้
+    const [monthClose, setMonthClose] = useState({});
+    async function closeMonthSnap(key, snap) {
+        const { error, next } = await saveMasterMerge('monthclose', { [key]: snap }, []);
+        if (error || !next) { toast("❌ ปิดงวดไม่สำเร็จ — ลองใหม่อีกครั้ง", "err"); return false; }
+        setMonthClose(next);
+        logAudit("สต๊อก", "ปิดงวดสรุปสิ้นเดือน", key + " · " + Object.keys(snap.rows || {}).length + " รายการ");
+        toast("🔒 ปิดงวด " + key + " แล้ว — ตัวเลขถูกล็อก");
+        return true;
+    }
+    async function reopenMonthSnap(key) {
+        const { error, next } = await saveMasterMerge('monthclose', {}, [key]);
+        if (error || !next) { toast("❌ ยกเลิกปิดงวดไม่สำเร็จ", "err"); return false; }
+        setMonthClose(next);
+        logAudit("สต๊อก", "ยกเลิกปิดงวด", key);
+        toast("🔓 ยกเลิกปิดงวด " + key + " แล้ว", "warn");
+        return true;
+    }
     async function saveLotPrice(matId, lotNo, price, oldLotNo, unit) {
         const key = matId + "||" + lotNo;
         const patch = {}, rm = [];
@@ -1863,6 +1882,9 @@ function StoreFlow() {
                 });
                 sb.from('sf_master').select('part_names').eq('id', 'lotprices').limit(1).then(({ data: lpRows }) => {
                     if (lpRows && lpRows.length && lpRows[0].part_names && !Array.isArray(lpRows[0].part_names)) { setLotPriceMap(lpRows[0].part_names); }
+                });
+                sb.from('sf_master').select('part_names').eq('id', 'monthclose').limit(1).then(({ data: mcRows }) => {
+                    if (mcRows && mcRows.length && mcRows[0].part_names && !Array.isArray(mcRows[0].part_names)) { setMonthClose(mcRows[0].part_names); }
                 });
                 const { data: pnRows } = await sb.from('sf_master').select('part_names').eq('id', 'partnos').limit(1);
                 if (pnRows && pnRows.length && Array.isArray(pnRows[0].part_names) && pnRows[0].part_names.length) {
@@ -2509,14 +2531,19 @@ function StoreFlow() {
                 const kgsPerCoil = (realKgTotal > 0 && reqCoil > 0) ? (realKgTotal / reqCoil)
                     : (ml[i].coil && ml[i].kgs) ? (ml[i].kgs / ml[i].coil)
                     : (reqKgs > 0 && reqCoil > 0) ? (reqKgs / reqCoil) : 0;
-                const cutKgs = ml[i].rem_kgs != null ? Math.min(ml[i].rem_kgs || 0, take * kgsPerCoil) : null;
+                // กิโลที่ตัดออกจากลอต = กิโลที่ลงประวัติ (ปัด 2 ตำแหน่งก่อน) · ม้วนสุดท้ายของลอต = กิโลที่เหลือทั้งหมด
+                const _r2c = v => Math.round(v * 100) / 100;
+                const _closesC = (ml[i].rem_coil || 0) - take <= 0;
+                let histKgsC = kgsPerCoil > 0 ? _r2c(take * kgsPerCoil) : null;
+                if (_closesC && !(realKgTotal > 0) && ml[i].rem_kgs != null && ml[i].rem_kgs > 0) histKgsC = _r2c(ml[i].rem_kgs);
+                const cutKgs = (ml[i].rem_kgs != null && histKgsC != null) ? Math.min(ml[i].rem_kgs || 0, histKgsC) : (ml[i].rem_kgs != null ? 0 : null);
                 // ประวัติลงน้ำหนักจริงของม้วนที่จ่าย ไม่ถูกจำกัดด้วยกิโลคงเหลือ (ดูเหตุผลที่สาขา PCS)
-                const histKgsC = kgsPerCoil > 0 ? take * kgsPerCoil : cutKgs;
+                if (histKgsC == null) histKgsC = cutKgs;
                 const mPerCoil2 = (ml[i].coil && ml[i].m) ? (ml[i].m / ml[i].coil) : 0;
                 const cutM = (ml[i].rem_m != null && mPerCoil2 > 0) ? Math.min(ml[i].rem_m, take * mPerCoil2) : null;
-                ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), rem_kgs: ml[i].rem_kgs != null ? Math.max(0, (ml[i].rem_kgs || 0) - (cutKgs || 0)) : ml[i].rem_kgs };
+                ml[i] = { ...ml[i], rem_coil: Math.max(0, (ml[i].rem_coil || 0) - take), rem_kgs: ml[i].rem_kgs != null ? Math.max(0, Math.round(((ml[i].rem_kgs || 0) - (cutKgs || 0)) * 1000) / 1000) : ml[i].rem_kgs };
                 ml[i] = cutM != null ? { ...ml[i], rem_m: Math.max(0, (ml[i].rem_m || 0) - cutM) } : ml[i];
-                cuts.push({ lotNo, coil: take, kgs: histKgsC != null ? Math.round(histKgsC * 100) / 100 : null, pcs: null, m: cutM != null ? Math.round(cutM * 100) / 100 : null });
+                cuts.push({ lotNo, coil: take, kgs: histKgsC != null ? _r2c(histKgsC) : null, pcs: null, m: cutM != null ? Math.round(cutM * 100) / 100 : null });
                 rem -= take;
                 if (grp) chosenBudget[grp] -= take;   // ตัดโควตาของ Lot นี้ลงด้วย
             } else if (unit === "KGS" && ml[i].rem_kgs != null) {
@@ -2540,15 +2567,23 @@ function StoreFlow() {
                 const totalPcsReq = parseFloat(item.qty) || 0;
                 const kgsPerPcs = (realKgTotal > 0 && totalPcsReq > 0) ? (realKgTotal / totalPcsReq)
                     : (ml[i].kgs && ml[i].pcs) ? (ml[i].kgs / ml[i].pcs) : ((matInfo && matInfo.kpp) ? matInfo.kpp : 0);
-                const cutKgs = (ml[i].rem_kgs != null && kgsPerPcs > 0) ? Math.min(ml[i].rem_kgs, take * kgsPerPcs) : null;
+                // ⚠️ กิโลที่ "ตัดออกจากลอต" ต้องเท่ากับกิโลที่ "ลงประวัติ" ทุกตำแหน่งทศนิยม
+                // เดิมตัดลอตด้วยค่าไม่ปัด (4.70588) แต่ประวัติลง 4.71 -> สะสมเป็นเศษ ทำให้สรุปสิ้นเดือนขึ้นยอดยกมา 0.01 ทั้งที่เพิ่งรับของ
+                // - จ่ายเส้นสุดท้ายของลอต (ไม่ได้ชั่งจริง) = ลงกิโลที่เหลือทั้งหมดของลอต -> ลอตปิดเป๊ะ รวมทุกใบ = กิโลที่รับเข้า
+                // - อย่างอื่น = ปัด 2 ตำแหน่งก่อน แล้วตัดลอตด้วยตัวเลขเดียวกัน
+                const _r2 = v => Math.round(v * 100) / 100;
+                const _closes = (ml[i].rem_pcs || 0) - take <= 0;
+                let histKgs = kgsPerPcs > 0 ? _r2(take * kgsPerPcs) : null;
+                if (_closes && !(realKgTotal > 0) && ml[i].rem_kgs != null && ml[i].rem_kgs > 0) histKgs = _r2(ml[i].rem_kgs);
                 // น้ำหนักที่ลงประวัติ = น้ำหนักจริงของจำนวนที่จ่ายออก (ไม่ถูกจำกัดด้วยกิโลคงเหลือในลอต)
                 // เดิมลงเท่าที่ตัดได้ ถ้าช่องกิโลของลอตเหลือน้อยกว่าความจริง ประวัติจะได้กิโลน้อยผิดปกติ
                 // (เคยเกิด 10/10/2026 — 200 เส้น ลงไว้ 0.15 kg) ฝ่ายบัญชีจึงคิดต้นทุนไม่ได้
-                const histKgs = kgsPerPcs > 0 ? take * kgsPerPcs : cutKgs;
+                const cutKgs = (ml[i].rem_kgs != null && histKgs != null) ? Math.min(ml[i].rem_kgs, histKgs) : null;
+                if (histKgs == null) histKgs = cutKgs;
                 ml[i] = { ...ml[i], rem_pcs: Math.max(0, (ml[i].rem_pcs || 0) - take) };
                 if (cutKgs != null)
-                    ml[i] = { ...ml[i], rem_kgs: Math.max(0, (ml[i].rem_kgs || 0) - cutKgs) };
-                cuts.push({ lotNo, coil: null, kgs: histKgs != null ? Math.round(histKgs * 100) / 100 : null, pcs: take, m: null });
+                    ml[i] = { ...ml[i], rem_kgs: Math.max(0, Math.round(((ml[i].rem_kgs || 0) - cutKgs) * 1000) / 1000) };
+                cuts.push({ lotNo, coil: null, kgs: histKgs != null ? _r2(histKgs) : null, pcs: take, m: null });
                 rem -= take;
                 if (grp) chosenBudget[grp] -= take;   // ตัดโควตาของ Lot นี้ลงด้วย
             }
@@ -3325,7 +3360,9 @@ function StoreFlow() {
                 page === "healthcheck" && canEditSettings && React.createElement(HealthCheckPage, { materials: materials, lots: lots, issueHist: issueHist, requests: requests }),
                 page === "ngreturn" && canEditStock && React.createElement(NgReturnPage, { ngReturns: ngReturns, materials: materials, onSave: saveNgReturns, currentUser: currentUser, toast: toast, onReceive: receiveReplacementStock, onEditRep: editReplacementStock, onRemoveRep: removeReplacementStock }),
                 page === "history" && React.createElement(HistPage, { issueHist: issueHist, setIssueHist: canEditStock ? setIssueHist : null, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null, group: "raw" }),
-                (page === "monthend" || page === "supplymonthend") && canViewReports && React.createElement(MonthEndPage, { key: page, materials: materials, lots: lots, issueHist: issueHist, recvHist: recvHist, group: page === "supplymonthend" ? "supply" : "raw" }),
+                (page === "monthend" || page === "supplymonthend") && canViewReports && React.createElement(MonthEndPage, { key: page, materials: materials, lots: lots, issueHist: issueHist, recvHist: recvHist, group: page === "supplymonthend" ? "supply" : "raw",
+                    monthClose: monthClose, onCloseMonth: closeMonthSnap, onReopenMonth: reopenMonthSnap,
+                    canClose: role === "admin" || role === "store", canReopen: role === "admin", userName: (currentUser && currentUser.name) || "" }),
                 page === "supplycost" && canViewReports && React.createElement(SupplyCostPage, { issueHist: issueHist, recvHist: recvHist, materials: materials, priceMap: priceMap, lotPriceMap: lotPriceMap }),
                 page === "supplyhist" && canViewReports && React.createElement(HistPage, { issueHist: issueHist, priceMap: priceMap, setIssueHist: canEditStock ? setIssueHist : null, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null, group: "supply" }),
                 page === "users" && canManageUsers && React.createElement(UsersPage, { users: users, setUsers: setUsers, currentUser: currentUser, toast: toast, materials: materials }),
@@ -6750,7 +6787,7 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist: _allRe
 // MONTH-END PAGE — สรุป ยอดยกมา / รับเข้า / จ่ายออก / คงเหลือ รายไซซ์
 // ใช้ตอนนับสต๊อกสิ้นเดือนร่วมกับบัญชี (ล้อตามรายงานสินค้าและวัตถุดิบของ ACC แต่ไม่ใส่ราคา)
 // ════════════════════════════════════════════════════════════
-function MonthEndPage({ materials, lots, issueHist, recvHist, group }) {
+function MonthEndPage({ materials, lots, issueHist, recvHist, group, monthClose, onCloseMonth, onReopenMonth, canClose, canReopen, userName }) {
     const mats = (materials || []).filter(m => group === "supply" ? isSupplyType(m.type) : !isSupplyType(m.type));
     const _k = v => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
     // จับคู่แถวประวัติกับ material ด้วย ชื่อ+Maker ก่อน (ชื่อซ้ำกันได้ ต่างกันที่ Temper/Maker) แล้วค่อย fallback เป็นชื่ออย่างเดียว
@@ -6812,18 +6849,76 @@ function MonthEndPage({ materials, lots, issueHist, recvHist, group }) {
         else if (!mon || d === mon) add(inMon[m.id][key], r);
     });
     feed(recvHist, "rc"); feed(issueHist, "is");
-    const rows = mats.map(m => {
-        const rc = inMon[m.id].rc, is = inMon[m.id].is, af = after[m.id];
-        const close = zero(), open = zero();
+    // ── ปิดงวด (ล็อกตัวเลขที่บัญชียืนยันแล้ว) ──
+    // ยอดสิ้นเดือนคำนวณย้อนจากคงเหลือปัจจุบัน -> ถ้ามีอะไรเปลี่ยนทีหลัง (เศษปัด / แก้ประวัติย้อนหลัง) ตัวเลขเดือนที่ปิดไปแล้วจะขยับ
+    // บัญชีไม่ยอมรับ (เช่น AL Ø18.00x1.2x2000 สิ้น ต.ค. ยืนยัน 10.35 -> กลาง พ.ย. กลายเป็น 10.34)
+    // จึงเก็บ "ภาพถ่าย" ตัวเลขตอนปิดงวดไว้ใน sf_master id='monthclose' แล้ว:
+    //   - เดือนที่ปิดแล้ว = แสดงตัวเลขที่ล็อกไว้เสมอ
+    //   - เดือนถัดจากเดือนที่ปิด = ยกมา = คงเหลือที่ล็อกไว้ แล้วเดินหน้า (ยกมา + รับ − จ่าย)
+    //   - ถ้าตัวเลขสดไม่ตรงกับที่ล็อก -> ติดธง ⚠️ ให้ตรวจ แต่ไม่เปลี่ยนตัวเลขที่ยืนยันแล้ว
+    const _grpKey = group === "supply" ? "supply" : "raw";
+    const snapKeyOf = mo => _grpKey + ":" + mo;
+    const prevMonOf = mo => { const p = String(mo || "").split("-").map(Number); if (p.length !== 2 || !p[0]) return ""; const d = new Date(p[0], p[1] - 2, 1); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); };
+    const snapCur = mon ? (monthClose || {})[snapKeyOf(mon)] : null;
+    const snapPrev = mon ? (monthClose || {})[snapKeyOf(prevMonOf(mon))] : null;
+    const cp = o => ({ pcs: Number(o && o.pcs) || 0, coil: Number(o && o.coil) || 0, kgs: Number(o && o.kgs) || 0, m: Number(o && o.m) || 0 });
+    const allRows = mats.map(m => {
+        let rc = inMon[m.id].rc, is = inMon[m.id].is;
+        const af = after[m.id];
+        let close = zero(), open = zero();
+        // เศษทศนิยมจากการปัด (|ค่า| < 0.005) ไม่ใช่ของจริง -> ถือเป็น 0 (กันขึ้น "ยกมา 0.01" ทั้งที่ไม่มีของ)
+        const _z = v => (Math.abs(v) < 0.005 ? 0 : Math.round(v * 1000) / 1000);
         FLDS.forEach(f => {
-            close[f] = (nowRem[m.id][f] || 0) - (af.rc[f] || 0) + (af.is[f] || 0);   // ถอยยอดกลับมา ณ สิ้นเดือนที่เลือก
-            open[f] = close[f] - (rc[f] || 0) + (is[f] || 0);                        // ยอดยกมาต้นเดือน
+            close[f] = _z((nowRem[m.id][f] || 0) - (af.rc[f] || 0) + (af.is[f] || 0));   // ถอยยอดกลับมา ณ สิ้นเดือนที่เลือก
+            open[f] = _z(close[f] - (rc[f] || 0) + (is[f] || 0));                        // ยอดยกมาต้นเดือน
         });
         const unit = defaultUnitOf(m, lots[m.id] || []);
         const mainF = unit === "COIL" || unit === "COIL+KGS" ? "coil" : unit === "M" ? "m" : unit === "KGS" ? "kgs" : "pcs";
+        // ไม่มีเส้น/ม้วนเหลือ แต่กิโลค้างเศษเล็ก ๆ (< 0.05) = เศษปัดของลอตเก่า ไม่ใช่ของจริง -> แสดงเป็น 0
+        // (Pradit ยอมรับส่วนต่าง 0.001–0.012 kg ในข้อมูลได้ ขอแค่รายงานไม่ขึ้นยอดยกมา/คงเหลือผิด)
+        if (mainF !== "kgs") [open, close].forEach(o => { if ((o[mainF] || 0) === 0 && Math.abs(o.kgs || 0) < 0.05) o.kgs = 0; });
+        const liveClose = close;
+        let locked = false, carried = false;
+        if (snapCur && snapCur.rows) {
+            const s = snapCur.rows[m.id];
+            open = cp(s && s.o); rc = cp(s && s.rc); is = cp(s && s.is); close = cp(s && s.c);
+            locked = true;
+        } else if (snapPrev && snapPrev.rows) {
+            const s = snapPrev.rows[m.id];
+            open = cp(s && s.c);
+            close = zero();
+            FLDS.forEach(f => { close[f] = _z((open[f] || 0) + (rc[f] || 0) - (is[f] || 0)); });
+            carried = true;
+        }
+        // ตัวเลขที่แสดงต่างจากที่คำนวณสดจากคลัง = มีอะไรเปลี่ยนหลังยืนยัน หรือประวัติไม่ครบ -> ต้องตรวจ
+        const _df = f => Math.abs((close[f] || 0) - (liveClose[f] || 0));
+        const drift = (locked || carried) && (_df(mainF) >= 0.005 || (mainF !== "kgs" && _df("kgs") >= 0.05));
         const moved = FLDS.some(f => (rc[f] || 0) !== 0 || (is[f] || 0) !== 0) || FLDS.some(f => (close[f] || 0) !== 0 || (open[f] || 0) !== 0);
-        return { m: m, open: open, rc: rc, is: is, close: close, mainF: mainF, unit: unit, moved: moved };
-    }).filter(x => {
+        return { m: m, open: open, rc: rc, is: is, close: close, mainF: mainF, unit: unit, moved: moved, locked: locked, carried: carried, drift: drift, liveClose: liveClose };
+    });
+    // ภาพถ่ายตอนปิดงวด — เก็บทุกรายการที่มีตัวเลข (ไม่ขึ้นกับตัวกรองบนจอ)
+    async function doCloseMonth() {
+        if (!mon || !onCloseMonth) return;
+        const nowMon = new Date().toISOString().slice(0, 7);
+        const warnNotEnded = mon >= nowMon ? "\n\n⚠️ เดือนนี้ยังไม่จบ — ปกติควรปิดงวดหลังสิ้นเดือนและตรวจกับบัญชีแล้ว" : "";
+        if (!window.confirm("🔒 ยืนยันปิดงวด " + monLbl(mon) + " (" + (group === "supply" ? "วัสดุสิ้นเปลือง" : "วัตถุดิบ") + ")?\n\n"
+            + "ตัวเลข ยกมา / รับเข้า / จ่ายออก / คงเหลือ ของทุกรายการจะถูกล็อกตามที่เห็นตอนนี้\n"
+            + "และเดือนถัดไปจะยกยอดมาจากตัวเลขชุดนี้ — ภายหลังตัวเลขของเดือนนี้จะไม่เปลี่ยนอีก" + warnNotEnded)) return;
+        // กิโล/เมตร เก็บ 2 ตำแหน่ง = ตัวเลขเดียวกับที่บัญชีเห็นบนจอ/Excel ตอนยืนยัน (ยกไปเดือนหน้าแล้วบวกลบได้ตรงกับที่เห็น)
+        const r3 = o => { const n = {}; FLDS.forEach(f => { const dp = (f === "kgs" || f === "m") ? 100 : 1000; const v = Math.round((Number(o[f]) || 0) * dp) / dp; if (v) n[f] = v; }); return n; };
+        const snapRows = {};
+        allRows.forEach(x => {
+            const any = FLDS.some(f => (x.open[f] || 0) || (x.rc[f] || 0) || (x.is[f] || 0) || (x.close[f] || 0));
+            if (any) snapRows[x.m.id] = { o: r3(x.open), rc: r3(x.rc), is: r3(x.is), c: r3(x.close) };
+        });
+        await onCloseMonth(snapKeyOf(mon), { at: new Date().toISOString(), by: userName || "-", rows: snapRows });
+    }
+    async function doReopenMonth() {
+        if (!mon || !onReopenMonth) return;
+        if (!window.confirm("🔓 ยกเลิกปิดงวด " + monLbl(mon) + "?\n\nตัวเลขของเดือนนี้จะกลับไปคำนวณสดจากข้อมูลปัจจุบัน (อาจไม่ตรงกับที่บัญชีปิดไว้)\nใช้เฉพาะกรณีต้องแก้ไขแล้วปิดงวดใหม่เท่านั้น")) return;
+        await onReopenMonth(snapKeyOf(mon));
+    }
+    const rows = allRows.filter(x => {
         if (typ && x.m.type !== typ) return false;
         if (onlyMove && !x.moved) return false;
         if (!q) return true;
@@ -6924,7 +7019,17 @@ function MonthEndPage({ materials, lots, issueHist, recvHist, group }) {
                     "ซ่อนรายการที่ไม่มีของและไม่เคลื่อนไหว"),
                 React.createElement(Btn, { onClick: () => setOpenIds(Object.keys(openIds).length ? {} : rows.reduce((o, x) => { o[x.m.id] = 1; return o; }, {})) },
                     Object.keys(openIds).length ? "▲ ยุบรายละเอียด" : "▼ กางรายละเอียดทั้งหมด"),
-                React.createElement(Btn, { v: "success", onClick: dl }, "📊 ดึง Excel (2 ชีต + ช่องนับจริง)"))),
+                React.createElement(Btn, { v: "success", onClick: dl }, "📊 ดึง Excel (2 ชีต + ช่องนับจริง)"),
+                mon && !snapCur && canClose && React.createElement(Btn, { onClick: doCloseMonth, style: { borderColor: "#8250df", color: "#8250df", fontWeight: 800 } }, "🔒 ยืนยัน/ปิดงวด " + monLbl(mon)),
+                mon && snapCur && canReopen && React.createElement(Btn, { v: "ghost", onClick: doReopenMonth }, "🔓 ยกเลิกปิดงวด")),
+            mon && (snapCur || snapPrev) && React.createElement("div", { style: { padding: "9px 14px", borderTop: `1px solid ${C.brd}`, fontSize: 12, lineHeight: 1.6,
+                    background: snapCur ? "rgba(130,80,223,.07)" : "rgba(26,127,55,.06)", color: snapCur ? "#6e40c9" : "#1a7f37", fontWeight: 600 } },
+                snapCur
+                    ? "🔒 งวด " + monLbl(mon) + " ปิดแล้ว — ตัวเลขทุกช่องเป็นตัวเลขที่ยืนยันไว้ " + (snapCur.by ? "โดย " + snapCur.by + " " : "") + (snapCur.at ? "เมื่อ " + thDateTime(snapCur.at) : "") + " จะไม่เปลี่ยนอีก"
+                    : "🔗 ยอดยกมาเดือนนี้ = คงเหลือที่ปิดงวด " + monLbl(prevMonOf(mon)) + " ไว้ (ตัวเลขยืนยันแล้ว) แล้วบวกรับ / ลบจ่ายของเดือนนี้",
+                (() => { const n = allRows.filter(x => x.drift).length;
+                    return n ? React.createElement("div", { style: { color: C.warn, fontWeight: 700 } },
+                        "⚠️ " + n + " รายการ ตัวเลขในคลังตอนนี้ไม่ตรงกับยอดที่ยืนยันไว้ (มีการแก้ข้อมูลย้อนหลัง หรือประวัติไม่ครบ) — ตัวเลขในรายงานยังคงตามที่ยืนยัน ให้ตรวจรายการที่มีธง ⚠️") : null; })())),
         React.createElement(Card, { grow: true },
             React.createElement("div", { style: { padding: "8px 13px", background: C.sur2, borderBottom: `1px solid ${C.brd}`, fontSize: 12, color: C.tx2 } },
                 "งวด ", React.createElement("strong", { style: { color: C.tx } }, monLbl(mon)), typ ? " · " + (TLBL[typ] || typ) : "", " · ", rows.length, " รายการ",
@@ -6945,7 +7050,10 @@ function MonthEndPage({ materials, lots, issueHist, recvHist, group }) {
                                 React.createElement("span", { style: { color: C.tx3, marginRight: 6, fontFamily: "monospace" } }, openIds[x.m.id] ? "▼" : "▶"),
                                 React.createElement("span", { style: { fontWeight: 600 } }, x.m.name),
                                 React.createElement("span", { style: { color: C.acc, marginLeft: 6, fontFamily: "monospace" } }, sizeTxt(x.m.size)),
-                                x.m.temper && x.m.temper !== "-" ? React.createElement("span", { style: { marginLeft: 6, fontSize: 10, fontWeight: 700, color: "#7C3AED", background: "rgba(124,58,237,.1)", borderRadius: 4, padding: "1px 6px" } }, x.m.temper) : null),
+                                x.m.temper && x.m.temper !== "-" ? React.createElement("span", { style: { marginLeft: 6, fontSize: 10, fontWeight: 700, color: "#7C3AED", background: "rgba(124,58,237,.1)", borderRadius: 4, padding: "1px 6px" } }, x.m.temper) : null,
+                                x.drift ? React.createElement("span", { title: "ตัวเลขที่ยืนยันไว้: " + num(x.close[x.mainF], x.mainF) + " / " + num(x.close.kgs, "kgs") + " กก.\nคำนวณจากคลังตอนนี้: " + num(x.liveClose[x.mainF], x.mainF) + " / " + num(x.liveClose.kgs, "kgs") + " กก.\n→ มีการแก้ข้อมูลย้อนหลังหรือประวัติไม่ครบ ต้องตรวจ (ตัวเลขในรายงานยังคงตามที่ยืนยัน)",
+                                    style: { marginLeft: 6, fontSize: 10, fontWeight: 800, color: C.warn, background: "rgba(191,135,0,.12)", borderRadius: 4, padding: "1px 6px", cursor: "help" } },
+                                    "⚠️ คลังตอนนี้ " + num(x.liveClose[x.mainF], x.mainF) + " / " + num(x.liveClose.kgs, "kgs") + " กก.") : null),
                             td(x.m.maker), td(uwOf(x)),
                             // ยกมาติดลบ = ประวัติรับ-จ่ายกับยอดคงเหลือในคลังไม่สอดคล้องกัน (เคยปรับยอดด้วยมือโดยไม่ผ่านใบเบิก)
                             (x.open[x.mainF] || 0) < 0
