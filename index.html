@@ -1559,7 +1559,7 @@ function StoreFlow() {
     // รายงาน/ประวัติ/ต้นทุน — ฝ่ายผลิตไม่ได้ใช้ในงานประจำวัน เปิดให้เฉพาะสโตร์กับ Admin
     // ฝ่ายผลิตเห็นเฉพาะ: เช็คสต๊อกด่วน · ภาพรวมสต๊อก · ใบเบิก · คลัง · Dead stock (ทั้ง 2 ฝั่ง)
     const canViewReports = role === "admin" || role === "store";
-    const pagePerm = { receive: canEditStock, ngreturn: canEditStock, matmaster: canEditSettings,
+    const pagePerm = { receive: canEditStock, ngreturn: canEditStock, matmaster: canEditSettings, supplymatmaster: canEditSettings,
         partnos: canEditSettings, masterdata: canEditSettings, auditlog: canEditSettings,
         emailsettings: canEditSettings, users: canManageUsers, healthcheck: canEditSettings,
         supplyissue: canEditStock, supplyrecv: canEditStock,
@@ -2018,6 +2018,7 @@ function StoreFlow() {
     const [stkFilter, setStkFilter] = useState("all");
     const [supFilter, setSupFilter] = useState("all");   // ตัวกรองหมวดของคลังวัสดุสิ้นเปลือง
     const [mmFilter, setMmFilter] = useState("all");
+    const [supMmFilter, setSupMmFilter] = useState("all");   // หน้า "จัดการรายการวัสดุสิ้นเปลือง" แยกตัวกรองจากหน้าวัตถุดิบ
     const [lotDetailMat, setLotDetailMat] = useState(null);
     const [ngTarget, setNgTarget] = useState(null); // { mat, lot } ที่กำลังคืน NG
     const [ngForm, setNgForm] = useState({});
@@ -2949,7 +2950,7 @@ function StoreFlow() {
     }
     // ── MATERIAL MASTER ──
     async function saveMat() {
-        const maker = mmForm.makerNew || mmForm.maker;
+        const maker = String(mmForm.makerNew || mmForm.maker || "").trim();
         // กันเคสพิมพ์/วางชื่อ material ปนไปในช่อง Size โดยไม่ตั้งใจ (เช่น "Copper Ring size:1.6x6.9")
         // ซึ่งทำให้ _normSizeKey คลาดเคลื่อนและจับคู่กับ Part No./Dead Stock/FIFO ไม่ได้เลย
         // ใช้ตัวแปร local เพราะ setMmForm เป็น async — ค่าที่ set จะยังไม่ทันใช้ในฟังก์ชันนี้
@@ -2989,8 +2990,14 @@ function StoreFlow() {
         // ถ้าไม่มีชื่อ (โดยเฉพาะ PART ASSY) → เติมจาก Part No. สินค้าตัวแรก ไม่งั้นใช้รหัส Part No. ของ material
         const firstProdPn = (mmForm.productPartNos || []).filter(Boolean)[0] || "";
         const finalName = mmForm.name || firstProdPn || mmForm.partNo;
-        if (mmForm.makerNew && !master.makers.find(x => x.name === mmForm.makerNew)) {
-            addMaker(mmForm.makerNew, [mmForm.type]);
+        // ลงทะเบียน Maker ให้เสมอ — เดิมเช็คแค่ makerNew ซึ่งถูกล้างทิ้งตอนกด ✓ ในช่องเพิ่ม Maker ใหม่
+        // ทำให้ Maker ใหม่ไม่เข้า Master Data และไม่ขึ้นในรายการครั้งถัดไป ("เพิ่ม Maker ไม่ได้")
+        // มีชื่ออยู่แล้วแต่ยังไม่ผูกกับประเภทนี้ -> เพิ่มประเภทให้ (ไม่สร้างชื่อซ้ำ)
+        if (maker && mmForm.type) {
+            const exMk = master.makers.find(x => x.name === maker);
+            if (!exMk) addMaker(maker, [mmForm.type]);
+            else if (!(exMk.types || []).includes(mmForm.type))
+                setMaster(m => ({ ...m, makers: m.makers.map(mk => mk.name === maker ? { ...mk, types: [...new Set([...(mk.types || []), mmForm.type])] } : mk) }));
         }
         if (mmForm.editId) {
             const updatedMat = { ...mmForm, name: finalName, size: cleanSize, maker, extraMakers: mmForm.extraMakers || [], allMakers: [maker, ...(mmForm.extraMakers || [])].filter(Boolean), kpp: parseFloat(mmForm.kpp) || null, minStock: parseInt(mmForm.minStock) || 100, customers: mmForm.customers || [], productPartNos: mmForm.productPartNos || [] };
@@ -3222,6 +3229,8 @@ function StoreFlow() {
                 { id: "supplyhist", icon: "📜", lbl: "ประวัติวัสดุ", can: canViewReports },
                 { id: "supplymonthend", icon: "📋", lbl: "สรุปสิ้นเดือน (วัสดุ)", can: canViewReports },
                 { id: "supplycost", icon: "💰", lbl: "ต้นทุนวัสดุสิ้นเปลือง", can: canViewReports },
+                // แยกจาก "จัดการ Material" (Pradit 20/11/2026: ไม่ให้วัสดุสิ้นเปลืองปนกับวัตถุดิบ)
+                { id: "supplymatmaster", icon: "⚙️", lbl: "จัดการรายการวัสดุสิ้นเปลือง", can: canEditSettings },
             ] },
         { lbl: "ตั้งค่า", items: [
                 { id: "matmaster", icon: "⚙️", lbl: "จัดการ Material", can: canEditSettings },
@@ -3366,7 +3375,8 @@ function StoreFlow() {
                 page === "supplycost" && canViewReports && React.createElement(SupplyCostPage, { issueHist: issueHist, recvHist: recvHist, materials: materials, priceMap: priceMap, lotPriceMap: lotPriceMap }),
                 page === "supplyhist" && canViewReports && React.createElement(HistPage, { issueHist: issueHist, priceMap: priceMap, setIssueHist: canEditStock ? setIssueHist : null, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null, group: "supply" }),
                 page === "users" && canManageUsers && React.createElement(UsersPage, { users: users, setUsers: setUsers, currentUser: currentUser, toast: toast, materials: materials }),
-                page === "matmaster" && canEditSettings && React.createElement(MatPage, { materials: materials, setMaterials: setMaterials, filter: mmFilter, setFilter: setMmFilter, master: master, onAdd: () => { setMmForm(emptyMm()); setMmErrors({}); setMmFromPartNo(false); setModal("mat"); }, onEdit: m => { setMmErrors({}); setMmFromPartNo(false); setMmForm({ editId: m.id, type: m.type, name: m.name, partNo: m.partNo, size: m.size, temper: m.temper, maker: m.maker, makerNew: "", extraMakers: m.extraMakers || [], customers: m.customers || [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: m.remark || "", productPartNos: m.productPartNos || [] }); setModal("mat"); }, onAddSize: m => { setMmErrors({}); setMmFromPartNo(false); setMmForm({ editId: "", type: m.type, name: m.name, partNo: m.partNo, size: "", temper: m.temper, maker: m.maker, makerNew: "", customers: [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: "", productPartNos: [] }); setModal("mat"); toast(`ℹ️ เพิ่ม Size ใหม่สำหรับ ${m.name}`, "info"); }, onToggle: async id => {
+                // จัดการ Material = วัตถุดิบเท่านั้น · จัดการรายการวัสดุสิ้นเปลือง = วัสดุสิ้นเปลืองเท่านั้น (หน้าเดียวกัน แยกข้อมูล)
+                (page === "matmaster" || page === "supplymatmaster") && canEditSettings && React.createElement(MatPage, { key: page, group: page === "supplymatmaster" ? "supply" : "raw", materials: page === "supplymatmaster" ? supMats : rawMats, setMaterials: setMaterials, filter: page === "supplymatmaster" ? supMmFilter : mmFilter, setFilter: page === "supplymatmaster" ? setSupMmFilter : setMmFilter, master: page === "supplymatmaster" ? supMaster : rawMaster, onAdd: () => { setMmForm(page === "supplymatmaster" ? { ...emptyMm(), type: (supMaster.matTypes[0] || {}).code || "", unit: "KGS", minStock: "" } : emptyMm()); setMmErrors({}); setMmFromPartNo(false); setModal("mat"); }, onEdit: m => { setMmErrors({}); setMmFromPartNo(false); setMmForm({ editId: m.id, type: m.type, name: m.name, partNo: m.partNo, size: m.size, temper: m.temper, maker: m.maker, makerNew: "", extraMakers: m.extraMakers || [], customers: m.customers || [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: m.remark || "", productPartNos: m.productPartNos || [] }); setModal("mat"); }, onAddSize: m => { setMmErrors({}); setMmFromPartNo(false); setMmForm({ editId: "", type: m.type, name: m.name, partNo: m.partNo, size: "", temper: m.temper, maker: m.maker, makerNew: "", customers: [], unit: m.unit, kpp: m.kpp || "", minStock: m.minStock || 100, remark: "", productPartNos: [] }); setModal("mat"); toast(`ℹ️ เพิ่ม Size ใหม่สำหรับ ${m.name}`, "info"); }, onToggle: async id => {
                         const cur = materials.find(x => x.id === id);
                         if (!cur) return;
                         const next = !cur.active;
@@ -3586,11 +3596,17 @@ function StoreFlow() {
                 })()) }, pendingIsId && isSupplyReq(requests.find(r => r.id === pendingIsId))
             ? React.createElement(SupIssueBody, { req: requests.find(r => r.id === pendingIsId), lots: lots, materials: materials })
             : pendingIsId && React.createElement(IsBody, { req: requests.find(r => r.id === pendingIsId), lots: lots, selectedLots: selectedLots, setSelectedLots: setSelectedLots, realLots: realLots, setRealLots: setRealLots, realKgs: realKgs, setRealKgs: setRealKgs })),
-        React.createElement(Modal, { open: modal === "mat", onClose: () => { setModal(null); setMmFromPartNo(false); }, title: mmForm.editId ? "แก้ไข Material" : (mmFromPartNo ? "เพิ่ม Material ใหม่ (ยังไม่บันทึก)" : "เพิ่ม Material ใหม่"), icon: "\u2699\uFE0F", width: 720, footer: React.createElement(React.Fragment, null,
+        React.createElement(Modal, { open: modal === "mat", onClose: () => { setModal(null); setMmFromPartNo(false); }, title: (isSupplyType(mmForm.type) || (!mmForm.type && page === "supplymatmaster"))
+                ? (mmForm.editId ? "แก้ไขรายการวัสดุสิ้นเปลือง" : "เพิ่มรายการวัสดุสิ้นเปลือง")
+                : (mmForm.editId ? "แก้ไข Material" : (mmFromPartNo ? "เพิ่ม Material ใหม่ (ยังไม่บันทึก)" : "เพิ่ม Material ใหม่")), icon: "\u2699\uFE0F", width: 720, footer: React.createElement(React.Fragment, null,
                 React.createElement(Btn, { v: "ghost", onClick: () => { setModal(null); setMmFromPartNo(false); } }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"),
                 React.createElement(Btn, { v: mmFromPartNo ? "success" : "primary", sz: mmFromPartNo ? "md" : "sm", onClick: saveMat }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01" + (mmFromPartNo ? " \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E40\u0E02\u0E49\u0E32\u0E04\u0E25\u0E31\u0E07" : ""))) },
             mmFromPartNo && !mmForm.editId && React.createElement("div", { style: { background: "rgba(210,153,34,.1)", border: "1.5px solid rgba(210,153,34,.4)", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 12.5, color: "#9a6700", lineHeight: 1.6 } }, React.createElement("strong", null, "⚠️ ยังไม่ถูกบันทึก"), " — ระบบกรอกข้อมูลจาก Part No. ให้แล้ว ตรวจสอบความถูกต้องด้านล่าง แล้วกดปุ่มสีเขียว \"บันทึก เพื่อเพิ่มเข้าคลัง\" ด้านล่างขวาอีกครั้ง มิฉะนั้นจะยังไม่เข้าคลังจริง"),
-            React.createElement(MatForm, { form: mmForm, setForm: setMmForm, clearErr: (k) => setMmErrors(e => ({ ...e, [k]: undefined })), master: master, addMaker: addMaker, addCustomer: addCustomer, errors: mmErrors, materials: materials, lots: lots })),
+            // ฟอร์มวัสดุสิ้นเปลือง = เลือกได้แค่ประเภทวัสดุสิ้นเปลือง · ฟอร์มวัตถุดิบ = ไม่มีประเภทวัสดุสิ้นเปลืองให้เลือก (กันปนกัน)
+            React.createElement(MatForm, { form: mmForm, setForm: setMmForm, clearErr: (k) => setMmErrors(e => ({ ...e, [k]: undefined })),
+                master: (isSupplyType(mmForm.type) || (!mmForm.type && page === "supplymatmaster")) ? supMaster : rawMaster,
+                group: (isSupplyType(mmForm.type) || (!mmForm.type && page === "supplymatmaster")) ? "supply" : "raw",
+                addMaker: addMaker, addCustomer: addCustomer, errors: mmErrors, materials: materials, lots: lots })),
         React.createElement(Modal, { open: modal === "nostock", onClose: () => setModal(null), title: "\u0E44\u0E21\u0E48\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16\u0E08\u0E48\u0E32\u0E22\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A\u0E44\u0E14\u0E49", icon: "\u26D4", sub: "\u0E2A\u0E15\u0E4A\u0E2D\u0E01\u0E44\u0E21\u0E48\u0E40\u0E1E\u0E35\u0E22\u0E07\u0E1E\u0E2D", width: 480, footer: React.createElement(Btn, { v: "primary", onClick: () => setModal(null) }, "\u0E23\u0E31\u0E1A\u0E17\u0E23\u0E32\u0E1A") },
             React.createElement("div", { style: { background: "rgba(248,81,73,.07)", border: "1px solid rgba(248,81,73,.2)", borderRadius: 8, padding: "14px 16px", marginBottom: 12 } },
                 React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "#cf222e", marginBottom: 8 } }, "\u26D4 \u0E44\u0E21\u0E48\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16\u0E40\u0E1A\u0E34\u0E01\u0E44\u0E14\u0E49\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E32\u0E01\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2A\u0E15\u0E4A\u0E2D\u0E01"),
@@ -8421,8 +8437,9 @@ function ColorLegend({ materials }) {
     );
 }
 
-function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, onEdit, onAddSize, onToggle, onDelete }) {
+function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, onEdit, onAddSize, onToggle, onDelete, group }) {
     const [q, setQ] = useState("");
+    const isSup = group === "supply";   // หน้า "จัดการรายการวัสดุสิ้นเปลือง" — ไม่มี Temper / Part No. สินค้า
     // ยุบช่องว่างซ้ำก่อนเทียบ เพื่อให้ค้นเจอแม้ข้อมูลเว้นวรรคไม่เท่ากัน
     const _sq = v => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
     const ql = _sq(q);
@@ -8449,7 +8466,10 @@ function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, on
         return (a.maker || "").localeCompare(b.maker || "");
     });
     return React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "calc(100vh - 80px)" } },
-        React.createElement("div", { style: { background: "rgba(88,166,255,.07)", border: "1px solid rgba(88,166,255,.2)", borderRadius: 8, padding: "9px 14px", fontSize: 11, color: C.acc2, marginBottom: 12, lineHeight: 1.7 } },
+        isSup ? React.createElement("div", { style: { background: "rgba(26,127,55,.06)", border: "1px solid rgba(26,127,55,.25)", borderRadius: 8, padding: "9px 14px", fontSize: 11.5, color: "#1a7f37", marginBottom: 12, lineHeight: 1.7 } },
+            "\uD83E\uDDF0 ", React.createElement("strong", null, "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E27\u0E31\u0E2A\u0E14\u0E38\u0E2A\u0E34\u0E49\u0E19\u0E40\u0E1B\u0E25\u0E37\u0E2D\u0E07"), " (\u0E41\u0E01\u0E4A\u0E2A / \u0E01\u0E25\u0E48\u0E2D\u0E07 / \u0E19\u0E49\u0E33\u0E21\u0E31\u0E19 / \u0E19\u0E49\u0E33\u0E22\u0E32) \u2014 \u0E41\u0E22\u0E01\u0E08\u0E32\u0E01\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A | ",
+            React.createElement("strong", null, "\u0E02\u0E19\u0E32\u0E14\u0E1A\u0E23\u0E23\u0E08\u0E38"), " \u0E02\u0E2D\u0E07\u0E19\u0E49\u0E33\u0E21\u0E31\u0E19/\u0E19\u0E49\u0E33\u0E22\u0E32 \u0E15\u0E49\u0E2D\u0E07\u0E21\u0E35\u0E04\u0E33\u0E27\u0E48\u0E32 \"\u0E25\u0E34\u0E15\u0E23\" \u0E40\u0E0A\u0E48\u0E19 200 \u0E25\u0E34\u0E15\u0E23/DRUM \u00B7 20 \u0E25\u0E34\u0E15\u0E23/PAIL \u00B7 17.3 \u0E25\u0E34\u0E15\u0E23/PAIL (18 \u0E01\u0E01.) \u2014 \u0E23\u0E30\u0E1A\u0E1A\u0E43\u0E0A\u0E49\u0E04\u0E33\u0E19\u0E27\u0E13\u0E25\u0E34\u0E15\u0E23/\u0E08\u0E33\u0E19\u0E27\u0E19\u0E16\u0E31\u0E07")
+        : React.createElement("div", { style: { background: "rgba(88,166,255,.07)", border: "1px solid rgba(88,166,255,.2)", borderRadius: 8, padding: "9px 14px", fontSize: 11, color: C.acc2, marginBottom: 12, lineHeight: 1.7 } },
             "\uD83D\uDCA1 ",
             React.createElement("strong", null, "1 \u0E41\u0E16\u0E27 = 1 Size + 1 Maker"),
             " | \u0E16\u0E49\u0E32 Size \u0E40\u0E14\u0E35\u0E22\u0E27\u0E01\u0E31\u0E19\u0E41\u0E15\u0E48\u0E04\u0E19\u0E25\u0E30 Maker \u2192 \u0E41\u0E2A\u0E14\u0E07\u0E41\u0E22\u0E01\u0E41\u0E16\u0E27 | ",
@@ -8466,12 +8486,12 @@ function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, on
                     React.createElement(Inp, { value: q, onChange: setQ, placeholder: "🔍 ค้นหา Size / ชื่อ / Maker / Temper / Part No....", style: { width: 300, paddingRight: q ? 26 : 10 } }),
                     q ? React.createElement("button", { onClick: () => setQ(""), title: "ล้างคำค้น", style: { position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: C.tx2, cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 0 } }, "×") : null),
                 React.createElement("span", { style: { fontSize: 11, color: C.tx2, whiteSpace: "nowrap" } }, "พบ " + filtered.length + " รายการ"),
-                React.createElement(Btn, { v: "primary", sz: "sm", onClick: onAdd }, "➕ เพิ่ม Material ใหม่"))),
+                React.createElement(Btn, { v: "primary", sz: "sm", onClick: onAdd }, isSup ? "➕ เพิ่มรายการวัสดุสิ้นเปลือง" : "➕ เพิ่ม Material ใหม่"))),
         React.createElement(Card, { grow: true },
             React.createElement("div", { style: { overflow: "auto", flex: 1, minHeight: 240 } },
                 React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12 } },
                     React.createElement("thead", { style: { position: "sticky", top: 0, zIndex: 3 } },
-                        React.createElement("tr", { style: { background: C.sur2 } }, [].concat(filter === "all" ? ["ประเภท"] : [], filter === "PART ASSY" ? ["Maker", "Size", "Temper", "Part Name", "Part No. (สินค้า)", "Unit", "", "Action"] : ["Maker", "ชื่อ Material", "Size", "Temper", "Part No. (สินค้า)", "Unit", "", "Action"]).map((h, hi) => React.createElement("th", { key: hi, style: { padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap", ...(h === "Action" ? { position: "sticky", right: 0, background: C.sur2, zIndex: 2, boxShadow: "-4px 0 6px -4px rgba(27,31,36,.25)" } : {}) } }, h)))),
+                        React.createElement("tr", { style: { background: C.sur2 } }, [].concat(filter === "all" ? ["ประเภท"] : [], isSup ? ["Maker", "ชื่อรายการ", "ขนาดบรรจุ", "Unit", "", "Action"] : filter === "PART ASSY" ? ["Maker", "Size", "Temper", "Part Name", "Part No. (สินค้า)", "Unit", "", "Action"] : ["Maker", "ชื่อ Material", "Size", "Temper", "Part No. (สินค้า)", "Unit", "", "Action"]).map((h, hi) => React.createElement("th", { key: hi, style: { padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.tx2, borderBottom: `1px solid ${C.brd}`, whiteSpace: "nowrap", ...(h === "Action" ? { position: "sticky", right: 0, background: C.sur2, zIndex: 2, boxShadow: "-4px 0 6px -4px rgba(27,31,36,.25)" } : {}) } }, h)))),
                     React.createElement("tbody", null, filtered.map(m => {
                         const mc = master.matTypes.find(t => t.code === m.type) || {};
                         return React.createElement("tr", { key: m.id, style: { 
@@ -8488,9 +8508,9 @@ function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, on
                                 React.createElement(Tag, (() => { const mk = getMakerColor(null, m); return { color: mk.text, bg: mk.bg, brd: mk.border }; })(), m.maker)),
                             filter !== "PART ASSY" ? React.createElement("td", { style: { padding: "6px 8px", fontWeight: 700, borderBottom: C.brd2, verticalAlign: "middle", whiteSpace: "nowrap", fontSize: 13 } }, m.name) : null,
                             React.createElement("td", { style: { padding: "6px 8px", fontFamily: "monospace", fontSize: 14, borderBottom: C.brd2, verticalAlign: "middle", whiteSpace: "nowrap", fontWeight: 700, color: C.tx } }, (m.size || "").replace(/size:/i, "")),
-                            React.createElement("td", { style: { padding: "6px 8px", fontSize: 11, color: C.tx2, borderBottom: C.brd2, verticalAlign: "middle", whiteSpace: "nowrap" } }, m.temper),
+                            isSup ? null : React.createElement("td", { style: { padding: "6px 8px", fontSize: 11, color: C.tx2, borderBottom: C.brd2, verticalAlign: "middle", whiteSpace: "nowrap" } }, m.temper),
                             filter === "PART ASSY" ? React.createElement("td", { style: { padding: "6px 8px", fontWeight: 700, borderBottom: C.brd2, verticalAlign: "middle", whiteSpace: "nowrap", fontSize: 13 } }, m.name) : null,
-                            (() => {
+                            isSup ? null : (() => {
                                 // Part No. ที่เกี่ยวข้อง — ดึงจากทะเบียน Part No. อัตโนมัติตาม size (เพิ่มในทะเบียนแล้วขึ้นเองทันที)
                                 const auto = findPartsForMat(m, PART_DB).map(p => p.pn).filter(Boolean);
                                 const manual = (m.productPartNos || []).filter(Boolean);
@@ -8519,7 +8539,8 @@ function MatPage({ materials, setMaterials, filter, setFilter, master, onAdd, on
 // ════════════════════════════════════════════════════════════
 // MATERIAL MASTER FORM
 // ════════════════════════════════════════════════════════════
-function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, errors = {}, materials = [], lots = {} }) {
+function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, errors = {}, materials = [], lots = {}, group }) {
+    const isSup = group === "supply";
     const ef = (k, label) => errors[k] ? React.createElement("div", { style: { color: "#cf222e", fontSize: 10, marginTop: 3, display: "flex", alignItems: "center", gap: 4 } },
         "\u26A0\uFE0F ",
         errors[k]) : null;
@@ -8538,11 +8559,11 @@ function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, error
             React.createElement(FG, { label: "\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A *", note: "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E14\u0E49\u0E17\u0E35\u0E48 Master Data" },
                 React.createElement(Sel, { value: form.type, onChange: v => { setForm(f => ({ ...f, type: v, maker: "", makerNew: "" })); clearErr && clearErr("type"); }, style: eb("type"), options: [{ v: "", l: "-- เลือกประเภท --" }, ...master.matTypes.map(t => ({ v: t.code, l: matTypeLabel2(t) }))], placeholder: "-- \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17 --" }),
                 ef("type")),
-            React.createElement(FG, { label: "Type Material *", note: "\u0E23\u0E2B\u0E31\u0E2A\u0E0A\u0E19\u0E34\u0E14 material \u0E40\u0E0A\u0E48\u0E19 A3003, A6063, SUS304, NAS254N, C1220T" },
+            React.createElement(FG, { label: isSup ? "ชื่อรายการ *" : "Type Material *", note: isSup ? "ชื่อน้ำยา / น้ำมัน / แก๊ส / กล่อง ตามใบสั่งซื้อ" :"\u0E23\u0E2B\u0E31\u0E2A\u0E0A\u0E19\u0E34\u0E14 material \u0E40\u0E0A\u0E48\u0E19 A3003, A6063, SUS304, NAS254N, C1220T" },
                 React.createElement("div", { style: eb("name") },
                     React.createElement(SmartSelect, { value: form.name || "", onChange: v => { setForm(f => ({ ...f, name: v })); clearErr && clearErr("name"); }, options: [...new Set((form.type ? master.partNames.filter(p => p.types.includes(form.type)) : master.partNames).map(p => p.name))], onAddNew: v => { setForm(f => ({ ...f, name: v })); clearErr && clearErr("name"); }, addLabel: "\u2795 \u0E0A\u0E37\u0E48\u0E2D\u0E43\u0E2B\u0E21\u0E48" })),
                 ef("name")),
-            React.createElement(FG, { label: "Part No. \u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32 (\u0E43\u0E2A\u0E48\u0E44\u0E14\u0E49\u0E2B\u0E25\u0E32\u0E22\u0E15\u0E31\u0E27)", note: "Part No. \u0E02\u0E2D\u0E07\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32\u0E17\u0E35\u0E48\u0E43\u0E0A\u0E49 material size \u0E19\u0E35\u0E49 \u0E40\u0E0A\u0E48\u0E19 6YGDB-0213, 6YGDB-0214 \u2014 \u0E43\u0E0A\u0E49 autofill \u0E15\u0E2D\u0E19\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01", span: true },
+            !isSup && React.createElement(FG, { label: "Part No. \u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32 (\u0E43\u0E2A\u0E48\u0E44\u0E14\u0E49\u0E2B\u0E25\u0E32\u0E22\u0E15\u0E31\u0E27)", note: "Part No. \u0E02\u0E2D\u0E07\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32\u0E17\u0E35\u0E48\u0E43\u0E0A\u0E49 material size \u0E19\u0E35\u0E49 \u0E40\u0E0A\u0E48\u0E19 6YGDB-0213, 6YGDB-0214 \u2014 \u0E43\u0E0A\u0E49 autofill \u0E15\u0E2D\u0E19\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01", span: true },
                 React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
                     (form.productPartNos || []).map((pn, pi) => (React.createElement("div", { key: pi, style: { display: "flex", gap: 6, alignItems: "center" } },
                         React.createElement(Inp, { value: pn, onChange: v => setForm(f => ({ ...f, productPartNos: f.productPartNos.map((x, xi) => xi === pi ? v : x) })), placeholder: `Part No. สินค้า ${pi + 1} เช่น 6YGDB-0213`, style: { flex: 1 } }),
@@ -8568,8 +8589,12 @@ function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, error
                                 : React.createElement("div", { style: { fontSize: 10.5, color: "#1a7f37", fontWeight: 600 } }, "✓ บันทึกไว้ครบแล้ว"));
                     })()
                 )),
-            React.createElement(FG, { label: "Size * (OD\u00D7THK\u00D7LENGTH)", span: true },
-                React.createElement(Inp, { value: form.size, onChange: v => { setForm(f => ({ ...f, size: v })); clearErr && clearErr("size"); }, placeholder: "\u0E40\u0E0A\u0E48\u0E19 25.4\u00D71.4\u00D74000 \u0E2B\u0E23\u0E37\u0E2D 7.0\u00D70.5 LWC", style: eb("size") }),
+            React.createElement(FG, { label: isSup ? "\u0E02\u0E19\u0E32\u0E14\u0E1A\u0E23\u0E23\u0E08\u0E38 *" : "Size * (OD\u00D7THK\u00D7LENGTH)", span: true,
+                    note: isSup ? "\u0E19\u0E49\u0E33\u0E21\u0E31\u0E19/\u0E19\u0E49\u0E33\u0E22\u0E32 \u0E15\u0E49\u0E2D\u0E07\u0E21\u0E35\u0E04\u0E33\u0E27\u0E48\u0E32 \"\u0E25\u0E34\u0E15\u0E23\" + \u0E20\u0E32\u0E0A\u0E19\u0E30 \u0E40\u0E0A\u0E48\u0E19 200 \u0E25\u0E34\u0E15\u0E23/DRUM \u00B7 20 \u0E25\u0E34\u0E15\u0E23/PAIL \u00B7 \u0E02\u0E32\u0E22\u0E40\u0E1B\u0E47\u0E19\u0E01\u0E34\u0E42\u0E25\u0E43\u0E2B\u0E49\u0E43\u0E2A\u0E48\u0E17\u0E31\u0E49\u0E07\u0E04\u0E39\u0E48 \u0E40\u0E0A\u0E48\u0E19 17.3 \u0E25\u0E34\u0E15\u0E23/PAIL (18 \u0E01\u0E01.)" : "" },
+                React.createElement(Inp, { value: form.size, onChange: v => { setForm(f => ({ ...f, size: v })); clearErr && clearErr("size"); }, placeholder: isSup ? "\u0E40\u0E0A\u0E48\u0E19 200 \u0E25\u0E34\u0E15\u0E23/DRUM" : "\u0E40\u0E0A\u0E48\u0E19 25.4\u00D71.4\u00D74000 \u0E2B\u0E23\u0E37\u0E2D 7.0\u00D70.5 LWC", style: eb("size") }),
+                // \u0E19\u0E49\u0E33\u0E21\u0E31\u0E19/\u0E19\u0E49\u0E33\u0E22\u0E32\u0E17\u0E35\u0E48\u0E44\u0E21\u0E48\u0E21\u0E35\u0E04\u0E33\u0E27\u0E48\u0E32 "\u0E25\u0E34\u0E15\u0E23" \u0E23\u0E30\u0E1A\u0E1A\u0E08\u0E30\u0E19\u0E31\u0E1A\u0E40\u0E1B\u0E47\u0E19\u0E01\u0E34\u0E42\u0E25 -> \u0E40\u0E15\u0E37\u0E2D\u0E19\u0E01\u0E48\u0E2D\u0E19\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01
+                isSup && (form.type === "OIL" || form.type === "CHEM") && form.size && !/\u0E25\u0E34\u0E15\u0E23|\bL\b|litre|liter/i.test(form.size)
+                    ? React.createElement("div", { style: { fontSize: 11, color: "#cf222e", fontWeight: 700, marginTop: 4 } }, "\u26A0\uFE0F \u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E04\u0E33\u0E27\u0E48\u0E32 \"\u0E25\u0E34\u0E15\u0E23\" \u2014 \u0E23\u0E30\u0E1A\u0E1A\u0E08\u0E30\u0E19\u0E31\u0E1A\u0E40\u0E1B\u0E47\u0E19\u0E01\u0E34\u0E42\u0E25/\u0E16\u0E31\u0E07 \u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48\u0E25\u0E34\u0E15\u0E23") : null,
                 ef("size"),
                 (() => {
                     // \u0E40\u0E15\u0E37\u0E2D\u0E19\u0E16\u0E49\u0E32\u0E1E\u0E34\u0E21\u0E1E\u0E4C/\u0E27\u0E32\u0E07\u0E0A\u0E37\u0E48\u0E2D material \u0E1B\u0E19\u0E21\u0E32\u0E43\u0E19\u0E0A\u0E48\u0E2D\u0E07 Size \u0E42\u0E14\u0E22\u0E44\u0E21\u0E48\u0E15\u0E31\u0E49\u0E07\u0E43\u0E08 (\u0E40\u0E0A\u0E48\u0E19 "Copper Ring size:1.6x6.9")
@@ -8595,14 +8620,28 @@ function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, error
                             dups.map(m => React.createElement("span", { key: m.id, style: { marginRight: 8, background: "rgba(255,255,255,.06)", padding: "1px 7px", borderRadius: 4, color: "#1f2328" } }, m.maker))),
                         React.createElement("div", { style: { marginTop: 2, color: "#57606a", fontSize: 10 } }, "* \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E14\u0E49\u0E16\u0E49\u0E32\u0E0B\u0E37\u0E49\u0E2D\u0E08\u0E32\u0E01 Maker \u0E2D\u0E37\u0E48\u0E19"));
                 })()),
-            React.createElement(FG, { label: "Temper / Grade" },
+            !isSup && React.createElement(FG, { label: "Temper / Grade" },
                 React.createElement(Inp, { value: form.temper, onChange: v => setForm(f => ({ ...f, temper: v })), placeholder: "O, OL, H/2, 1/2H, -" }))),
         form.type === "CU" && React.createElement("div", { style: { background: "rgba(9,105,218,.07)", border: "1px solid rgba(9,105,218,.2)", borderRadius: 7, padding: "8px 12px", fontSize: 11, color: C.tx2, marginBottom: 10 } },
             "\uD83D\uDCD0 ",
             React.createElement("strong", { style: { color: C.acc } }, "\u0E2A\u0E39\u0E15\u0E23 KGS \u0E17\u0E2D\u0E07\u0E41\u0E14\u0E07:"),
             " (OD\u2212THK) \u00D7 THK \u00D7 0.0280859 \u00D7 LENGTH / 1000 \u00D7 PCS"),
         React.createElement(SecTitle, null, "\uD83C\uDFED \u0E0B\u0E31\u0E1E\u0E1E\u0E25\u0E32\u0E22\u0E40\u0E2D\u0E2D\u0E23\u0E4C"),
-        React.createElement(FGrid, { cols: 3 },
+        // \u0E27\u0E31\u0E2A\u0E14\u0E38\u0E2A\u0E34\u0E49\u0E19\u0E40\u0E1B\u0E25\u0E37\u0E2D\u0E07: \u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E0A\u0E37\u0E48\u0E2D Maker/\u0E1C\u0E39\u0E49\u0E02\u0E32\u0E22\u0E44\u0E14\u0E49\u0E40\u0E25\u0E22 (\u0E21\u0E35\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E40\u0E14\u0E34\u0E21\u0E43\u0E2B\u0E49\u0E40\u0E25\u0E37\u0E2D\u0E01) \u2014 \u0E0A\u0E37\u0E48\u0E2D\u0E43\u0E2B\u0E21\u0E48\u0E23\u0E30\u0E1A\u0E1A\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E40\u0E02\u0E49\u0E32 Master Data \u0E43\u0E2B\u0E49\u0E15\u0E2D\u0E19\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01
+        isSup && React.createElement(FGrid, { cols: 2 },
+            React.createElement(FG, { label: "Maker / \u0E1C\u0E39\u0E49\u0E02\u0E32\u0E22 *", note: "\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E0A\u0E37\u0E48\u0E2D\u0E44\u0E14\u0E49\u0E40\u0E25\u0E22 \u0E2B\u0E23\u0E37\u0E2D\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E17\u0E35\u0E48\u0E21\u0E35\u0E2D\u0E22\u0E39\u0E48" },
+                React.createElement("input", { list: "sup-maker-list", value: form.maker || "", placeholder: "\u0E40\u0E0A\u0E48\u0E19 MODERN CHEMICAL",
+                    onChange: e => { const v = e.target.value; setForm(f => ({ ...f, maker: v, makerNew: "" })); clearErr && clearErr("maker"); },
+                    style: { ...inputStyle, ...eb("maker") } }),
+                React.createElement("datalist", { id: "sup-maker-list" },
+                    // เฉพาะผู้ขายของกลุ่มวัสดุสิ้นเปลือง: Maker ที่ผูกกับประเภท แก๊ส/กล่อง/น้ำมัน/น้ำยา + ผู้ขายที่รายการวัสดุสิ้นเปลืองใช้อยู่จริง
+                    // (ไม่เอาผู้ขายวัตถุดิบมาปน)
+                    [...new Set([].concat(
+                        (master.makers || []).filter(x => (x.types || []).some(t => isSupplyType(t))).map(x => x.name),
+                        (materials || []).filter(m => isSupplyType(m.type)).map(m => m.maker)
+                    ).filter(Boolean))].sort().map(n => React.createElement("option", { key: n, value: n }))),
+                ef("maker"))),
+        !isSup && React.createElement(FGrid, { cols: 3 },
             React.createElement(FG, { label: "Maker \u0E2B\u0E25\u0E31\u0E01 *", note: "Maker \u0E41\u0E23\u0E01 (\u0E43\u0E0A\u0E49\u0E40\u0E1B\u0E47\u0E19\u0E04\u0E48\u0E32 default)" },
                 React.createElement("div", { style: eb("maker") },
                     React.createElement(SmartSelect, { value: form.maker, onChange: v => { setForm(f => ({ ...f, maker: v, makerNew: "" })); clearErr && clearErr("maker"); }, options: mkrs, onAddNew: v => { setForm(f => ({ ...f, maker: v, makerNew: v })); clearErr && clearErr("maker"); }, addLabel: "\u2795 Maker \u0E43\u0E2B\u0E21\u0E48" })),
@@ -8618,8 +8657,9 @@ function MatForm({ form, setForm, clearErr, master, addMaker, addCustomer, error
                         (form.extraMakers || []).length > 0 ? ` (${form.extraMakers.length} เพิ่มเติม)` : ""))),
             React.createElement(FG, { label: "Customer (\u0E25\u0E39\u0E01\u0E04\u0E49\u0E32)", note: "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E14\u0E49" },
                 React.createElement(SmartSelect, { value: form.customer, onChange: v => setForm(f => ({ ...f, customer: v })), options: [...master.customers].sort(), onAddNew: v => { addCustomer(v); setForm(f => ({ ...f, customer: v })); }, addLabel: "\u2795 \u0E25\u0E39\u0E01\u0E04\u0E49\u0E32\u0E43\u0E2B\u0E21\u0E48" }))),
-        React.createElement(SecTitle, null, "\u2696\uFE0F \u0E2B\u0E19\u0E48\u0E27\u0E22\u0E41\u0E25\u0E30\u0E19\u0E49\u0E33\u0E2B\u0E19\u0E31\u0E01"),
-        React.createElement(FGrid, { cols: 3 },
+        // \u0E27\u0E31\u0E2A\u0E14\u0E38\u0E2A\u0E34\u0E49\u0E19\u0E40\u0E1B\u0E25\u0E37\u0E2D\u0E07\u0E44\u0E21\u0E48\u0E43\u0E0A\u0E49 \u0E2B\u0E19\u0E48\u0E27\u0E22/KG \u0E15\u0E48\u0E2D\u0E0A\u0E34\u0E49\u0E19/Min Stock \u0E41\u0E1A\u0E1A\u0E27\u0E31\u0E15\u0E16\u0E38\u0E14\u0E34\u0E1A (\u0E2B\u0E19\u0E48\u0E27\u0E22\u0E15\u0E31\u0E49\u0E07\u0E40\u0E1B\u0E47\u0E19 KGS = \u0E25\u0E34\u0E15\u0E23 \u0E43\u0E2B\u0E49\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34)
+        !isSup && React.createElement(SecTitle, null, "\u2696\uFE0F \u0E2B\u0E19\u0E48\u0E27\u0E22\u0E41\u0E25\u0E30\u0E19\u0E49\u0E33\u0E2B\u0E19\u0E31\u0E01"),
+        !isSup && React.createElement(FGrid, { cols: 3 },
             React.createElement(FG, { label: "\u0E2B\u0E19\u0E48\u0E27\u0E22\u0E2B\u0E25\u0E31\u0E01" },
                 React.createElement(Sel, { value: form.unit, onChange: v => setForm(f => ({ ...f, unit: v })), options: [...new Set([...(master.units || []), "KGS", "PCS", "COIL", "M", "BOTH", "BOTH_KG_COIL"])].map(u => ({ v: u, l: u === "BOTH" ? "BOTH (KGS+PCS)" : u === "BOTH_KG_COIL" ? "BOTH (KGS+COIL)" : u })) })),
             React.createElement(FG, { label: "KG/PCS (\u0E16\u0E49\u0E32\u0E21\u0E35)", note: "\u0E43\u0E0A\u0E49\u0E04\u0E33\u0E19\u0E27\u0E13\u0E19\u0E49\u0E33\u0E2B\u0E19\u0E31\u0E01\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34" },
