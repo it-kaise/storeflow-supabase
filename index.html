@@ -446,6 +446,22 @@ function sizeTxt(s) {
 }
 
 // อัพเดท Lot
+// หา id จริงของลอตในฐานข้อมูล เมื่อ object บนจอไม่มี _dbId (ลอตที่เพิ่งรับเข้าในหน้าที่ยังไม่รีเฟรช)
+// จับด้วย material + เลข lot + วันที่ (+ ยอดคงเหลือ ถ้ายังแยกไม่ได้) — ได้ไม่ตรง 1 แถว = คืน null ให้ผู้เรียกหยุด
+async function resolveLotDbId(matId, lot) {
+    if (!lot) return null;
+    if (lot._dbId) return lot._dbId;
+    try {
+        let q = sb.from('sf_lots').select('id,lot_date,rem_kgs,rem_pcs,rem_coil').eq('material_id', matId).eq('lot_no', lot.lotNo);
+        const { data, error } = await q;
+        if (error || !data) return null;
+        let c = data;
+        if (c.length > 1 && lot.date) c = c.filter(r => r.lot_date === lot.date);
+        const nv = v => (v == null ? null : Number(v));
+        if (c.length > 1) c = c.filter(r => nv(r.rem_kgs) === nv(lot.rem_kgs) && nv(r.rem_pcs) === nv(lot.rem_pcs) && nv(r.rem_coil) === nv(lot.rem_coil));
+        return c.length === 1 ? c[0].id : null;
+    } catch (e) { return null; }
+}
 async function updateLot(dbId, updates) {
     try {
         // ตัดฟิลด์หน่วยเมตรออกถ้าตารางยังไม่มีคอลัมน์ (กัน error ทั้งคำสั่ง)
@@ -1469,7 +1485,7 @@ function LotDetailModal({ open, onClose, mat, lots, setLots, master, onNG, logAu
                                         });
                                         // ลอตม้วน (1 ลอต = 1 coil) ห้ามบันทึกยอดที่เป็นเศษหรือกิโลไม่สอดคล้องกับ coil
                                         { const _cp = coilLotProblem(merged); if (_cp) { window.alert("⛔ บันทึกไม่ได้ — ยอดของ Lot นี้ไม่สอดคล้องกัน\n\n" + _cp + "\n\nLot ทองแดงม้วนต้องเหลือ \"0\" หรือ \"เต็ม coil (น้ำหนักตรงป้าย tag)\" เท่านั้น\nถ้าน้ำหนักบนป้ายผิด ให้แก้ที่ช่อง \"น้ำหนักที่รับ\" ไม่ใช่ช่องคงเหลือ"); return; } }
-                                        setLots(ls => ({ ...ls, [mat.id]: ls[mat.id].map((x, xi) => xi === i ? merged : x) })); if (lot._dbId) await updateLot(lot._dbId, { lot_no: merged.lotNo, lot_date: merged.date, po: merged.po, kgs: merged.kgs, pcs: merged.pcs, coil: merged.coil, rem_kgs: merged.rem_kgs, rem_pcs: merged.rem_pcs, rem_coil: merged.rem_coil, m: merged.m != null ? merged.m : null, rem_m: merged.rem_m != null ? merged.rem_m : null }); if (onSaveLotPrice) await onSaveLotPrice(mat.id, merged.lotNo, editForm.price, lot.lotNo, editForm.priceUnit); if (onSyncRecv) await onSyncRecv(mat, lot, merged); if (logAudit) logAudit("สต๊อก", "แก้ Lot", `${mat.name} ${(mat.size || "").replace(/^size:/i, "")} · lot ${lot.lotNo}${merged.lotNo !== lot.lotNo ? " → " + merged.lotNo : ""}`); setEditIdx(null); }, style: { background: "#1a7f37", border: "none", borderRadius: 5, color: "#fff", cursor: "pointer", padding: "5px 12px", fontSize: 13, fontWeight: 700 } }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01"),
+                                        const _eid = await resolveLotDbId(mat.id, lot); if (!_eid) { window.alert("❌ แก้ Lot ไม่สำเร็จ — หาแถวของ Lot นี้ในฐานข้อมูลไม่เจอ\n\nกรุณากด Ctrl+Shift+R รีเฟรชหน้า แล้วแก้ใหม่ (ยังไม่มีการเปลี่ยนแปลงใด ๆ)"); return; } merged._dbId = _eid; setLots(ls => ({ ...ls, [mat.id]: ls[mat.id].map((x, xi) => xi === i ? merged : x) })); await updateLot(_eid,{ lot_no: merged.lotNo, lot_date: merged.date, po: merged.po, kgs: merged.kgs, pcs: merged.pcs, coil: merged.coil, rem_kgs: merged.rem_kgs, rem_pcs: merged.rem_pcs, rem_coil: merged.rem_coil, m: merged.m != null ? merged.m : null, rem_m: merged.rem_m != null ? merged.rem_m : null }); if (onSaveLotPrice) await onSaveLotPrice(mat.id, merged.lotNo, editForm.price, lot.lotNo, editForm.priceUnit); if (onSyncRecv) await onSyncRecv(mat, lot, merged); if (logAudit) logAudit("สต๊อก", "แก้ Lot", `${mat.name} ${(mat.size || "").replace(/^size:/i, "")} · lot ${lot.lotNo}${merged.lotNo !== lot.lotNo ? " → " + merged.lotNo : ""}`); setEditIdx(null); }, style: { background: "#1a7f37", border: "none", borderRadius: 5, color: "#fff", cursor: "pointer", padding: "5px 12px", fontSize: 13, fontWeight: 700 } }, "\uD83D\uDCBE \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01"),
                                         React.createElement("button", { onClick: () => setEditIdx(null), style: { background: "transparent", border: "1px solid #d0d7de", borderRadius: 5, color: "#57606a", cursor: "pointer", padding: "5px 10px", fontSize: 13 } }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01")))));
                     })))),
             React.createElement("div", { style: { padding: "10px 16px", borderTop: "1px solid #d0d7de", display: "flex", justifyContent: "flex-end", flexShrink: 0 } },
@@ -1746,8 +1762,19 @@ function StoreFlow() {
             rem_pcs: lot.rem_pcs != null ? Math.max(0, (lot.rem_pcs || 0) - rp) : lot.rem_pcs,
             rem_coil: lot.rem_coil != null ? Math.max(0, (lot.rem_coil || 0) - rc) : lot.rem_coil,
             rem_m: lot.rem_m != null ? Math.max(0, (lot.rem_m || 0) - rm) : lot.rem_m };
-        setLots(ls => ({ ...ls, [mat.id]: (ls[mat.id] || []).map(x => x.lotNo === lot.lotNo && x._dbId === lot._dbId ? newLot : x) }));
-        if (lot._dbId) await updateLot(lot._dbId, { rem_kgs: newLot.rem_kgs != null ? newLot.rem_kgs : null, rem_pcs: newLot.rem_pcs != null ? newLot.rem_pcs : null, rem_coil: newLot.rem_coil != null ? newLot.rem_coil : null, rem_m: newLot.rem_m != null ? newLot.rem_m : null });
+        // ⚠️ ต้องบันทึกลงฐานข้อมูลสำเร็จก่อน ถึงจะนับว่าคืนแล้ว
+        // เดิม: ไม่มี _dbId = ข้ามการบันทึกเงียบ ๆ -> จอขึ้นว่าตัดแล้ว แต่รีเฟรชแล้วของกลับมา (CU Ø12.0x0.7LWC 20/11/2026)
+        const _ngDbId = await resolveLotDbId(mat.id, lot);
+        if (!_ngDbId) {
+            window.alert("❌ คืน/เคลม NG ไม่สำเร็จ — หาแถวของ Lot " + lot.lotNo + " ในฐานข้อมูลไม่เจอ\n\nกรุณากด Ctrl+Shift+R รีเฟรชหน้า แล้วทำรายการใหม่\n(ยังไม่มีการตัดสต๊อกใด ๆ)");
+            return;
+        }
+        const _ngOk = await updateLot(_ngDbId, { rem_kgs: newLot.rem_kgs != null ? newLot.rem_kgs : null, rem_pcs: newLot.rem_pcs != null ? newLot.rem_pcs : null, rem_coil: newLot.rem_coil != null ? newLot.rem_coil : null, rem_m: newLot.rem_m != null ? newLot.rem_m : null });
+        if (!_ngOk) {
+            window.alert("❌ คืน/เคลม NG ไม่สำเร็จ — บันทึกยอดลอตลงฐานข้อมูลไม่ได้\n\nยังไม่มีการตัดสต๊อก กรุณาลองใหม่อีกครั้ง");
+            return;
+        }
+        setLots(ls => ({ ...ls, [mat.id]: (ls[mat.id] || []).map(x => (x.lotNo === lot.lotNo && (x._dbId === _ngDbId || (!x._dbId && x === lot))) ? { ...newLot, _dbId: _ngDbId } : x) }));
         const rec = { id: "NG" + Date.now(), date: new Date().toISOString().slice(0, 10),
             matId: mat.id, name: mat.name, size: mat.size, maker: mat.maker, temper: mat.temper || "",
             lotNo: lot.lotNo, po: lot.po || "", kgs: rk || null, pcs: rp || null, coil: rc || null, m: rm || null,
@@ -2494,9 +2521,14 @@ function StoreFlow() {
         // (เดิมใส่จำนวนเต็มให้ทุกแถวของ Lot เดียวกัน ทำให้ตัดเกินโควตาและกิน Lot อื่นที่สโตร์เลือกไว้)
         const chosenBudget = {};
         chosenLots.forEach(cl => { const k = normLot(cl.lotNo); chosenBudget[k] = (chosenBudget[k] || 0) + (parseFloat(cl.qty) || 0); });
+        // ลำดับตัด: Lot ที่เลือก -> Lot จริงที่สโตร์จดมา -> FIFO ที่เหลือ (ใช้เฉพาะส่วนที่ยังตัดไม่ครบ)
+        // เดิมถ้า Lot ที่เลือกไม่มีของแล้ว (เช่น คืน NG ไปแล้ว) จะไม่ตัดอะไรเลย แต่ยังลงประวัติด้วยเลข Lot จริง
+        // = ใบขึ้นว่าจ่ายแล้ว แต่สต๊อกไม่ลด (CU Ø12.0x0.7LWC REQ-2026-0318, 20/11/2026)
+        const _realIdx = realLotNo ? idxOfLot(realLotNo).map(lotIdx => ({ lotIdx: lotIdx, grp: null })) : [];
+        const _fifoIdx = sortedByDate.flatMap(l => idxOfLot(l.lotNo).map(lotIdx => ({ lotIdx: lotIdx, grp: null })));
         const processOrder = chosenLots.length > 0
-            ? chosenLots.flatMap(cl => idxOfLot(cl.lotNo).map(lotIdx => ({ lotIdx: lotIdx, grp: normLot(cl.lotNo) })))
-            : sortedByDate.flatMap(l => idxOfLot(l.lotNo).map(lotIdx => ({ lotIdx: lotIdx, grp: null })))
+            ? chosenLots.flatMap(cl => idxOfLot(cl.lotNo).map(lotIdx => ({ lotIdx: lotIdx, grp: normLot(cl.lotNo) }))).concat(_realIdx, _fifoIdx)
+            : _realIdx.concat(_fifoIdx)
         const _seenIdx = new Set();
         // กันแถวเดิมถูกไล่ซ้ำ (เพราะ Lot ซ้ำ 2 แถวจะให้ index ชุดเดียวกันทั้งคู่)
         const processOrderU = processOrder.filter(x => { if (_seenIdx.has(x.lotIdx)) return false; _seenIdx.add(x.lotIdx); return true; });
@@ -2836,7 +2868,10 @@ function StoreFlow() {
                     return;
                 }
 
-                // อัพเดท local state
+                // อัพเดท local state — ต้องติด id จริงของแถวไว้ด้วย
+                // เดิมไม่ติด -> ถ้าคืน NG / แก้ลอตนี้ต่อโดยยังไม่รีเฟรชหน้า โค้ดข้ามการบันทึกลงฐานข้อมูลเงียบ ๆ (เพราะไม่รู้ id)
+                // เกิดจริง 20/11/2026: CU Ø12.0x0.7LWC คืน NG 2 coil แต่ฐานข้อมูลไม่ลด -> คลังยังขึ้น 2 coil
+                if (typeof newLotId === "number" || typeof newLotId === "string") newLot._dbId = newLotId;
                 setLots(ls => ({ ...ls, [realMatId]: [...(ls[realMatId] || []), newLot] }));
 
                 // บันทึก receive history
@@ -3369,7 +3404,7 @@ function StoreFlow() {
                 page === "healthcheck" && canEditSettings && React.createElement(HealthCheckPage, { materials: materials, lots: lots, issueHist: issueHist, requests: requests }),
                 page === "ngreturn" && canEditStock && React.createElement(NgReturnPage, { ngReturns: ngReturns, materials: materials, onSave: saveNgReturns, currentUser: currentUser, toast: toast, onReceive: receiveReplacementStock, onEditRep: editReplacementStock, onRemoveRep: removeReplacementStock }),
                 page === "history" && React.createElement(HistPage, { issueHist: issueHist, setIssueHist: canEditStock ? setIssueHist : null, recvHist: recvHist, setRecvHist: canEditStock ? setRecvHist : null, lots: lots, setLots: setLots, materials: materials, ngReturns: ngReturns, saveNgReturns: saveNgReturns, toast: toast, logAudit: logAudit, lotPriceMap: lotPriceMap, onSaveLotPrice: canEditStock ? saveLotPrice : null, onSaveLotPricesBulk: canEditStock ? saveLotPricesBulk : null, dnMap: dnMap, onSaveDnBulk: canEditStock ? saveDnBulk : null, group: "raw" }),
-                (page === "monthend" || page === "supplymonthend") && canViewReports && React.createElement(MonthEndPage, { key: page, materials: materials, lots: lots, issueHist: issueHist, recvHist: recvHist, group: page === "supplymonthend" ? "supply" : "raw",
+                (page === "monthend" || page === "supplymonthend") && canViewReports && React.createElement(MonthEndPage, { key: page, materials: materials, lots: lots, issueHist: issueHist, recvHist: recvHist, ngReturns: ngReturns, group: page === "supplymonthend" ? "supply" : "raw",
                     monthClose: monthClose, onCloseMonth: closeMonthSnap, onReopenMonth: reopenMonthSnap,
                     canClose: role === "admin" || role === "store", canReopen: role === "admin", userName: (currentUser && currentUser.name) || "" }),
                 page === "supplycost" && canViewReports && React.createElement(SupplyCostPage, { issueHist: issueHist, recvHist: recvHist, materials: materials, priceMap: priceMap, lotPriceMap: lotPriceMap }),
@@ -6803,7 +6838,7 @@ function RecvPage({ form, setForm, materials, master, onSubmit, recvHist: _allRe
 // MONTH-END PAGE — สรุป ยอดยกมา / รับเข้า / จ่ายออก / คงเหลือ รายไซซ์
 // ใช้ตอนนับสต๊อกสิ้นเดือนร่วมกับบัญชี (ล้อตามรายงานสินค้าและวัตถุดิบของ ACC แต่ไม่ใส่ราคา)
 // ════════════════════════════════════════════════════════════
-function MonthEndPage({ materials, lots, issueHist, recvHist, group, monthClose, onCloseMonth, onReopenMonth, canClose, canReopen, userName }) {
+function MonthEndPage({ materials, lots, issueHist, recvHist, ngReturns, group, monthClose, onCloseMonth, onReopenMonth, canClose, canReopen, userName }) {
     const mats = (materials || []).filter(m => group === "supply" ? isSupplyType(m.type) : !isSupplyType(m.type));
     const _k = v => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
     // จับคู่แถวประวัติกับ material ด้วย ชื่อ+Maker ก่อน (ชื่อซ้ำกันได้ ต่างกันที่ Temper/Maker) แล้วค่อย fallback เป็นชื่ออย่างเดียว
@@ -6865,6 +6900,14 @@ function MonthEndPage({ materials, lots, issueHist, recvHist, group, monthClose,
         else if (!mon || d === mon) add(inMon[m.id][key], r);
     });
     feed(recvHist, "rc"); feed(issueHist, "is");
+    // คืน/เคลม NG = ของออกจากคลังจริง (ตัดยอดลอต) แต่ไม่ได้อยู่ในประวัติจ่าย -> ต้องนับเป็นยอดออกด้วย
+    // ไม่งั้นเดือนที่มีคืน NG จะขึ้นยอดยกมาติดลบเท่ากับจำนวนที่คืน
+    (ngReturns || []).forEach(r => {
+        if (!r || !r.matId || !inMon[r.matId]) return;
+        const d = String(r.date || "").slice(0, 7); if (d.length !== 7) return;
+        if (mon && d > mon) add(after[r.matId].is, r);
+        else if (!mon || d === mon) add(inMon[r.matId].is, r);
+    });
     // ── ปิดงวด (ล็อกตัวเลขที่บัญชียืนยันแล้ว) ──
     // ยอดสิ้นเดือนคำนวณย้อนจากคงเหลือปัจจุบัน -> ถ้ามีอะไรเปลี่ยนทีหลัง (เศษปัด / แก้ประวัติย้อนหลัง) ตัวเลขเดือนที่ปิดไปแล้วจะขยับ
     // บัญชีไม่ยอมรับ (เช่น AL Ø18.00x1.2x2000 สิ้น ต.ค. ยืนยัน 10.35 -> กลาง พ.ย. กลายเป็น 10.34)
@@ -6950,6 +6993,9 @@ function MonthEndPage({ materials, lots, issueHist, recvHist, group, monthClose,
                 q: Number(r[x.mainF]) || 0, k: Number(r.kgs) || 0 }); });
         (issueHist || []).forEach(r => { const mm = matOf(r); if (!mm || mm.id !== x.m.id || !inRange(r.date)) return;
             list.push({ d: String(r.date || ""), ty: "จ่าย", doc: r.reqId || "-", lot: r.lotNo || "-", sg: -1,
+                q: Number(r[x.mainF]) || 0, k: Number(r.kgs) || 0 }); });
+        (ngReturns || []).forEach(r => { if (!r || r.matId !== x.m.id || !inRange(r.date)) return;
+            list.push({ d: String(r.date || ""), ty: "จ่าย", doc: "คืน/เคลม NG", lot: r.lotNo || "-", sg: -1,
                 q: Number(r[x.mainF]) || 0, k: Number(r.kgs) || 0 }); });
         list.sort((a, b) => a.d.localeCompare(b.d) || (a.ty === "รับ" ? -1 : 1));
         let bq = x.open[x.mainF] || 0, bk = x.open.kgs || 0;
